@@ -1105,8 +1105,8 @@ ResultType QuEst_RANSAC(Eigen::Matrix3Xd const &x1, Eigen::Matrix3Xd const &x2)
   x1n = x1.colwise().lpNorm<1>();
   x2n = x2.colwise().lpNorm<1>();
   // normalize the points
-  x1_normalized = x1 / x1n;
-  x2_normalized = x2 / x2n;
+  x1_normalized = (x1.array().rowwise() / x1n.array()).matrix();
+  x2_normalized = (x2.array().rowwise() / x2n.array()).matrix();
   // formulate data
   Eigen::MatrixXd data(6, numPts);
   for (decltype(numPts) i{0}; i < numPts; ++i)
