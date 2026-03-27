@@ -606,6 +606,19 @@ public:
     {
       printf("FindCorners success: %ld\n", corners.corners_l0.size());
 
+      auto rq0{euroc.Solve(corners.corners_l0, corners.corners_r0)};
+      auto rq1{euroc.Solve(corners.corners_l1, corners.corners_r1)};
+      printf("Previous Frame:\n\tTranslation=(%.2f, %.2f, %.2f)\n"
+             "\tRotation=(%.2f, %.2f, %.2f, %.2f)\n",
+             rq0.translation.x, rq0.translation.y, rq0.translation.z,
+             rq0.rotation.w, rq0.rotation.x, rq0.rotation.y,
+             rq0.rotation.z);
+      printf("Current Frame:\n\tTranslation=(%.2f, %.2f, %.2f)\n"
+             "\tRotation=(%.2f, %.2f, %.2f, %.2f)\n",
+             rq1.translation.x, rq1.translation.y, rq1.translation.z,
+             rq1.rotation.w, rq1.rotation.x, rq1.rotation.y,
+             rq1.rotation.z);
+
       // 绘制光流
       const cv::Size flowSize{vis.size()};
       cv::Mat flow{cv::Mat::zeros(flowSize, rectified0.type())};
@@ -670,6 +683,7 @@ public:
 
 int main(int argc, char **argv)
 {
+  printf("Node 'euroc_vio' started\n");
   rclcpp::init(argc, argv);
   auto node = std::make_shared<VirsualInertialOdemetry>(
       "/cam0/image_raw", "/cam1/image_raw", "/imu0");
