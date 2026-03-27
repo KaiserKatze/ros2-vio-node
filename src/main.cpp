@@ -30,19 +30,20 @@
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
-#include <opencv2/opencv.hpp>
-#include <opencv2/viz/vizcore.hpp>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/core/types.hpp>
 #include <opencv2/features2d.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/opencv.hpp>
 #include <opencv2/video.hpp>
 #include <opencv2/video/tracking.hpp>
 #include <opencv2/videoio.hpp>
+#include <opencv2/viz/vizcore.hpp>
 // #include <opencv2/xfeatures2d.hpp>
 
 #include "euroc_vio/QuEst.hpp"
+#include "euroc_vio/main.h"
 
 using namespace sensor_msgs;
 using namespace message_filters;
@@ -205,7 +206,34 @@ struct EuRoC
   }
 };
 
-class VirsualInertialOdemetry : public rclcpp::Node
+struct OpticalFLow_ShiTomasi
+{
+};
+
+struct OpticalFlow_Fast
+{
+  static constexpr int fastThreshold{20};
+  static constexpr bool fastNonmaxSuppression{true};
+  static constexpr cv::FastFeatureDetector::DetectorType fastType{
+      cv::FastFeatureDetector::TYPE_9_16};
+  cv::Ptr<cv::FastFeatureDetector> fastFeatureDetector;
+
+  OpticalFlow_Fast()
+  {
+    fastFeatureDetector = cv::FastFeatureDetector::create(
+        fastThreshold, fastNonmaxSuppression, fastType);
+  }
+};
+
+class VirsualInertialOdemetry : public rclcpp::Node,
+#if CORNER_DETECTION_ALGORITHM == CORNER_USE_FAST
+                                public OpticalFlow_Fast
+#elif CORNER_DETECTION_ALGORITHM == CORNER_USE_SHITOMASI
+                                public OpticalFLow_ShiTomasi
+#else
+#error                                                                         \
+    "CORNER_DETECTION_ALGORITHM must be CORNER_USE_FAST or CORNER_USE_SHITOMASI"
+#endif
 {
 private:
   std::shared_ptr<Synchronizer_t> sync;
@@ -214,7 +242,6 @@ private:
   message_filters::Subscriber<MsgImu> imu_sub;
 
   bool first{true};
-  bool running{true};
   struct
   {
     cv::Mat rectified0;
@@ -247,11 +274,37 @@ private:
    */
   void InitCorners(const cv::Mat &gray, VecPoint2f &corners) const
   {
-    cv::Mat mask{};
-    // https://docs.opencv.org/3.4/dd/d1a/group__imgproc__feature.html#ga1d6bb77486c8f92d79c8793ad995d541
-    cv::goodFeaturesToTrack(gray, corners, maxCorners, qualityLevel,
-                            minDistance, mask, blockSize, useHarrisDetector,
-                            freeParamHarisDetector);
+    corners.clear();
+    if constexpr (CORNER_DETECTION_ALGORITHM == CORNER_USE_SHITOMASI)
+    {
+      cv::Mat mask{};
+      // https://docs.opencv.org/3.4/dd/d1a/group__imgproc__feature.html#ga1d6bb77486c8f92d79c8793ad995d541
+      cv::goodFeaturesToTrack(gray, corners, maxCorners, qualityLevel,
+                              minDistance, mask, blockSize, useHarrisDetector,
+                              freeParamHarisDetector);
+    }
+    else // FAST 算法
+    {
+      // 使用 FAST 角点检测
+      // 文档：
+      // - FastFeatureDetector（C++）：https://docs.opencv.org/4.13.0/df/d74/classcv_1_1FastFeatureDetector.html
+      // - FAST 教程（Python）：https://docs.opencv.org/3.4/df/d0c/tutorial_py_fast.html
+      std::vector<cv::KeyPoint> keypoints;
+      fastFeatureDetector->detect(gray, keypoints);
+      if (!keypoints.empty())
+      {
+        // 以响应值从高到低排序，截断至 maxCorners，便于与 Shi-Tomasi 行为保持一致
+        std::sort(keypoints.begin(), keypoints.end(),
+                  [](const cv::KeyPoint &a, const cv::KeyPoint &b)
+                  { return a.response > b.response; });
+        if (static_cast<int>(keypoints.size()) > maxCorners)
+        {
+          keypoints.resize(maxCorners);
+        }
+        // KeyPoint -> Point2f
+        cv::KeyPoint::convert(keypoints, corners);
+      }
+    }
   }
 
   auto FilterWithStatus(VecPoint2f &pts,
@@ -565,11 +618,6 @@ public:
     }
   }
 
-  bool IsRunning() const
-  {
-    return running;
-  }
-
   void SyncCallback(const MsgImage::ConstSharedPtr &cam0_msg,
                     const MsgImage::ConstSharedPtr &cam1_msg,
                     const MsgImu::ConstSharedPtr &imu_msg)
@@ -611,13 +659,11 @@ public:
       printf("Previous Frame:\n\tTranslation=(%.2f, %.2f, %.2f)\n"
              "\tRotation=(%.2f, %.2f, %.2f, %.2f)\n",
              rq0.translation.x, rq0.translation.y, rq0.translation.z,
-             rq0.rotation.w, rq0.rotation.x, rq0.rotation.y,
-             rq0.rotation.z);
+             rq0.rotation.w, rq0.rotation.x, rq0.rotation.y, rq0.rotation.z);
       printf("Current Frame:\n\tTranslation=(%.2f, %.2f, %.2f)\n"
              "\tRotation=(%.2f, %.2f, %.2f, %.2f)\n",
              rq1.translation.x, rq1.translation.y, rq1.translation.z,
-             rq1.rotation.w, rq1.rotation.x, rq1.rotation.y,
-             rq1.rotation.z);
+             rq1.rotation.w, rq1.rotation.x, rq1.rotation.y, rq1.rotation.z);
 
       // 绘制光流
       const cv::Size flowSize{vis.size()};
@@ -660,18 +706,13 @@ public:
                "Current Frame Left");
 
       cv::add(flow, vis, vis);
-
-      cv::imshow("VIO", vis);
-      auto key = cv::waitKey(10) & 0xFF;
-      if (key == 27)
-      {
-        running = false;
-      }
     }
     else
     {
       printf("FindCorners failed\n");
     }
+
+    cv::imshow("VIO", vis);
 
     // 将上一帧更新为当前帧
     prev.rectified0 = rectified0;
@@ -687,10 +728,20 @@ int main(int argc, char **argv)
   rclcpp::init(argc, argv);
   auto node = std::make_shared<VirsualInertialOdemetry>(
       "/cam0/image_raw", "/cam1/image_raw", "/imu0");
-  while (node->IsRunning())
+  cv::namedWindow("VIO", cv::WINDOW_NORMAL);
+  cv::moveWindow("VIO", 0, 0);
+  cv::resizeWindow("VIO", cv::Size{1280, 720});
+  while (true)
   {
     rclcpp::spin_some(node);
+
+    const auto key{cv::waitKey(10) & 0xFF};
+    if (key == 27)
+    {
+      break;
+    }
   }
+  cv::destroyAllWindows();
   rclcpp::shutdown();
   return 0;
 }

@@ -16,7 +16,7 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 add_compile_options(-Werror)
-add_compile_options(-O0)
+add_compile_options(-O2)
 
 # 自动检测 C++ 标准（支持草案和正式标准）
 include(CheckCXXCompilerFlag)
