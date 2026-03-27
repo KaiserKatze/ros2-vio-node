@@ -318,7 +318,7 @@ private:
         result.push_back(pts[i]);
       }
     }
-    return result;
+    pts = result;
   }
 
   std::vector<unsigned char> MatchCorners0(const cv::Mat &prevGray,
@@ -508,8 +508,8 @@ private:
   bool FindCorners(const cv::Mat &gray_l1, const cv::Mat &gray_r1,
                    Corners &corners)
   {
-    static constexpr double atol_parallax{5.0};
-    static constexpr double atol_coincidence{5.0};
+    static constexpr double atol_parallax{3.0};
+    static constexpr double atol_coincidence{3.0};
     // 上一帧左目角点
     VecPoint2f corners_l0;
     InitCorners(prev.gray0, corners_l0);
