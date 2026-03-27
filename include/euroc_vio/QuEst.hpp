@@ -1119,7 +1119,7 @@ ResultType QuEst_RANSAC(Eigen::Matrix3Xd const &x1, Eigen::Matrix3Xd const &x2)
     data(5, i) = x2_normalized(2, i);
   }
   // minimum samples for fitting function
-  const size_t minimumSizeSamplesToFit{6};
+  const size_t minimumSizeSamplesToFit{5};
   // distance threshold between data and model
   const double distance_threshold{1e-6};
   // output model and inliers
