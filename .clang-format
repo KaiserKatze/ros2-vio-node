@@ -1,0 +1,36 @@
+# 基础样式，基于 LLVM 代码风格
+BasedOnStyle: LLVM
+
+# 缩进宽度为 2 个空格
+IndentWidth: 2
+# 不使用制表符，仅使用空格
+UseTab: Never
+
+# 列数限制为 80 字符，超过则换行
+ColumnLimit: 80
+
+# 为单行控制语句自动添加花括号（从 LLVM 14 开始支持）
+InsertBraces: true
+# 大括号换行风格：Allman 风格（大括号另起一行）
+BreakBeforeBraces: Allman
+
+# 仅当函数体为空时，允许将短函数放在一行
+AllowShortFunctionsOnASingleLine: Empty
+
+# 在 C 风格类型转换后添加空格，例如 (int) x
+SpaceAfterCStyleCast: true
+
+# 在控制语句（如 if, for, while）的括号前添加空格
+SpaceBeforeParens: ControlStatements
+
+# 不自动重新排版注释
+ReflowComments: false
+
+# 在二元运算符之前换行
+BreakBeforeBinaryOperators: All
+
+# 自动排序 #include 头文件
+SortIncludes: true
+
+# 对齐连续的赋值语句中的等号
+AlignConsecutiveAssignments: true
