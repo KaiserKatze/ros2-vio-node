@@ -6,12 +6,15 @@
 #include <concepts>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <memory>
 #include <random>
 #include <ranges>
 #include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include <cv_bridge/cv_bridge.hpp>
@@ -48,6 +51,8 @@
 using namespace sensor_msgs;
 using namespace message_filters;
 using namespace std::chrono_literals;
+
+inline static constexpr char PATH_CSV_FILE[] = "euroc_vio.csv";
 
 template <typename VectorType>
 std::vector<size_t> KeepSmallestElement(const VectorType &input,
@@ -323,6 +328,8 @@ private:
   static constexpr size_t nColors{255};
 
   const EuRoC euroc{};
+
+  std::fstream file;
 
   /**
    * @brief 初始化角点
@@ -610,8 +617,8 @@ private:
   bool FindCorners(const cv::Mat &gray_l1, const cv::Mat &gray_r1,
                    Corners &corners)
   {
-    static constexpr double atol_parallax{3.0};
-    static constexpr double atol_coincidence{3.0};
+    static constexpr double atol_parallax{2.0};
+    static constexpr double atol_coincidence{1.0};
     std::vector<double> sumL1Error;
     // 上一帧左目角点
     VecPoint2f corners_l0;
@@ -710,7 +717,7 @@ private:
 public:
   VirsualInertialOdemetry(const char *cam0_topic, const char *cam1_topic,
                           const char *imu_topic)
-      : Node("VIO")
+      : Node("VIO"), file(PATH_CSV_FILE, std::ios::out | std::ios::trunc)
   {
     rclcpp::QoS qos = rclcpp::QoS(10);
     cam0_sub.subscribe(this, cam0_topic, qos.get_rmw_qos_profile());
@@ -737,6 +744,11 @@ public:
       colors.push_back(cv::Scalar(rng.uniform(0, 256), rng.uniform(0, 256),
                                   rng.uniform(0, 256)));
     }
+
+    file << "timestamp[ns],left_rw,left_rx,left_ry,left_rz,left_tx,"
+            "left_ty,left_tz,right_rw,right_rx,right_ry,right_rz,"
+            "right_tx,right_ty,right_tz"
+         << std::endl;
   }
 
   void SyncCallback(const MsgImage::ConstSharedPtr &cam0_msg,
@@ -782,16 +794,27 @@ public:
     {
       printf("FindCorners success: %ld\n", corners.corners_l0.size());
 
-      auto rq0{euroc.Solve(corners.corners_l0, corners.corners_r0)};
-      auto rq1{euroc.Solve(corners.corners_l1, corners.corners_r1)};
-      printf("Previous Frame:\n\tTranslation=(%.2f, %.2f, %.2f)\n"
-             "\tRotation=(%.2f, %.2f, %.2f, %.2f)\n",
-             rq0.translation.x, rq0.translation.y, rq0.translation.z,
-             rq0.rotation.w, rq0.rotation.x, rq0.rotation.y, rq0.rotation.z);
-      printf("Current Frame:\n\tTranslation=(%.2f, %.2f, %.2f)\n"
-             "\tRotation=(%.2f, %.2f, %.2f, %.2f)\n",
-             rq1.translation.x, rq1.translation.y, rq1.translation.z,
-             rq1.rotation.w, rq1.rotation.x, rq1.rotation.y, rq1.rotation.z);
+      auto rq0{euroc.Solve(corners.corners_l0, corners.corners_l1)};
+      auto rq1{euroc.Solve(corners.corners_r0, corners.corners_r1)};
+
+      // printf("Left Camera:\n\tTranslation=(%.2f, %.2f, %.2f)\n"
+      //        "\tRotation=(%.2f, %.2f, %.2f, %.2f)\n",
+      //        rq0.translation.x, rq0.translation.y, rq0.translation.z,
+      //        rq0.rotation.w, rq0.rotation.x, rq0.rotation.y, rq0.rotation.z);
+      // printf("Right Camera:\n\tTranslation=(%.2f, %.2f, %.2f)\n"
+      //        "\tRotation=(%.2f, %.2f, %.2f, %.2f)\n",
+      //        rq1.translation.x, rq1.translation.y, rq1.translation.z,
+      //        rq1.rotation.w, rq1.rotation.x, rq1.rotation.y, rq1.rotation.z);
+
+      // 写入文件
+      file << cam0_msg->header.stamp.sec << '.'
+           << cam0_msg->header.stamp.nanosec << "," << rq0.rotation.w << ","
+           << rq0.rotation.x << "," << rq0.rotation.y << "," << rq0.rotation.z
+           << "," << rq0.translation.x << "," << rq0.translation.y << ","
+           << rq0.translation.z << "," << rq1.rotation.w << ","
+           << rq1.rotation.x << "," << rq1.rotation.y << "," << rq1.rotation.z
+           << "," << rq1.translation.x << "," << rq1.translation.y << ","
+           << rq1.translation.z << std::endl;
 
       // 绘制光流
       const cv::Size flowSize{vis.size()};
