@@ -49,6 +49,50 @@ using namespace sensor_msgs;
 using namespace message_filters;
 using namespace std::chrono_literals;
 
+template <typename VectorType>
+std::vector<size_t> KeepSmallestElement(const VectorType &input,
+                                        size_t maxCount)
+{
+  if (maxCount == 0)
+  {
+    return {};
+  }
+  const auto buildIndexedVec = [](const VectorType &vec)
+  {
+    std::vector<std::pair<typename VectorType::value_type, size_t>> indexed;
+    indexed.reserve(vec.size());
+    for (size_t i = 0; i < vec.size(); ++i)
+    {
+      indexed.emplace_back(vec[i], i);
+    }
+    return indexed;
+  };
+  auto indexed = buildIndexedVec(input);
+  auto compare = [](const auto &a, const auto &b) { return a.first < b.first; };
+  if (maxCount >= indexed.size())
+  {
+    std::sort(indexed.begin(), indexed.end(), compare);
+    std::vector<size_t> indices;
+    indices.reserve(indexed.size());
+    for (const auto &p : indexed)
+    {
+      indices.push_back(p.second);
+    }
+    return indices;
+  }
+  std::nth_element(indexed.begin(), indexed.begin() + maxCount - 1,
+                   indexed.end(), compare);
+  // 前 maxCount 个元素不一定有序，需要排序
+  std::sort(indexed.begin(), indexed.begin() + maxCount, compare);
+  std::vector<size_t> indices;
+  indices.reserve(maxCount);
+  for (size_t i = 0; i < maxCount; ++i)
+  {
+    indices.push_back(indexed[i].second);
+  }
+  return indices;
+}
+
 /*****************************
  * ROS2 Node
  *****************************/
@@ -248,6 +292,19 @@ private:
     cv::Mat rectified1;
     cv::Mat gray0;
     cv::Mat gray1;
+    struct
+    {
+      double w;
+      double x;
+      double y;
+      double z;
+    } rotation;
+    struct
+    {
+      double x;
+      double y;
+      double z;
+    } translation;
   } prev;
 
   /* QuEst 算法支持 5 个以上角点 */
@@ -360,10 +417,10 @@ private:
     }
   }
 
-  template <typename MaskType>
-  auto FilterWithMask(VecPoint2f &pts, MaskType mask) const
+  template <typename VectorType, typename MaskType>
+  VectorType FilterWithMask(VectorType &pts, MaskType &mask) const
   {
-    VecPoint2f filteredPts;
+    VectorType filteredPts;
     for (size_t i{0}; i < pts.size(); ++i)
     {
       if (mask[i])
@@ -380,7 +437,7 @@ private:
   }
 
   auto FilterParallax0(VecPoint2f &ptsLeft, VecPoint2f &ptsRight,
-                       double atol = 1.0) const
+                       std::vector<double> &error, double atol = 1.0) const
   {
     if (ptsLeft.size() != ptsRight.size())
     {
@@ -391,9 +448,18 @@ private:
     {
       throw std::invalid_argument{"atol must be positive"};
     }
-    const std::vector<bool> mask{
-        CreateMask(ptsLeft, ptsRight, [atol](cv::Point2f ptMinus)
-                   { return std::abs(ptMinus.y) < atol && ptMinus.x > 0.0; })};
+    const auto compare = [atol, &error](cv::Point2f ptMinus) -> bool
+    {
+      const auto absParallaxY{std::abs(ptMinus.y)};
+      if (absParallaxY < atol && ptMinus.x > 0.0)
+      {
+        error.push_back(absParallaxY);
+        return true;
+      }
+      return false;
+    };
+    const std::vector<bool> mask{CreateMask(ptsLeft, ptsRight, compare)};
+    // 得到的 error 向量与筛选后的 ptsLeft 等长
     if (const size_t countCorners{MaskLength(mask)}; countCorners < minCorners)
     {
       std::stringstream ss;
@@ -418,14 +484,27 @@ private:
   bool FilterParallax(
       VecPoint2f &ptsLeft, VecPoint2f &ptsRight,
       const std::vector<std::reference_wrapper<VecPoint2f>> &&listPts,
-      double atol = 1.0) const
+      std::vector<double> &sumL1Error, double atol = 1.0) const
   {
     try
     {
-      auto mask{FilterParallax0(ptsLeft, ptsRight, atol)};
+      std::vector<double> error;
+      auto mask{FilterParallax0(ptsLeft, ptsRight, error, atol)};
+
       for (auto otherPts : listPts)
       {
         otherPts.get() = std::move(FilterWithMask(otherPts.get(), mask));
+      }
+
+      sumL1Error = std::move(FilterWithMask(sumL1Error, mask));
+      if (sumL1Error.size() != error.size())
+      {
+        throw std::runtime_error{
+            "sumL1Error and error must have the same size"};
+      }
+      for (size_t i{0}; i < sumL1Error.size(); ++i)
+      {
+        sumL1Error[i] += error[i];
       }
     }
     catch (const std::exception &e)
@@ -464,7 +543,7 @@ private:
   bool FilterCoincidence(
       VecPoint2f &ptsInit, VecPoint2f &ptsLast,
       const std::vector<std::reference_wrapper<VecPoint2f>> &&listPts,
-      double atol = 1.0)
+      std::vector<double> &sumL1Error, double atol = 1.0)
   {
     if (ptsInit.size() != ptsLast.size())
     {
@@ -475,18 +554,41 @@ private:
     {
       throw std::invalid_argument{"atol must be positive"};
     }
-    std::vector<bool> mask{CreateMask(
-        ptsInit, ptsLast, [atol](cv::Point2f ptMinus)
-        { return std::abs(ptMinus.x) < atol || std::abs(ptMinus.y) < atol; })};
+
+    std::vector<double> error;
+    const auto compare = [atol, &error](cv::Point2f ptMinus) -> bool
+    {
+      const auto absParallaxX{std::abs(ptMinus.x)};
+      const auto absParallaxY{std::abs(ptMinus.y)};
+      if (absParallaxX < atol && absParallaxY < atol)
+      {
+        error.push_back(absParallaxX + absParallaxY);
+        return true;
+      }
+      return false;
+    };
+    std::vector<bool> mask{CreateMask(ptsInit, ptsLast, compare)};
+
     if (MaskLength(mask) < minCorners)
     {
       return false;
     }
     ptsInit = std::move(FilterWithMask(ptsInit, mask));
     ptsLast = std::move(FilterWithMask(ptsLast, mask));
+
     for (auto otherPts : listPts)
     {
       otherPts.get() = std::move(FilterWithMask(otherPts.get(), mask));
+    }
+
+    sumL1Error = std::move(FilterWithMask(sumL1Error, mask));
+    if (sumL1Error.size() != error.size())
+    {
+      throw std::runtime_error{"sumL1Error and error must have the same size"};
+    }
+    for (size_t i{0}; i < sumL1Error.size(); ++i)
+    {
+      sumL1Error[i] += error[i];
     }
     return true;
   }
@@ -510,6 +612,7 @@ private:
   {
     static constexpr double atol_parallax{3.0};
     static constexpr double atol_coincidence{3.0};
+    std::vector<double> sumL1Error;
     // 上一帧左目角点
     VecPoint2f corners_l0;
     InitCorners(prev.gray0, corners_l0);
@@ -528,7 +631,8 @@ private:
     }
     try
     {
-      FilterParallax0(corners_l0, corners_r0, atol_parallax);
+      FilterParallax0(corners_l0, corners_r0, sumL1Error, atol_parallax);
+      // 首次调用 FilterParallax0 以后，所得 sumL1Error 向量就是筛选通过后各个角点的视差的垂直分量的绝对值
     }
     catch (const std::exception &e)
     {
@@ -556,7 +660,7 @@ private:
       return false;
     }
     if (!FilterParallax(corners_l1, corners_r1, {corners_l0, corners_r0},
-                        atol_parallax))
+                        sumL1Error, atol_parallax))
     {
       return false;
     }
@@ -574,7 +678,7 @@ private:
     }
     // 检查 corners_l0 与 corners_loopback 是否足够接近
     if (!FilterCoincidence(corners_l0, corners_loopback,
-                           {corners_r0, corners_l1, corners_r1},
+                           {corners_r0, corners_l1, corners_r1}, sumL1Error,
                            atol_coincidence))
     {
       return false;
@@ -582,7 +686,24 @@ private:
     printf("Found %zu matching corners in prev.gray0 after coincidence "
            "filtering\n",
            corners_loopback.size());
-    corners = Corners{corners_l0, corners_r0, corners_l1, corners_r1};
+
+    // 根据 sumL1Error 将角点排序，保留误差最小的 20 个交点
+    static constexpr size_t maxCorners{20};
+    std::vector<size_t> bestIndices{
+        KeepSmallestElement(sumL1Error, maxCorners)};
+
+    corners.corners_l0.reserve(maxCorners);
+    corners.corners_r0.reserve(maxCorners);
+    corners.corners_l1.reserve(maxCorners);
+    corners.corners_r1.reserve(maxCorners);
+    for (size_t bestIndex : bestIndices)
+    {
+      corners.corners_l0.push_back(corners_l0[bestIndex]);
+      corners.corners_r0.push_back(corners_r0[bestIndex]);
+      corners.corners_l1.push_back(corners_l1[bestIndex]);
+      corners.corners_r1.push_back(corners_r1[bestIndex]);
+    }
+
     return true;
   }
 
@@ -633,11 +754,18 @@ public:
 
     if (first)
     {
-      prev.rectified0 = rectified0;
-      prev.rectified1 = rectified1;
-      prev.gray0      = gray0;
-      prev.gray1      = gray1;
-      first           = false;
+      prev.rectified0    = rectified0;
+      prev.rectified1    = rectified1;
+      prev.gray0         = gray0;
+      prev.gray1         = gray1;
+      prev.rotation.w    = 1.0;
+      prev.rotation.x    = 0.0;
+      prev.rotation.y    = 0.0;
+      prev.rotation.z    = 0.0;
+      prev.translation.x = 0.0;
+      prev.translation.y = 0.0;
+      prev.translation.z = 0.0;
+      first              = false;
       return;
     }
 
