@@ -263,13 +263,14 @@ struct EuRoC
   auto Solve(std::vector<PointType> const &pts0,
              std::vector<PointType> const &pts1) const
   {
-    if (pts0.size() != pts1.size())
+    const size_t numPts{pts0.size()};
+    if (numPts != pts1.size())
     {
       throw std::runtime_error{"pts0 and pts1 must have the same size"};
     }
-    Eigen::Matrix3Xd M0;
-    Eigen::Matrix3Xd M1;
-    for (size_t i{0}; i < pts0.size(); ++i)
+    Eigen::Matrix3Xd M0(3, numPts);
+    Eigen::Matrix3Xd M1(3, numPts);
+    for (size_t i{0}; i < numPts; ++i)
     {
       const PointType &pt0{pts0[i]};
       const PointType &pt1{pts1[i]};
