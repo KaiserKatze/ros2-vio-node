@@ -4,6 +4,7 @@
 #include <chrono> // time module
 #include <cmath>
 #include <concepts>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -12,6 +13,7 @@
 #include <memory>
 #include <random>
 #include <ranges>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -30,6 +32,7 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/magnetic_field.hpp>
 #include <sensor_msgs/msg/temperature.hpp>
+#include "euroc_vio/msg/imu.hpp"
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
@@ -103,7 +106,7 @@ std::vector<size_t> KeepSmallestElement(const VectorType &input,
  *****************************/
 
 using MsgImage = sensor_msgs::msg::Image;
-using MsgImu   = sensor_msgs::msg::Imu;
+using MsgImu   = euroc_vio::msg::Imu;
 using ApproximateTime_t
     = message_filters::sync_policies::ApproximateTime<MsgImage, MsgImage,
                                                       MsgImu>;
@@ -319,6 +322,36 @@ struct CornerPair
   cv::Point2i corner_right;
 };
 
+// struct SLAM
+// {
+//   std::vector<cv::Point3f> Recover(std::vector<cv::Point2i> const &pts0,
+//                                    std::vector<cv::Point2i> const &pts1,
+//                                    Eigen::Vector4d const &quadRotation,
+//                                    Eigen::Vector3d const &vecTranslation) const
+//   {
+//     if (pts0.size() != pts1.size())
+//     {
+//       throw std::invalid_argument{"pts0 and pts1 must have the same size"};
+//     }
+
+//     Eigen::Matrix3d matRotation;
+//     Q2R_3by3(matRotation, quadRotation);
+//     (void) vecTranslation;
+
+//     std::vector<cv::Point3f> result;
+//     result.reserve(pts0.size());
+
+//     for (size_t i{0}; i < pts0.size(); ++i)
+//     {
+//       const cv::Point2i &pt0{pts0[i]};
+//       const cv::Point2i &pt1{pts1[i]};
+//       (void) pt0;
+//       (void) pt1;
+//       // TODO
+//     }
+//   }
+// };
+
 class VirsualInertialOdemetry : public rclcpp::Node,
 #if CORNER_DETECTION_ALGORITHM == CORNER_USE_FAST
                                 public OpticalFlow_Fast
@@ -439,15 +472,114 @@ private:
     pts = result;
   }
 
+  template <typename RotationType>
+  void ConvertRotation(RotationType const &rotation,
+                       Eigen::Matrix3d &matRotation) const
+  {
+
+    // 旋转四元数
+    Eigen::Vector4d quatRotation;
+    quatRotation << rotation.w, rotation.x, rotation.y, rotation.z;
+    // 将旋转四元数转化为旋转矩阵
+    Q2R_3by3(matRotation, quatRotation);
+  }
+
+  template <typename TranslationType>
+  void ConvertTranslation(TranslationType const &translation,
+                          Eigen::Vector3d &vecTranslation) const
+  {
+    // 平移向量
+    vecTranslation << translation.x, translation.y, translation.z;
+  }
+
+  // void RecoverLandmark(cv::Point2f const &ptImage,
+  //                      Eigen::Matrix3d const &matRotation,
+  //                      Eigen::Vector3d const &vecTranslation,
+  //                      Eigen::Matrix3d const &matCamera,
+  //                      Eigen::Vector3d &vecLandmarkNonhomo) const
+  // {
+  //   // 像素点的齐次坐标
+  //   Eigen::Vector3d vecImageHomo;
+  //   vecImageHomo << ptImage.x, ptImage.y, 1.0;
+  //   // 恢复三维点的非齐次坐标
+  //   vecLandmarkNonhomo = (matCamera * matRotation)
+  //                            .colPivHouseholderQr()
+  //                            .solve(vecImageHomo - matCamera * vecTranslation);
+  // }
+
+  cv::Point2f PredictNextCorner(cv::Point2f const &prevCorner,
+                                Eigen::Matrix3d const &matRotation,
+                                Eigen::Vector3d const &vecTranslation,
+                                Eigen::Matrix3d const &matCamera) const
+  {
+    Eigen::Vector3d vecImageHomo;
+    vecImageHomo << prevCorner.x, prevCorner.y, 1.0;
+    Eigen::Vector3d vecNewImageHomo{
+        matRotation
+        * (matRotation * matCamera.inverse() * vecImageHomo + vecTranslation)};
+    return cv::Point2f(
+        static_cast<float>(vecNewImageHomo(0, 0) / vecNewImageHomo(2, 0)),
+        static_cast<float>(vecNewImageHomo(1, 0) / vecNewImageHomo(2, 0)));
+  }
+
+  void PredictNextCorners(std::vector<cv::Point2f> const &prevCorners,
+                          std::vector<cv::Point2f> &nextCorners,
+                          Eigen::Matrix3d const &matRotation,
+                          Eigen::Vector3d const &vecTranslation,
+                          Eigen::Matrix3d const &matCamera) const
+  {
+    nextCorners.reserve(prevCorners.size());
+    for (cv::Point2f const &corner : prevCorners)
+    {
+      nextCorners.push_back(
+          PredictNextCorner(corner, matRotation, vecTranslation, matCamera));
+    }
+  }
+
+  void PredictNextCornersForSequentialFrame(
+      std::vector<cv::Point2f> const &prevCorners,
+      std::vector<cv::Point2f> &nextCorners,
+      Eigen::Matrix3d const &matCamera) const
+  {
+    Eigen::Matrix3d matRotation;
+    Eigen::Vector3d vecTranslation;
+    ConvertRotation(prev.rotation, matRotation);
+    ConvertTranslation(prev.translation, vecTranslation);
+    return PredictNextCorners(prevCorners, nextCorners, matRotation,
+                              vecTranslation, matCamera);
+  }
+
+  void
+  PredictNextCornersForStereoFrame(std::vector<cv::Point2f> const &prevCorners,
+                                   std::vector<cv::Point2f> &nextCorners,
+                                   Eigen::Matrix3d const &matCamera,
+                                   bool direction) const
+  {
+    cv::Mat T_direction = direction ? T_C1C0 : T_C1C0.inv();
+    // 提取左上角 3x3 矩阵作为旋转矩阵
+    cv::Mat stereoR = T_direction(cv::Range(0, 3), cv::Range(0, 3)).clone();
+    // 提取第 4 列的前 3 行作为平移向量
+    cv::Mat stereoT = T_direction(cv::Range(0, 3), cv::Range(3, 4)).clone();
+    // 将旋转矩阵和平移向量转换为 Eigen::Matrix3d 和 Eigen::Vector3d
+    Eigen::Matrix3d matRotation;
+    Eigen::Vector3d vecTranslation;
+    cv::cv2eigen(stereoR, matRotation);
+    cv::cv2eigen(stereoT, vecTranslation);
+    return PredictNextCorners(prevCorners, nextCorners, matRotation,
+                              vecTranslation, matCamera);
+  }
+
   std::vector<unsigned char>
   MatchCorners0(const cv::Mat &prevGray, const cv::Mat &nextGray,
                 std::vector<cv::Point2f> &prevCorners,
-                std::vector<cv::Point2f> &nextCorners) const
+                std::vector<cv::Point2f> &nextCorners,
+                Eigen::Matrix3d const &matCamera) const
   {
     std::vector<unsigned char> status;
     std::vector<float> err;
     cv::TermCriteria criteria(
         (cv::TermCriteria::COUNT) + (cv::TermCriteria::EPS), 10, 0.03);
+    PredictNextCorners(prevCorners, nextCorners, matCamera);
     // https://docs.opencv.org/3.4/dc/d6b/group__video__track.html#ga473e4b886d0bcc6b65831eb88ed93323
     cv::calcOpticalFlowPyrLK(prevGray, nextGray, prevCorners, nextCorners,
                              status, err, winSize, maxLevel, criteria);
@@ -471,9 +603,11 @@ private:
       std::vector<cv::Point2f> &prevCorners,
       std::vector<cv::Point2f> &nextCorners,
       const std::vector<std::reference_wrapper<std::vector<cv::Point2f>>>
-          &&listCorners) const
+          &&listCorners,
+      Eigen::Matrix3d const &matCamera) const
   {
-    auto status{MatchCorners0(prevGray, nextGray, prevCorners, nextCorners)};
+    auto status{
+        MatchCorners0(prevGray, nextGray, prevCorners, nextCorners, matCamera)};
     for (auto otherCorners : listCorners)
     {
       FilterWithStatus(otherCorners.get(), status);
@@ -674,6 +808,9 @@ private:
     std::vector<cv::Point2f> corners_l0;
 
     InitCorners(prev.gray0, corners_l0);
+
+    // TODO 在 corners_l0, corners.corners_l1 中找出共同点，跟踪角点的 age 数值（即角点在相同相机、不同图像帧中出现的次数）
+
     printf("Found %zu corners in prev.gray0\n", corners_l0.size());
     if (corners_l0.size() < minCorners)
     {
@@ -835,10 +972,31 @@ private:
                     const MsgImage::ConstSharedPtr &cam1_msg,
                     const MsgImu::ConstSharedPtr &imu_msg)
   {
-    RCLCPP_INFO(this->get_logger(), "SyncCallback %u",
-                imu_msg->header.stamp.sec);
-    printf("Sync ....\n");
+    (void) cam0_msg;
+    (void) cam1_msg;
+    const std::int64_t timestamp{
+        static_cast<std::int64_t>(imu_msg->header.stamp.sec) * 1'000'000'000ll
+        + imu_msg->header.stamp.nanosec};
+    const auto &vec3angularVelocity{imu_msg->angular_velocity};
+    const auto &vec3linearAcceleration{imu_msg->linear_acceleration};
 
+    if (first)
+    {
+      RCLCPP_INFO(this->get_logger(), "SyncCallback timestamp, gyro_x, gyro_y, "
+                                      "gyro_z, accel_x, accel_y, accel_z");
+    }
+    do
+    {
+      std::stringstream ss;
+      ss << "SyncCallback " << timestamp << ", " << std::fixed
+         << std::setprecision(18) << vec3angularVelocity.x << ", "
+         << vec3angularVelocity.y << ", " << vec3angularVelocity.z << ", "
+         << vec3linearAcceleration.x << ", " << vec3linearAcceleration.y << ", "
+         << vec3linearAcceleration.z;
+      RCLCPP_INFO(this->get_logger(), ss.str().c_str());
+    } while (false);
+
+#if 0
     auto image0                   = ConvertImage(cam0_msg);
     auto image1                   = ConvertImage(cam1_msg);
     auto [rectified0, rectified1] = euroc.remap(image0, image1);
@@ -896,6 +1054,8 @@ private:
            << "," << rq1.translation.x << "," << rq1.translation.y << ","
            << rq1.translation.z << std::endl;
 
+      // TODO 估计上一帧到当前帧的相对刚体变换
+
       // 绘制光流
       const cv::Size flowSize{vis.size()};
       cv::Mat flow{cv::Mat::zeros(flowSize, rectified0.type())};
@@ -911,6 +1071,15 @@ private:
                "Current Frame Left");
 
       cv::add(flow, vis, vis);
+
+      // 更新上一帧的旋转和平移
+      prev.rotation.w    = (rq0.rotation.w + rq1.rotation.w) * 0.5;
+      prev.rotation.x    = (rq0.rotation.x + rq1.rotation.x) * 0.5;
+      prev.rotation.y    = (rq0.rotation.y + rq1.rotation.y) * 0.5;
+      prev.rotation.z    = (rq0.rotation.z + rq1.rotation.z) * 0.5;
+      prev.translation.x = (rq0.translation.x + rq1.translation.x) * 0.5;
+      prev.translation.y = (rq0.translation.y + rq1.translation.y) * 0.5;
+      prev.translation.z = (rq0.translation.z + rq1.translation.z) * 0.5;
     }
     else
     {
@@ -925,6 +1094,7 @@ private:
     prev.gray0      = gray0;
     prev.gray1      = gray1;
     ++frame_counter;
+#endif
   }
 
 public:
@@ -932,12 +1102,12 @@ public:
                           const char *imu_topic)
       : Node("VIO"), file(PATH_CSV_FILE, std::ios::out | std::ios::trunc)
   {
-    rclcpp::QoS qos = rclcpp::QoS(10);
+    rclcpp::QoS qos(10);
     cam0_sub.subscribe(this, cam0_topic, qos.get_rmw_qos_profile());
     cam1_sub.subscribe(this, cam1_topic, qos.get_rmw_qos_profile());
     imu_sub.subscribe(this, imu_topic, qos.get_rmw_qos_profile());
 
-    uint32_t queue_size = 10;
+    uint32_t queue_size{10};
     sync = std::make_shared<Synchronizer_t>(ApproximateTime_t(queue_size),
                                             cam0_sub, cam1_sub, imu_sub);
 
@@ -950,6 +1120,7 @@ public:
     sync->registerCallback(
         std::bind(&VirsualInertialOdemetry::SyncCallback, this, _1, _2, _3));
 
+        #if 0
     // 生成随机颜色
     cv::RNG rng;
     for (size_t i = 0; i < nColors; ++i)
@@ -962,6 +1133,7 @@ public:
             "left_ty,left_tz,right_rw,right_rx,right_ry,right_rz,"
             "right_tx,right_ty,right_tz"
          << std::endl;
+         #endif
   }
 };
 
@@ -971,18 +1143,21 @@ int main(int argc, char **argv)
   rclcpp::init(argc, argv);
   auto node = std::make_shared<VirsualInertialOdemetry>(
       "/cam0/image_raw", "/cam1/image_raw", "/imu0");
+#if 0
   cv::namedWindow("VIO", cv::WINDOW_NORMAL);
   cv::moveWindow("VIO", 0, 0);
   cv::resizeWindow("VIO", cv::Size{1280, 720});
+#endif
   while (true)
   {
     rclcpp::spin_some(node);
-
+#if 0
     const auto key{cv::waitKey(10) & 0xFF};
     if (key == 27)
     {
       break;
     }
+#endif
   }
   cv::destroyAllWindows();
   rclcpp::shutdown();

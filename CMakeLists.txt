@@ -68,6 +68,19 @@ find_package(OpenCV REQUIRED)
 find_package(Boost REQUIRED)
 find_package(Armadillo REQUIRED)
 
+# ROS2 通信接口代码生成
+find_package(rosidl_default_generators REQUIRED)
+rosidl_generate_interfaces(${PROJECT_NAME}_msgs
+  "msg/Imu.msg"
+  DEPENDENCIES
+  std_msgs
+  geometry_msgs
+)
+rosidl_get_typesupport_target(cpp_typesupport_target
+  ${PROJECT_NAME}_msgs "rosidl_typesupport_cpp"
+)
+ament_export_dependencies(rosidl_default_runtime)
+
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
@@ -80,56 +93,89 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
-add_executable(euroc_vio src/main.cpp)
 
-target_include_directories(euroc_vio PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
+function(add_ros2_executable node_name source_path)
 
-if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-endif()
+  add_executable(${node_name} ${source_path})
 
-if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 14)
+  target_include_directories(${node_name} PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  )
 
-  if(DETECTED_CXX_STD GREATER_EQUAL 26)
-    target_compile_features(euroc_vio PUBLIC cxx_std_26)
-  elseif(DETECTED_CXX_STD GREATER_EQUAL 23)
-    target_compile_features(euroc_vio PUBLIC cxx_std_23)
+  if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 14)
+
+    if(DETECTED_CXX_STD GREATER_EQUAL 26)
+      target_compile_features(${node_name} PUBLIC cxx_std_26)
+    elseif(DETECTED_CXX_STD GREATER_EQUAL 23)
+      target_compile_features(${node_name} PUBLIC cxx_std_23)
+    else()
+      target_compile_features(${node_name} PUBLIC cxx_std_20)
+    endif()
+
   else()
-    target_compile_features(euroc_vio PUBLIC cxx_std_20)
+
+    message(WARNING "Old GCC detected, falling back to C++20")
+    target_compile_features(${node_name} PUBLIC cxx_std_20)
+
   endif()
 
-else()
+  install(TARGETS
+    ${node_name}
+    DESTINATION lib/${PROJECT_NAME}
+  )
 
-  message(WARNING "Old GCC detected, falling back to C++20")
-  target_compile_features(euroc_vio PUBLIC cxx_std_20)
+endfunction()
 
-endif()
 
-ament_target_dependencies(euroc_vio
+# IMU 结点：预处理惯性测量单元数据
+add_ros2_executable(euroc_imu src/imu.cpp)
+ament_target_dependencies(euroc_imu
   rclcpp
-  sensor_msgs
   std_msgs
+  sensor_msgs
   geometry_msgs
-  message_filters
-  cv_bridge
-  image_transport
   OpenCV
 )
-install(TARGETS
-  euroc_vio
-  DESTINATION lib/${PROJECT_NAME}
-)
-
-install(DIRECTORY include/
-  DESTINATION include
-)
-target_link_libraries(euroc_vio
+target_link_libraries(euroc_imu
+  ${cpp_typesupport_target}
   Eigen3::Eigen
   Boost::boost
-  armadillo
   ${OpenCV_LIBS}
+)
+
+
+# # VIO 结点：融合视觉、惯性测量单元数据
+# add_ros2_executable(euroc_vio src/vio.cpp)
+# ament_target_dependencies(euroc_vio
+#   rclcpp
+#   std_msgs
+#   sensor_msgs
+#   geometry_msgs
+#   message_filters
+#   cv_bridge
+#   image_transport
+#   OpenCV
+# )
+# target_link_libraries(euroc_vio
+#   ${cpp_typesupport_target}
+#   Eigen3::Eigen
+#   Boost::boost
+#   armadillo
+#   ${OpenCV_LIBS}
+# )
+
+install(DIRECTORY include/${PROJECT_NAME}/
+  DESTINATION include/${PROJECT_NAME}
+)
+install(DIRECTORY rviz/
+  DESTINATION share/${PROJECT_NAME}/rviz
+)
+install(DIRECTORY urdf/
+  DESTINATION share/${PROJECT_NAME}/urdf
+)
+install(DIRECTORY launch/
+  DESTINATION share/${PROJECT_NAME}/launch
 )
 
 ament_package()
