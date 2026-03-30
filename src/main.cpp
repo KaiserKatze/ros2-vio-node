@@ -108,7 +108,6 @@ using ApproximateTime_t
     = message_filters::sync_policies::ApproximateTime<MsgImage, MsgImage,
                                                       MsgImu>;
 using Synchronizer_t = message_filters::Synchronizer<ApproximateTime_t>;
-using VecPoint2f     = std::vector<cv::Point2f>;
 
 template <typename RosMsgType> auto ConvertImage(const RosMsgType &msg)
 {
@@ -260,11 +259,28 @@ struct EuRoC
     return std::make_pair(gray0, gray1);
   }
 
-  auto Solve(std::vector<cv::Point2f> const &pts0,
-             std::vector<cv::Point2f> const &pts1) const
+  template <typename PointType>
+  auto Solve(std::vector<PointType> const &pts0,
+             std::vector<PointType> const &pts1) const
   {
-    return QuEst_Solve(pts0, pts1, rectifiedCameraMatrix0,
-                       rectifiedCameraMatrix1);
+    if (pts0.size() != pts1.size())
+    {
+      throw std::runtime_error{"pts0 and pts1 must have the same size"};
+    }
+    Eigen::Matrix3Xd M0;
+    Eigen::Matrix3Xd M1;
+    for (size_t i{0}; i < pts0.size(); ++i)
+    {
+      const PointType &pt0{pts0[i]};
+      const PointType &pt1{pts1[i]};
+      M0(0, i) = pt0.x;
+      M0(1, i) = pt0.y;
+      M0(2, i) = 1;
+      M1(0, i) = pt1.x;
+      M1(1, i) = pt1.y;
+      M1(2, i) = 1;
+    }
+    return QuEst_Solve(M0, M1, rectifiedCameraMatrix0, rectifiedCameraMatrix1);
   }
 };
 
@@ -285,6 +301,21 @@ struct OpticalFlow_Fast
     fastFeatureDetector = cv::FastFeatureDetector::create(
         fastThreshold, fastNonmaxSuppression, fastType);
   }
+};
+
+struct Corners
+{
+  std::vector<cv::Point2i> corners_l0;
+  std::vector<cv::Point2i> corners_r0;
+  std::vector<cv::Point2i> corners_l1;
+  std::vector<cv::Point2i> corners_r1;
+};
+
+struct CornerPair
+{
+  size_t frame_index;
+  cv::Point2i corner_left;
+  cv::Point2i corner_right;
 };
 
 class VirsualInertialOdemetry : public rclcpp::Node,
@@ -333,6 +364,8 @@ private:
   static constexpr double blockSize{7.0};
   static constexpr bool useHarrisDetector{false};
   static constexpr double freeParamHarisDetector{0.04};
+  static constexpr double atol_parallax{2.0};
+  static constexpr double atol_coincidence{1.0};
 
   const cv::Size winSize{15, 15};
   static constexpr int maxLevel{2};
@@ -342,6 +375,12 @@ private:
 
   const EuRoC euroc{};
 
+  // 维护一个表，统计各个角点的 age 值
+  std::vector<std::vector<CornerPair>> corner_track_store;
+
+  // 记录已经处理的图像帧的个数
+  size_t frame_counter{0};
+
   std::fstream file;
 
   /**
@@ -349,7 +388,7 @@ private:
    *
    * @param gray 灰度图像
    */
-  void InitCorners(const cv::Mat &gray, VecPoint2f &corners) const
+  void InitCorners(const cv::Mat &gray, std::vector<cv::Point2f> &corners) const
   {
     corners.clear();
     if constexpr (CORNER_DETECTION_ALGORITHM == CORNER_USE_SHITOMASI)
@@ -385,10 +424,10 @@ private:
     }
   }
 
-  auto FilterWithStatus(VecPoint2f &pts,
+  auto FilterWithStatus(std::vector<cv::Point2f> &pts,
                         std::vector<unsigned char> const &status) const
   {
-    VecPoint2f result;
+    std::vector<cv::Point2f> result;
     for (size_t i{0}; i < pts.size(); ++i)
     {
       if (status[i] == 1)
@@ -399,10 +438,10 @@ private:
     pts = result;
   }
 
-  std::vector<unsigned char> MatchCorners0(const cv::Mat &prevGray,
-                                           const cv::Mat &nextGray,
-                                           VecPoint2f &prevCorners,
-                                           VecPoint2f &nextCorners) const
+  std::vector<unsigned char>
+  MatchCorners0(const cv::Mat &prevGray, const cv::Mat &nextGray,
+                std::vector<cv::Point2f> &prevCorners,
+                std::vector<cv::Point2f> &nextCorners) const
   {
     std::vector<unsigned char> status;
     std::vector<float> err;
@@ -427,9 +466,11 @@ private:
    * @param listCorners 其他角点
    */
   void MatchCorners(
-      const cv::Mat &prevGray, const cv::Mat &nextGray, VecPoint2f &prevCorners,
-      VecPoint2f &nextCorners,
-      const std::vector<std::reference_wrapper<VecPoint2f>> &&listCorners) const
+      const cv::Mat &prevGray, const cv::Mat &nextGray,
+      std::vector<cv::Point2f> &prevCorners,
+      std::vector<cv::Point2f> &nextCorners,
+      const std::vector<std::reference_wrapper<std::vector<cv::Point2f>>>
+          &&listCorners) const
   {
     auto status{MatchCorners0(prevGray, nextGray, prevCorners, nextCorners)};
     for (auto otherCorners : listCorners)
@@ -457,7 +498,8 @@ private:
     return std::ranges::count_if(mask, [](bool e) { return e; });
   }
 
-  auto FilterParallax0(VecPoint2f &ptsLeft, VecPoint2f &ptsRight,
+  auto FilterParallax0(std::vector<cv::Point2f> &ptsLeft,
+                       std::vector<cv::Point2f> &ptsRight,
                        std::vector<double> &error, double atol = 1.0) const
   {
     if (ptsLeft.size() != ptsRight.size())
@@ -503,8 +545,9 @@ private:
    * @return false 视差验证失败
    */
   bool FilterParallax(
-      VecPoint2f &ptsLeft, VecPoint2f &ptsRight,
-      const std::vector<std::reference_wrapper<VecPoint2f>> &&listPts,
+      std::vector<cv::Point2f> &ptsLeft, std::vector<cv::Point2f> &ptsRight,
+      const std::vector<std::reference_wrapper<std::vector<cv::Point2f>>>
+          &&listPts,
       std::vector<double> &sumL1Error, double atol = 1.0) const
   {
     try
@@ -537,7 +580,8 @@ private:
   }
 
   template <typename Compare>
-  std::vector<bool> CreateMask(const VecPoint2f &pts0, const VecPoint2f &pts1,
+  std::vector<bool> CreateMask(const std::vector<cv::Point2f> &pts0,
+                               const std::vector<cv::Point2f> &pts1,
                                Compare compare) const
   {
     std::vector<bool> mask(pts0.size(), false);
@@ -562,9 +606,10 @@ private:
    * @return false 一致性验证失败
    */
   bool FilterCoincidence(
-      VecPoint2f &ptsInit, VecPoint2f &ptsLast,
-      const std::vector<std::reference_wrapper<VecPoint2f>> &&listPts,
-      std::vector<double> &sumL1Error, double atol = 1.0)
+      std::vector<cv::Point2f> &ptsInit, std::vector<cv::Point2f> &ptsLast,
+      const std::vector<std::reference_wrapper<std::vector<cv::Point2f>>>
+          &&listPts,
+      std::vector<double> &sumL1Error, double atol = 1.0) const
   {
     if (ptsInit.size() != ptsLast.size())
     {
@@ -614,14 +659,6 @@ private:
     return true;
   }
 
-  struct Corners
-  {
-    VecPoint2f corners_l0;
-    VecPoint2f corners_r0;
-    VecPoint2f corners_l1;
-    VecPoint2f corners_r1;
-  };
-
   /**
    * @brief 找到左右目图像中的角点
    *
@@ -629,13 +666,12 @@ private:
    * @param gray_r1 右目灰度图像
    */
   bool FindCorners(const cv::Mat &gray_l1, const cv::Mat &gray_r1,
-                   Corners &corners)
+                   Corners &corners, const size_t frame_index)
   {
-    static constexpr double atol_parallax{2.0};
-    static constexpr double atol_coincidence{1.0};
     std::vector<double> sumL1Error;
     // 上一帧左目角点
-    VecPoint2f corners_l0;
+    std::vector<cv::Point2f> corners_l0;
+
     InitCorners(prev.gray0, corners_l0);
     printf("Found %zu corners in prev.gray0\n", corners_l0.size());
     if (corners_l0.size() < minCorners)
@@ -643,7 +679,7 @@ private:
       return false;
     }
     // 上一帧右目角点
-    VecPoint2f corners_r0;
+    std::vector<cv::Point2f> corners_r0;
     MatchCorners0(prev.gray0, prev.gray1, corners_l0, corners_r0);
     printf("Found %zu matching corners in prev.gray1\n", corners_r0.size());
     if (corners_r0.size() < minCorners)
@@ -664,7 +700,7 @@ private:
         "Found %zu matching corners in prev.gray1 after parallax filtering\n",
         corners_r0.size());
     // 当前帧右目角点
-    VecPoint2f corners_r1;
+    std::vector<cv::Point2f> corners_r1;
     MatchCorners(prev.gray1, gray_r1, corners_r0, corners_r1, {corners_l0});
     printf("Found %zu matching corners in gray_r1\n", corners_r1.size());
     if (corners_r1.size() < minCorners)
@@ -672,7 +708,7 @@ private:
       return false;
     }
     // 当前帧左目角点
-    VecPoint2f corners_l1;
+    std::vector<cv::Point2f> corners_l1;
     MatchCorners(gray_r1, gray_l1, corners_r1, corners_l1,
                  {corners_l0, corners_r0});
     printf("Found %zu matching corners in gray_l1\n", corners_l1.size());
@@ -688,7 +724,7 @@ private:
     printf("Found %zu matching corners in gray_l1 after parallax filtering\n",
            corners_l1.size());
     // 回到上一帧左目角点
-    VecPoint2f corners_loopback;
+    std::vector<cv::Point2f> corners_loopback;
     MatchCorners(gray_l1, prev.gray0, corners_l1, corners_loopback,
                  {corners_l0, corners_r0, corners_r1});
     printf("Found %zu matching corners in prev.gray0\n",
@@ -710,59 +746,88 @@ private:
 
     // 根据 sumL1Error 将角点排序，保留误差最小的 20 个交点
     static constexpr size_t maxCorners{20};
-    std::vector<size_t> bestIndices{
+    const std::vector<size_t> bestIndices{
         KeepSmallestElement(sumL1Error, maxCorners)};
 
     corners.corners_l0.reserve(maxCorners);
     corners.corners_r0.reserve(maxCorners);
     corners.corners_l1.reserve(maxCorners);
     corners.corners_r1.reserve(maxCorners);
-    for (size_t bestIndex : bestIndices)
+    for (const size_t bestIndex : bestIndices)
     {
-      corners.corners_l0.push_back(corners_l0[bestIndex]);
-      corners.corners_r0.push_back(corners_r0[bestIndex]);
-      corners.corners_l1.push_back(corners_l1[bestIndex]);
-      corners.corners_r1.push_back(corners_r1[bestIndex]);
+      const cv::Point2i best_corner_l0{
+          static_cast<cv::Point2i>(corners_l0[bestIndex])};
+      const cv::Point2i best_corner_r0{
+          static_cast<cv::Point2i>(corners_r0[bestIndex])};
+      const cv::Point2i best_corner_l1{
+          static_cast<cv::Point2i>(corners_l1[bestIndex])};
+      const cv::Point2i best_corner_r1{
+          static_cast<cv::Point2i>(corners_r1[bestIndex])};
+
+      corners.corners_l0.push_back(best_corner_l0);
+      corners.corners_r0.push_back(best_corner_r0);
+      corners.corners_l1.push_back(best_corner_l1);
+      corners.corners_r1.push_back(best_corner_r1);
+
+      CornerPair oldCornerPair{frame_index - 1, best_corner_l0, best_corner_r0};
+      CornerPair newCornerPair{frame_index, best_corner_l1, best_corner_r1};
+
+      bool found_matching_pair{false};
+
+      if (!first)
+      {
+        for (auto &corner_track : corner_track_store)
+        {
+          const CornerPair &corner_pair{corner_track.back()};
+          const cv::Point2i &last_left{corner_pair.corner_left};
+          const cv::Point2i &last_right{corner_pair.corner_right};
+          // 将 [last_left, last_right] 与 [best_corner_l0, best_corner_r0] 进行比较，判断是否同一个角点
+          if (last_left == best_corner_l0 && last_right == best_corner_r0)
+          {
+            corner_track.push_back(newCornerPair);
+            found_matching_pair = true;
+            break;
+          }
+        }
+      }
+
+      if (!found_matching_pair)
+      {
+        // 将现有点对加入仓库
+        corner_track_store.push_back(std::vector<CornerPair>{
+            oldCornerPair,
+            newCornerPair,
+        });
+      }
     }
 
     return true;
   }
 
-public:
-  VirsualInertialOdemetry(const char *cam0_topic, const char *cam1_topic,
-                          const char *imu_topic)
-      : Node("VIO"), file(PATH_CSV_FILE, std::ios::out | std::ios::trunc)
+  template <typename PointType>
+  void PlotFlow(cv::Mat &flow, std::vector<PointType> const &pts0,
+                std::vector<PointType> const &pts1, cv::Size offset0,
+                cv::Size offset1, const std::string &&label) const
   {
-    rclcpp::QoS qos = rclcpp::QoS(10);
-    cam0_sub.subscribe(this, cam0_topic, qos.get_rmw_qos_profile());
-    cam1_sub.subscribe(this, cam1_topic, qos.get_rmw_qos_profile());
-    imu_sub.subscribe(this, imu_topic, qos.get_rmw_qos_profile());
-
-    uint32_t queue_size = 10;
-    sync = std::make_shared<Synchronizer_t>(ApproximateTime_t(queue_size),
-                                            cam0_sub, cam1_sub, imu_sub);
-
-    sync->setAgePenalty(0.50);
-
-    using std::placeholders::_1;
-    using std::placeholders::_2;
-    using std::placeholders::_3;
-
-    sync->registerCallback(
-        std::bind(&VirsualInertialOdemetry::SyncCallback, this, _1, _2, _3));
-
-    // 生成随机颜色
-    cv::RNG rng;
-    for (size_t i = 0; i < nColors; ++i)
+    for (size_t index{0}; index < pts0.size(); ++index)
     {
-      colors.push_back(cv::Scalar(rng.uniform(0, 256), rng.uniform(0, 256),
-                                  rng.uniform(0, 256)));
+      cv::Point2f pt0{pts0[index]};
+      cv::Point2f pt1{pts1[index]};
+      pt0.x += offset0.width;
+      pt0.y += offset0.height;
+      pt1.x += offset1.width;
+      pt1.y += offset1.height;
+      const cv::Scalar lineColor{this->colors[index % this->nColors]};
+      const int lineThickness{2};
+      cv::line(flow, pt0, pt1, lineColor, lineThickness);
     }
-
-    file << "timestamp[ns],left_rw,left_rx,left_ry,left_rz,left_tx,"
-            "left_ty,left_tz,right_rw,right_rx,right_ry,right_rz,"
-            "right_tx,right_ty,right_tz"
-         << std::endl;
+    const cv::Point2f textPos{10.0f + offset0.width, 30.0f + offset0.height};
+    const cv::Scalar textColor{0, 255, 0};
+    const int fontFace{cv::FONT_HERSHEY_SIMPLEX};
+    const double fontScale{1.0};
+    const int textThickness{2};
+    cv::putText(flow, label, textPos, fontFace, fontScale, textColor,
+                textThickness);
   }
 
   void SyncCallback(const MsgImage::ConstSharedPtr &cam0_msg,
@@ -804,7 +869,7 @@ public:
 
     // 寻找角点
     Corners corners;
-    if (FindCorners(gray0, gray1, corners))
+    if (FindCorners(gray0, gray1, corners, frame_counter))
     {
       printf("FindCorners success: %ld\n", corners.corners_l0.size());
 
@@ -833,40 +898,14 @@ public:
       // 绘制光流
       const cv::Size flowSize{vis.size()};
       cv::Mat flow{cv::Mat::zeros(flowSize, rectified0.type())};
-      const auto PlotFlow
-          = [&flow, this](VecPoint2f const &pts0, VecPoint2f const &pts1,
-                          cv::Size offset0, cv::Size offset1,
-                          const std::string &&label)
-      {
-        for (size_t index{0}; index < pts0.size(); ++index)
-        {
-          cv::Point2f pt0{pts0[index]};
-          cv::Point2f pt1{pts1[index]};
-          pt0.x += offset0.width;
-          pt0.y += offset0.height;
-          pt1.x += offset1.width;
-          pt1.y += offset1.height;
-          const cv::Scalar lineColor{this->colors[index % this->nColors]};
-          const int lineThickness{2};
-          cv::line(flow, pt0, pt1, lineColor, lineThickness);
-        }
-        const cv::Point2f textPos{10.0f + offset0.width,
-                                  30.0f + offset0.height};
-        const cv::Scalar textColor{0, 255, 0};
-        const int fontFace{cv::FONT_HERSHEY_SIMPLEX};
-        const double fontScale{1.0};
-        const int textThickness{2};
-        cv::putText(flow, label, textPos, fontFace, fontScale, textColor,
-                    textThickness);
-      };
       const cv::Size imageSize{rectified0.size()};
-      PlotFlow(corners.corners_l0, corners.corners_r0, cv::Size{0, 0},
+      PlotFlow(flow, corners.corners_l0, corners.corners_r0, cv::Size{0, 0},
                cv::Size{imageSize.width, 0}, "Previous Frame Left");
-      PlotFlow(corners.corners_r0, corners.corners_r1,
+      PlotFlow(flow, corners.corners_r0, corners.corners_r1,
                cv::Size{imageSize.width, 0}, imageSize, "Previous Frame Right");
-      PlotFlow(corners.corners_r1, corners.corners_l1, imageSize,
+      PlotFlow(flow, corners.corners_r1, corners.corners_l1, imageSize,
                cv::Size{0, imageSize.height}, "Current Frame Right");
-      PlotFlow(corners.corners_l1, corners.corners_l0,
+      PlotFlow(flow, corners.corners_l1, corners.corners_l0,
                cv::Size{0, imageSize.height}, cv::Size{0, 0},
                "Current Frame Left");
 
@@ -884,6 +923,44 @@ public:
     prev.rectified1 = rectified1;
     prev.gray0      = gray0;
     prev.gray1      = gray1;
+    ++frame_counter;
+  }
+
+public:
+  VirsualInertialOdemetry(const char *cam0_topic, const char *cam1_topic,
+                          const char *imu_topic)
+      : Node("VIO"), file(PATH_CSV_FILE, std::ios::out | std::ios::trunc)
+  {
+    rclcpp::QoS qos = rclcpp::QoS(10);
+    cam0_sub.subscribe(this, cam0_topic, qos.get_rmw_qos_profile());
+    cam1_sub.subscribe(this, cam1_topic, qos.get_rmw_qos_profile());
+    imu_sub.subscribe(this, imu_topic, qos.get_rmw_qos_profile());
+
+    uint32_t queue_size = 10;
+    sync = std::make_shared<Synchronizer_t>(ApproximateTime_t(queue_size),
+                                            cam0_sub, cam1_sub, imu_sub);
+
+    sync->setAgePenalty(0.50);
+
+    using std::placeholders::_1;
+    using std::placeholders::_2;
+    using std::placeholders::_3;
+
+    sync->registerCallback(
+        std::bind(&VirsualInertialOdemetry::SyncCallback, this, _1, _2, _3));
+
+    // 生成随机颜色
+    cv::RNG rng;
+    for (size_t i = 0; i < nColors; ++i)
+    {
+      colors.push_back(cv::Scalar(rng.uniform(0, 256), rng.uniform(0, 256),
+                                  rng.uniform(0, 256)));
+    }
+
+    file << "timestamp[ns],left_rw,left_rx,left_ry,left_rz,left_tx,"
+            "left_ty,left_tz,right_rw,right_rx,right_ry,right_rz,"
+            "right_tx,right_ty,right_tz"
+         << std::endl;
   }
 };
 
