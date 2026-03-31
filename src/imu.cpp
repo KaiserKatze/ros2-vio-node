@@ -86,8 +86,9 @@ struct ImuKinematicsODE
   cv::Vec3d w;          // 经过滤波后的角速度 (机体坐标系)
   const double g{9.81}; // 重力加速度常数 (默认 Z 轴朝上)
 
-  ImuKinematicsODE(const cv::Vec3d &accel, const cv::Vec3d &gyro)
-      : a(accel), w(gyro)
+  ImuKinematicsODE(const cv::Vec3d &accel, const cv::Vec3d &gyro,
+                   const cv::Vec3d &ba, const cv::Vec3d &bw)
+      : a(accel - ba), w(gyro - bw)
   {
   }
 
@@ -145,6 +146,13 @@ private:
 
   runge_kutta4<state_type> rk4_;
 
+  // 零偏
+  cv::Vec3d gyro_bias_{0, 0, 0};
+  cv::Vec3d accel_bias_{0, 0, 0};
+
+  // 初始重力对齐缓存
+  std::vector<cv::Vec3d> init_acc_buffer_;
+
 public:
   ImuWorker() : accel_filter_(0.15), gyro_filter_(0.15) {}
 
@@ -169,11 +177,51 @@ public:
     const cv::Vec3d filt_accel{accel_filter_.filter(raw_accel)};
     const cv::Vec3d filt_gyro{gyro_filter_.filter(raw_gyro)};
 
+    // 初始重力对齐
     if (first_msg_)
     {
+      init_acc_buffer_.push_back(raw_accel);
+
+      if (init_acc_buffer_.size() < 200)
+      {
+        return {};
+      }
+
+      cv::Vec3d g_body(0, 0, 0);
+      for (auto &a : init_acc_buffer_)
+      {
+        g_body += a;
+      }
+      g_body /= static_cast<double>(init_acc_buffer_.size());
+      g_body /= cv::norm(g_body);
+
+      cv::Vec3d g_world(0, 0, -1);
+
+      cv::Vec3d v = g_body.cross(g_world);
+      double c    = g_body.dot(g_world);
+      double s    = cv::norm(v);
+
+      cv::Mat K = (cv::Mat_<double>(3, 3) << 0, -v[2], v[1], v[2], 0, -v[0],
+                   -v[1], v[0], 0);
+
+      cv::Mat R
+          = cv::Mat::eye(3, 3, CV_64F) + K + K * K * ((1 - c) / (s * s + 1e-8));
+
+      // 转 quaternion（简化）
+      double qw = std::sqrt(1 + R.at<double>(0, 0) + R.at<double>(1, 1)
+                            + R.at<double>(2, 2))
+                  / 2;
+      double qx = (R.at<double>(2, 1) - R.at<double>(1, 2)) / (4 * qw);
+      double qy = (R.at<double>(0, 2) - R.at<double>(2, 0)) / (4 * qw);
+      double qz = (R.at<double>(1, 0) - R.at<double>(0, 1)) / (4 * qw);
+
+      state_[6] = qw;
+      state_[7] = qx;
+      state_[8] = qy;
+      state_[9] = qz;
+
       last_time_ = current_time;
       first_msg_ = false;
-      // TODO: 可以在这里添加基于重力的初始姿态对齐逻辑
       return {}; // 首条消息仅用于初始化，不进行积分推算
     }
 
@@ -186,8 +234,28 @@ public:
       return {}; // 时间间隔异常，可能是数据乱序或丢包，跳过处理
     }
 
+    // ⭐ 静止检测
+    double acc_norm  = cv::norm(filt_accel);
+    double gyro_norm = cv::norm(filt_gyro);
+
+    bool is_static = (std::abs(acc_norm - 9.81) < 0.1) && (gyro_norm < 0.02);
+
+    // ⭐ ZUPT + bias 更新
+    if (is_static)
+    {
+      state_[3] = 0;
+      state_[4] = 0;
+      state_[5] = 0;
+
+      double alpha = 0.01;
+      gyro_bias_   = (1 - alpha) * gyro_bias_ + alpha * filt_gyro;
+
+      accel_bias_ = (1 - alpha) * accel_bias_
+                    + alpha * (filt_accel - cv::Vec3d(0, 0, -9.81));
+    }
+
     // 2. 利用 RK4 进行积分推算
-    ImuKinematicsODE ode{filt_accel, filt_gyro};
+    ImuKinematicsODE ode{filt_accel, filt_gyro, accel_bias_, gyro_bias_};
     rk4_.do_step(ode, state_, 0.0, dt);
 
     double px{state_[0]}, py{state_[1]}, pz{state_[2]};
