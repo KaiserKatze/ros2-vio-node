@@ -22,7 +22,9 @@
 #include <vector>
 
 #include "euroc_vio/msg/imu.hpp"
-#include <geometry_msgs/msg/transform.h>
+#include <geometry_msgs/msg/transform.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 

@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.8)
 project(euroc_vio)
 
+# --- 编译选项设置 ---
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -20,11 +21,8 @@ add_compile_options(-O2)
 
 # 自动检测 C++ 标准（支持草案和正式标准）
 include(CheckCXXCompilerFlag)
-set(CMAKE_REQUIRED_FLAGS "")
-
 check_cxx_compiler_flag("-std=c++2c" HAS_CXX26_DRAFT)
 check_cxx_compiler_flag("-std=c++26" HAS_CXX26_FINAL)
-
 check_cxx_compiler_flag("-std=c++2b" HAS_CXX23_DRAFT)
 check_cxx_compiler_flag("-std=c++23" HAS_CXX23_FINAL)
 
@@ -50,11 +48,11 @@ else()
   set(DETECTED_CXX_STD 20)
 endif()
 
-if (CMAKE_CXX_STANDARD LESS 26)
+if (DETECTED_CXX_STD LESS 26)
   message(WARNING "Requested C++26, but falling back to C++${DETECTED_CXX_STD}")
 endif()
 
-# find dependencies
+# --- 查找依赖 ---
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -68,34 +66,18 @@ find_package(OpenCV REQUIRED)
 find_package(Boost REQUIRED)
 find_package(Armadillo REQUIRED)
 
-# ROS2 通信接口代码生成
+# --- ROS2 通信接口生成 ---
 find_package(rosidl_default_generators REQUIRED)
-rosidl_generate_interfaces(${PROJECT_NAME}_msgs
+rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Imu.msg"
   DEPENDENCIES
   std_msgs
   geometry_msgs
 )
-rosidl_get_typesupport_target(cpp_typesupport_target
-  ${PROJECT_NAME}_msgs "rosidl_typesupport_cpp"
-)
 ament_export_dependencies(rosidl_default_runtime)
 
-if(BUILD_TESTING)
-  find_package(ament_lint_auto REQUIRED)
-  # the following line skips the linter which checks for copyrights
-  # comment the line when a copyright and license is added to all source files
-  set(ament_cmake_copyright_FOUND TRUE)
-  # the following line skips cpplint (only works in a git repo)
-  # comment the line when this package is in a git repo and when
-  # a copyright and license is added to all source files
-  set(ament_cmake_cpplint_FOUND TRUE)
-  ament_lint_auto_find_test_dependencies()
-endif()
-
-
+# --- 辅助函数定义 ---
 function(add_ros2_executable node_name source_path)
-
   add_executable(${node_name} ${source_path})
 
   target_include_directories(${node_name} PUBLIC
@@ -103,8 +85,8 @@ function(add_ros2_executable node_name source_path)
     $<INSTALL_INTERFACE:include>
   )
 
+  # 设置编译特性
   if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 14)
-
     if(DETECTED_CXX_STD GREATER_EQUAL 26)
       target_compile_features(${node_name} PUBLIC cxx_std_26)
     elseif(DETECTED_CXX_STD GREATER_EQUAL 23)
@@ -112,40 +94,39 @@ function(add_ros2_executable node_name source_path)
     else()
       target_compile_features(${node_name} PUBLIC cxx_std_20)
     endif()
-
   else()
-
     message(WARNING "Old GCC detected, falling back to C++20")
     target_compile_features(${node_name} PUBLIC cxx_std_20)
-
   endif()
 
-  install(TARGETS
-    ${node_name}
+  # 【关键修复点 1】链接类型支持库 (Jazzy 推荐做法)
+  rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+  target_link_libraries(${node_name} ${cpp_typesupport_target})
+
+  # 【关键修复点 2】建立显式依赖关系，确保先生成 msg 头文件再编译节点代码
+  # 使用 ${PROJECT_NAME}__cpp 是最通用的做法
+  add_dependencies(${node_name} ${PROJECT_NAME}__cpp)
+
+  install(TARGETS ${node_name}
     DESTINATION lib/${PROJECT_NAME}
   )
-
 endfunction()
 
-
-# IMU 结点：预处理惯性测量单元数据
+# --- 编译 IMU 结点：预处理惯性测量单元数据 ---
 add_ros2_executable(euroc_imu src/imu.cpp)
 ament_target_dependencies(euroc_imu
   rclcpp
   std_msgs
   sensor_msgs
   geometry_msgs
-  OpenCV
 )
 target_link_libraries(euroc_imu
-  ${cpp_typesupport_target}
   Eigen3::Eigen
   Boost::boost
   ${OpenCV_LIBS}
 )
 
-
-# # VIO 结点：融合视觉、惯性测量单元数据
+# --- 编译 VIO 结点：融合视觉、惯性测量单元数据 ---
 # add_ros2_executable(euroc_vio src/vio.cpp)
 # ament_target_dependencies(euroc_vio
 #   rclcpp
@@ -158,13 +139,13 @@ target_link_libraries(euroc_imu
 #   OpenCV
 # )
 # target_link_libraries(euroc_vio
-#   ${cpp_typesupport_target}
 #   Eigen3::Eigen
 #   Boost::boost
 #   armadillo
 #   ${OpenCV_LIBS}
 # )
 
+# --- 资源安装 ---
 install(DIRECTORY include/${PROJECT_NAME}/
   DESTINATION include/${PROJECT_NAME}
 )
@@ -177,5 +158,18 @@ install(DIRECTORY urdf/
 install(DIRECTORY launch/
   DESTINATION share/${PROJECT_NAME}/launch
 )
+
+# --- 单元测试 ---
+if(BUILD_TESTING)
+  find_package(ament_lint_auto REQUIRED)
+  # the following line skips the linter which checks for copyrights
+  # comment the line when a copyright and license is added to all source files
+  set(ament_cmake_copyright_FOUND TRUE)
+  # the following line skips cpplint (only works in a git repo)
+  # comment the line when this package is in a git repo and when
+  # a copyright and license is added to all source files
+  set(ament_cmake_cpplint_FOUND TRUE)
+  ament_lint_auto_find_test_dependencies()
+endif()
 
 ament_package()
