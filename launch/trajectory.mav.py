@@ -27,11 +27,29 @@ def generate_launch_description():
         output="screen",
     )
 
+    imu_arg_use_filter = DeclareLaunchArgument(
+        name="use_filter",
+        default_value="false",
+        description="Whether to use the RC low-pass filter for IMU data (true/false)",
+    )
+
+    imu_arg_estimator = DeclareLaunchArgument(
+        name="estimator",
+        default_value="mahony",
+        description="The estimator to use (rk4, mahony, madgwick)",
+    )
+
     imu_node = Node(
         package="euroc_vio",
         executable="euroc_imu",
         name="trajectory_publisher",
         output="screen",
+        arguments=[
+            "--use_filter",
+            LaunchConfiguration("use_filter"),
+            "--estimator",
+            LaunchConfiguration("estimator"),
+        ],
     )
 
     rviz_arg = DeclareLaunchArgument(

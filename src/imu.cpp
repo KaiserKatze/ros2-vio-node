@@ -127,6 +127,12 @@ struct ImuKinematicsODE
   }
 };
 
+enum class EstimatorType
+{
+  RK4,
+  MAHONY
+};
+
 /*****************************
  * IMU 数据处理单元
  *****************************/
@@ -136,6 +142,8 @@ private:
   bool use_filter_;
   RCFilter accel_filter_;
   RCFilter gyro_filter_;
+
+  EstimatorType estimator_type_;
 
   bool first_msg_   = true;
   double last_time_ = 0.0;
@@ -155,9 +163,41 @@ private:
   std::vector<cv::Vec3d> init_acc_buffer_;
 
 public:
-  ImuWorker(bool use_filter = true)
-      : use_filter_(use_filter), accel_filter_(0.15), gyro_filter_(0.15)
+  ImuWorker(bool use_filter         = true,
+            EstimatorType estimator = EstimatorType::RK4)
+      : use_filter_(use_filter), accel_filter_(0.15), gyro_filter_(0.15),
+        estimator_type_(estimator)
   {
+  }
+
+  void RK4Update(const cv::Vec3d &acc, const cv::Vec3d &gyro, double dt)
+  {
+    ImuKinematicsODE ode{acc, gyro, accel_bias_, gyro_bias_};
+    rk4_.do_step(ode, state_, 0.0, dt);
+  }
+
+  void MahonyUpdate(const cv::Vec3d &acc, const cv::Vec3d &gyro, double dt)
+  {
+    // TODO 利用 Mahony 算法计算姿态四元数，再用龙格库塔法计算速度、位置
+    (void)acc;
+    (void)gyro;
+    (void)dt;
+  }
+
+  void HeavyLift(const cv::Vec3d &filt_accel, const cv::Vec3d &filt_gyro,
+                 double dt)
+  {
+    switch (estimator_type_)
+    {
+    case EstimatorType::RK4:
+      RK4Update(filt_accel, filt_gyro, dt);
+      break;
+    case EstimatorType::MAHONY:
+      MahonyUpdate(filt_accel, filt_gyro, dt);
+      break;
+    default:
+      break;
+    }
   }
 
   std::optional<geometry_msgs::msg::PoseStamped>
@@ -261,8 +301,7 @@ public:
     }
 
     // 2. 利用 RK4 进行积分推算
-    ImuKinematicsODE ode{filt_accel, filt_gyro, accel_bias_, gyro_bias_};
-    rk4_.do_step(ode, state_, 0.0, dt);
+    HeavyLift(filt_accel, filt_gyro, dt);
 
     double px{state_[0]}, py{state_[1]}, pz{state_[2]};
     double vx{state_[3]}, vy{state_[4]}, vz{state_[5]};
@@ -347,10 +386,21 @@ private:
 
 public:
   ImuNode(const char *input_imu_topic, const char *input_groundtruth_topic,
-          const char *output_imu_topic, const char *output_groundtruth_topic,
-          bool use_filter = true)
-      : Node("VIO"), imu_worker_(use_filter)
+          const char *output_imu_topic, const char *output_groundtruth_topic)
+      : Node("VIO")
   {
+    this->declare_parameter("estimator", "rk4");
+    this->declare_parameter("use_filter", true);
+    std::string estimator_str = this->get_parameter("estimator").as_string();
+    bool use_filter           = this->get_parameter("use_filter").as_bool();
+
+    EstimatorType estimator = EstimatorType::RK4;
+    if (estimator_str == "mahony")
+    {
+      estimator = EstimatorType::MAHONY;
+    }
+    imu_worker_ = ImuWorker(use_filter, estimator);
+
     // 设置路径消息的坐标系
     path_msg_imu.header.frame_id         = "world";
     path_msg_groundtruth.header.frame_id = "world";
@@ -377,7 +427,7 @@ int main(int argc, char **argv)
   rclcpp::init(argc, argv);
 
   auto node{std::make_shared<ImuNode>("/imu0", "/vicon/firefly_sbx/firefly_sbx",
-                                      "/path_imu", "/path_groundtruth", false)};
+                                      "/path_imu", "/path_groundtruth")};
 
   rclcpp::spin(node);
 
