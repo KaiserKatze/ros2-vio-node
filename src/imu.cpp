@@ -133,6 +133,7 @@ struct ImuKinematicsODE
 class ImuWorker
 {
 private:
+  bool use_filter_;
   RCFilter accel_filter_;
   RCFilter gyro_filter_;
 
@@ -154,7 +155,10 @@ private:
   std::vector<cv::Vec3d> init_acc_buffer_;
 
 public:
-  ImuWorker() : accel_filter_(0.15), gyro_filter_(0.15) {}
+  ImuWorker(bool use_filter = true)
+      : use_filter_(use_filter), accel_filter_(0.15), gyro_filter_(0.15)
+  {
+  }
 
   std::optional<geometry_msgs::msg::PoseStamped>
   Work(const MsgImu::ConstSharedPtr &imu_msg, rclcpp::Logger logger)
@@ -174,8 +178,10 @@ public:
     cv::Vec3d raw_gyro(gx, gy, gz);
 
     // 1. RC 低通滤波
-    const cv::Vec3d filt_accel{accel_filter_.filter(raw_accel)};
-    const cv::Vec3d filt_gyro{gyro_filter_.filter(raw_gyro)};
+    const cv::Vec3d filt_accel{use_filter_ ? accel_filter_.filter(raw_accel)
+                                           : raw_accel};
+    const cv::Vec3d filt_gyro{use_filter_ ? gyro_filter_.filter(raw_gyro)
+                                          : raw_gyro};
 
     // 初始重力对齐
     if (first_msg_)
@@ -341,8 +347,9 @@ private:
 
 public:
   ImuNode(const char *input_imu_topic, const char *input_groundtruth_topic,
-          const char *output_imu_topic, const char *output_groundtruth_topic)
-      : Node("VIO")
+          const char *output_imu_topic, const char *output_groundtruth_topic,
+          bool use_filter = true)
+      : Node("VIO"), imu_worker_(use_filter)
   {
     // 设置路径消息的坐标系
     path_msg_imu.header.frame_id         = "world";
@@ -370,7 +377,7 @@ int main(int argc, char **argv)
   rclcpp::init(argc, argv);
 
   auto node{std::make_shared<ImuNode>("/imu0", "/vicon/firefly_sbx/firefly_sbx",
-                                      "/path_imu", "/path_groundtruth")};
+                                      "/path_imu", "/path_groundtruth", false)};
 
   rclcpp::spin(node);
 
