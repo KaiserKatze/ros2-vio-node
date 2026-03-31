@@ -10,9 +10,9 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
-    urdf_tutorial_path = get_package_share_path('euroc_vio')
-    default_model_path = urdf_tutorial_path / 'urdf/mav.urdf'
-    default_rviz_config_path = urdf_tutorial_path / 'rviz/urdf.rviz'
+    workdir_path = get_package_share_path('euroc_vio')
+    default_model_path = workdir_path / 'urdf/mav.urdf'
+    default_rviz_config_path = workdir_path / 'rviz/urdf.rviz'
 
     gui_arg = DeclareLaunchArgument(name='gui', default_value='false', choices=['true', 'false'],
                                     description='Flag to enable joint_state_publisher_gui')
