@@ -58,6 +58,7 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
@@ -66,15 +67,15 @@ find_package(OpenCV REQUIRED)
 find_package(Boost REQUIRED)
 find_package(Armadillo REQUIRED)
 
-# --- ROS2 通信接口生成 ---
-find_package(rosidl_default_generators REQUIRED)
-rosidl_generate_interfaces(${PROJECT_NAME}
-  "msg/Imu.msg"
-  DEPENDENCIES
-  std_msgs
-  geometry_msgs
-)
-ament_export_dependencies(rosidl_default_runtime)
+# # --- ROS2 通信接口生成 ---
+# find_package(rosidl_default_generators REQUIRED)
+# rosidl_generate_interfaces(${PROJECT_NAME}
+#   "msg/Imu.msg"
+#   DEPENDENCIES
+#   std_msgs
+#   geometry_msgs
+# )
+# ament_export_dependencies(rosidl_default_runtime)
 
 # --- 辅助函数定义 ---
 function(add_ros2_executable node_name source_path)
@@ -99,13 +100,13 @@ function(add_ros2_executable node_name source_path)
     target_compile_features(${node_name} PUBLIC cxx_std_20)
   endif()
 
-  # 【关键修复点 1】链接类型支持库 (Jazzy 推荐做法)
-  rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
-  target_link_libraries(${node_name} ${cpp_typesupport_target})
+  # # 链接类型支持库 (Jazzy 推荐做法)
+  # rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+  # target_link_libraries(${node_name} ${cpp_typesupport_target})
 
-  # 【关键修复点 2】建立显式依赖关系，确保先生成 msg 头文件再编译节点代码
-  # 使用 ${PROJECT_NAME}__cpp 是最通用的做法
-  add_dependencies(${node_name} ${PROJECT_NAME}__cpp)
+  # # 建立显式依赖关系，确保先生成 msg 头文件再编译节点代码
+  # # 使用 ${PROJECT_NAME}__cpp 是最通用的做法
+  # add_dependencies(${node_name} ${PROJECT_NAME}__cpp)
 
   install(TARGETS ${node_name}
     DESTINATION lib/${PROJECT_NAME}
@@ -119,6 +120,7 @@ ament_target_dependencies(euroc_imu
   std_msgs
   sensor_msgs
   geometry_msgs
+  nav_msgs
 )
 target_link_libraries(euroc_imu
   Eigen3::Eigen

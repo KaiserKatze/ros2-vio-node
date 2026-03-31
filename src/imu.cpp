@@ -21,10 +21,10 @@
 #include <utility>
 #include <vector>
 
-#include "euroc_vio/msg/imu.hpp"
-#include <geometry_msgs/msg/transform.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/transform.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 
@@ -39,8 +39,8 @@ using namespace boost::numeric::odeint;
  * 常数与类型定义
  *****************************/
 
-using InputMsgImu  = sensor_msgs::msg::Imu;
-using OutputMsgImu = euroc_vio::msg::Imu;
+using MsgImu  = sensor_msgs::msg::Imu;
+using MsgPath = nav_msgs::msg::Path;
 
 // 状态量定义: [px, py, pz, vx, vy, vz, qw, qx, qy, qz] (大小为 10)
 using state_type = std::array<double, 10>;
@@ -147,8 +147,8 @@ private:
 public:
   ImuWorker() : accel_filter_(0.15), gyro_filter_(0.15) {} // 可调节 alpha 参数
 
-  std::optional<OutputMsgImu> Work(const InputMsgImu::ConstSharedPtr &imu_msg,
-                                   rclcpp::Logger logger)
+  std::optional<geometry_msgs::msg::PoseStamped>
+  Work(const MsgImu::ConstSharedPtr &imu_msg, rclcpp::Logger logger)
   {
     const double current_time{imu_msg->header.stamp.sec
                               + imu_msg->header.stamp.nanosec * 1e-9};
@@ -210,25 +210,17 @@ public:
         "%.9f]",
         gx, gy, gz, ax, ay, az, px, py, pz, vx, vy, vz, qw, qx, qy, qz);
 
-    OutputMsgImu msg;
-    msg.header.stamp          = imu_msg->header.stamp;
-    msg.linear_acceleration.x = ax;
-    msg.linear_acceleration.y = ay;
-    msg.linear_acceleration.z = az;
-    msg.linear_velocity.x     = vx;
-    msg.linear_velocity.y     = vy;
-    msg.linear_velocity.z     = vz;
-    msg.position.x            = px;
-    msg.position.y            = py;
-    msg.position.z            = pz;
-    msg.angular_velocity.x    = gx;
-    msg.angular_velocity.y    = gy;
-    msg.angular_velocity.z    = gz;
-    msg.orientation.w         = qw;
-    msg.orientation.x         = qx;
-    msg.orientation.y         = qy;
-    msg.orientation.z         = qz;
-    return msg;
+    geometry_msgs::msg::PoseStamped pose_msg;
+    pose_msg.header.stamp       = imu_msg->header.stamp;
+    pose_msg.header.frame_id    = "world";
+    pose_msg.pose.position.x    = px;
+    pose_msg.pose.position.y    = py;
+    pose_msg.pose.position.z    = pz;
+    pose_msg.pose.orientation.w = qw;
+    pose_msg.pose.orientation.x = qx;
+    pose_msg.pose.orientation.y = qy;
+    pose_msg.pose.orientation.z = qz;
+    return pose_msg;
   }
 };
 
@@ -239,20 +231,22 @@ class ImuNode : public rclcpp::Node
 {
 private:
   // IMU 直接采用标准的 Subscription 来保证高频接收
-  rclcpp::Subscription<InputMsgImu>::SharedPtr imu_sub_direct;
-  rclcpp::Publisher<OutputMsgImu>::SharedPtr imu_pub;
+  rclcpp::Subscription<MsgImu>::SharedPtr imu_sub_direct;
+  rclcpp::Publisher<MsgPath>::SharedPtr imu_pub;
+  MsgPath path_msg_;
 
   ImuWorker imu_worker_;
 
-  void ImuCallback(const InputMsgImu::ConstSharedPtr &imu_msg)
+  void ImuCallback(const MsgImu::ConstSharedPtr &imu_msg)
   {
     // 调用 IMU 处理单元，传入消息与 Logger
-    const std::optional<OutputMsgImu> msg{
-        imu_worker_.Work(imu_msg, this->get_logger())};
+    auto msg{imu_worker_.Work(imu_msg, this->get_logger())};
     // 发布处理后的 IMU 数据
     if (msg)
     {
-      imu_pub->publish(*msg);
+      this->path_msg_.header.stamp = imu_msg->header.stamp; // 同步时间戳
+      this->path_msg_.poses.push_back(*msg);
+      imu_pub->publish(this->path_msg_);
     }
   }
 
@@ -264,10 +258,11 @@ public:
     using std::placeholders::_1;
 
     // 独立且直接地订阅 IMU 话题，防止降频和丢包
-    imu_sub_direct = this->create_subscription<InputMsgImu>(
+    imu_sub_direct = this->create_subscription<MsgImu>(
         input_imu_topic, qos, std::bind(&ImuNode::ImuCallback, this, _1));
 
-    imu_pub = create_publisher<OutputMsgImu>(output_topic, qos);
+    imu_pub                   = create_publisher<MsgPath>(output_topic, qos);
+    path_msg_.header.frame_id = "world"; // 设置路径消息的坐标系
   }
 };
 
@@ -276,7 +271,7 @@ int main(int argc, char **argv)
   std::cout << "Node 'euroc_imu' started\n";
   rclcpp::init(argc, argv);
 
-  auto node{std::make_shared<ImuNode>("/imu0", "/imu9")};
+  auto node{std::make_shared<ImuNode>("/imu0", "/path_imu")};
 
   rclcpp::spin(node);
 
