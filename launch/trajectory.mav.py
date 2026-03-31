@@ -68,12 +68,15 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
+            # Declare launch arguments
+            imu_arg_use_filter,
+            imu_arg_estimator,
+            rviz_arg,
             # 1. 播放 rosbag (非阻塞方式)
             bag_replay,
             # 2. 启动 IMU 预处理节点
             imu_node,
             # 3. 启动 RViz2 并自动加载配置
-            rviz_arg,
             rviz_node,
         ]
     )

@@ -127,6 +127,7 @@ target_link_libraries(euroc_imu
   Boost::boost
   ${OpenCV_LIBS}
 )
+target_compile_options(euroc_imu PRIVATE -Wno-maybe-uninitialized)
 
 # --- 编译 VIO 结点：融合视觉、惯性测量单元数据 ---
 # add_ros2_executable(euroc_vio src/vio.cpp)
