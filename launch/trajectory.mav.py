@@ -23,6 +23,8 @@ def generate_launch_description():
             "bag",
             "play",
             "/mnt/e/Documents/mav0/bag/V2_01_easy_ros2/V2_01_easy_ros2.db3",
+            "--read-ahead-queue-size",
+            "5000",
         ],
         output="screen",
     )
@@ -35,7 +37,7 @@ def generate_launch_description():
 
     imu_arg_estimator = DeclareLaunchArgument(
         name="estimator",
-        default_value="mahony",
+        default_value="rk4",
         description="The estimator to use (rk4, mahony, madgwick)",
     )
 
@@ -44,11 +46,9 @@ def generate_launch_description():
         executable="euroc_imu",
         name="trajectory_publisher",
         output="screen",
-        arguments=[
-            "--use_filter",
-            LaunchConfiguration("use_filter"),
-            "--estimator",
-            LaunchConfiguration("estimator"),
+        parameters=[
+            {"use_filter": LaunchConfiguration("use_filter")},
+            {"estimator": LaunchConfiguration("estimator")},
         ],
     )
 

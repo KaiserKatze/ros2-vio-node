@@ -32,6 +32,8 @@
 
 #include <boost/numeric/odeint.hpp>
 
+#include "euroc_vio/ahrs.hpp"
+
 using namespace std::chrono_literals;
 using namespace boost::numeric::odeint;
 
@@ -44,7 +46,29 @@ using MsgGroundTruth = geometry_msgs::msg::TransformStamped;
 using MsgPath        = nav_msgs::msg::Path;
 
 // 状态量定义: [px, py, pz, vx, vy, vz, qw, qx, qy, qz] (大小为 10)
-using state_type = std::array<double, 10>;
+struct state_type : public std::array<double, 10>
+{
+  state_type()
+      : std::array<double, 10>{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0}
+  {
+  }
+
+  void SetQuaternion(double qw, double qx, double qy, double qz)
+  {
+    (*this)[6] = qw;
+    (*this)[7] = qx;
+    (*this)[8] = qy;
+    (*this)[9] = qz;
+  }
+
+  void SetQuaternion(const cv::Vec4f &quat)
+  {
+    (*this)[6] = quat[0];
+    (*this)[7] = quat[1];
+    (*this)[8] = quat[2];
+    (*this)[9] = quat[3];
+  }
+};
 
 /*****************************
  * RC 低通滤波器类
@@ -130,7 +154,8 @@ struct ImuKinematicsODE
 enum class EstimatorType
 {
   RK4,
-  MAHONY
+  MAHONY,
+  MADGWICK
 };
 
 /*****************************
@@ -149,11 +174,10 @@ private:
   double last_time_ = 0.0;
 
   // 状态向量初始化 (初始原点, 速度为 0, 姿态为单位四元数)
-  state_type state_ = {0.0, 0.0, 0.0,       // px, py, pz
-                       0.0, 0.0, 0.0,       // vx, vy, vz
-                       1.0, 0.0, 0.0, 0.0}; // qw, qx, qy, qz
+  state_type state_;
 
   runge_kutta4<state_type> rk4_;
+  std::shared_ptr<AbstractAHRS> ahrs_;
 
   // 零偏
   cv::Vec3d gyro_bias_{0, 0, 0};
@@ -168,6 +192,22 @@ public:
       : use_filter_(use_filter), accel_filter_(0.15), gyro_filter_(0.15),
         estimator_type_(estimator)
   {
+    if (estimator == EstimatorType::RK4)
+    {
+      ahrs_ = nullptr; // RK4 不需要 AHRS
+    }
+    else if (estimator == EstimatorType::MAHONY)
+    {
+      ahrs_ = std::make_shared<MahonyAHRS>();
+    }
+    else if (estimator == EstimatorType::MADGWICK)
+    {
+      ahrs_ = std::make_shared<MadgwickAHRS>();
+    }
+    else
+    {
+      throw std::invalid_argument{"Unsupported estimator type"};
+    }
   }
 
   void RK4Update(const cv::Vec3d &acc, const cv::Vec3d &gyro, double dt)
@@ -178,10 +218,14 @@ public:
 
   void MahonyUpdate(const cv::Vec3d &acc, const cv::Vec3d &gyro, double dt)
   {
-    // TODO 利用 Mahony 算法计算姿态四元数，再用龙格库塔法计算速度、位置
-    (void)acc;
-    (void)gyro;
-    (void)dt;
+    // 利用 Mahony 算法或 Madgwick 算法，计算姿态四元数
+    cv::Vec3f vecAccel{static_cast<cv::Vec3f>(acc)};
+    cv::Vec3f vecGyro{static_cast<cv::Vec3f>(gyro)};
+    ahrs_->Update(vecGyro, vecAccel, dt);
+    // 更新姿态四元数
+    this->state_.SetQuaternion(ahrs_->GetQuaternion());
+    // 用龙格库塔法计算速度、位置
+    RK4Update(vecAccel, vecGyro, dt);
   }
 
   void HeavyLift(const cv::Vec3d &filt_accel, const cv::Vec3d &filt_gyro,
@@ -193,6 +237,7 @@ public:
       RK4Update(filt_accel, filt_gyro, dt);
       break;
     case EstimatorType::MAHONY:
+    case EstimatorType::MADGWICK:
       MahonyUpdate(filt_accel, filt_gyro, dt);
       break;
     default:
@@ -281,8 +326,8 @@ public:
     }
 
     // ⭐ 静止检测
-    double acc_norm  = cv::norm(filt_accel);
-    double gyro_norm = cv::norm(filt_gyro);
+    double acc_norm{cv::norm(filt_accel)};
+    double gyro_norm{cv::norm(filt_gyro)};
 
     bool is_static = (std::abs(acc_norm - 9.81) < 0.1) && (gyro_norm < 0.02);
 
@@ -394,10 +439,22 @@ public:
     std::string estimator_str = this->get_parameter("estimator").as_string();
     bool use_filter           = this->get_parameter("use_filter").as_bool();
 
-    EstimatorType estimator = EstimatorType::RK4;
-    if (estimator_str == "mahony")
+    EstimatorType estimator;
+    if (estimator_str == "rk4")
+    {
+      estimator = EstimatorType::RK4;
+    }
+    else if (estimator_str == "mahony")
     {
       estimator = EstimatorType::MAHONY;
+    }
+    else if (estimator_str == "madgwick")
+    {
+      estimator = EstimatorType::MADGWICK;
+    }
+    else
+    {
+      throw std::invalid_argument("Invalid estimator type: " + estimator_str);
     }
     imu_worker_ = ImuWorker(use_filter, estimator);
 
