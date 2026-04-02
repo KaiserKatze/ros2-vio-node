@@ -41,6 +41,24 @@ def generate_launch_description():
         description="The estimator to use (rk4, mahony, madgwick)",
     )
 
+    imu_arg_init_position_x = DeclareLaunchArgument(
+        name="initial_position_x",
+        default_value="-0.98248653560578914",
+        description="Initial position x (default: 0.0)",
+    )
+
+    imu_arg_init_position_y = DeclareLaunchArgument(
+        name="initial_position_y",
+        default_value="0.46277992113897914",
+        description="Initial position y (default: 0.0)",
+    )
+
+    imu_arg_init_position_z = DeclareLaunchArgument(
+        name="initial_position_z",
+        default_value="1.4401002233560267",
+        description="Initial position z (default: 0.0)",
+    )
+
     imu_node = Node(
         package="euroc_vio",
         executable="euroc_imu",
@@ -49,6 +67,9 @@ def generate_launch_description():
         parameters=[
             {"use_filter": LaunchConfiguration("use_filter")},
             {"estimator": LaunchConfiguration("estimator")},
+            {"initial_position_x": LaunchConfiguration("initial_position_x")},
+            {"initial_position_y": LaunchConfiguration("initial_position_y")},
+            {"initial_position_z": LaunchConfiguration("initial_position_z")},
         ],
     )
 
@@ -71,6 +92,9 @@ def generate_launch_description():
             # Declare launch arguments
             imu_arg_use_filter,
             imu_arg_estimator,
+            imu_arg_init_position_x,
+            imu_arg_init_position_y,
+            imu_arg_init_position_z,
             rviz_arg,
             # 1. 播放 rosbag (非阻塞方式)
             bag_replay,

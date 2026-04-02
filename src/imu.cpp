@@ -201,10 +201,17 @@ private:
 
 public:
   ImuWorker(bool use_filter         = true,
-            EstimatorType estimator = EstimatorType::RK4)
+            EstimatorType estimator = EstimatorType::RK4, double init_px = 0.0,
+            double init_py = 0.0, double init_pz = 0.0)
       : use_filter_(use_filter), accel_filter_(0.15), gyro_filter_(0.15),
         estimator_type_(estimator)
   {
+    // 初始化状态向量
+    state_[0] = init_px;
+    state_[1] = init_py;
+    state_[2] = init_pz;
+    // 其他状态保持默认
+
     if (estimator == EstimatorType::RK4)
     {
       ahrs_ = nullptr; // RK4 不需要 AHRS
@@ -503,8 +510,14 @@ public:
   {
     this->declare_parameter("estimator", "rk4");
     this->declare_parameter("use_filter", true);
-    std::string estimator_str = this->get_parameter("estimator").as_string();
-    bool use_filter           = this->get_parameter("use_filter").as_bool();
+    this->declare_parameter("initial_position_x", 0.0);
+    this->declare_parameter("initial_position_y", 0.0);
+    this->declare_parameter("initial_position_z", 0.0);
+    std::string estimator_str{this->get_parameter("estimator").as_string()};
+    bool use_filter{this->get_parameter("use_filter").as_bool()};
+    double init_px{this->get_parameter("initial_position_x").as_double()};
+    double init_py{this->get_parameter("initial_position_y").as_double()};
+    double init_pz{this->get_parameter("initial_position_z").as_double()};
 
     EstimatorType estimator;
     if (estimator_str == "rk4")
@@ -523,7 +536,7 @@ public:
     {
       throw std::invalid_argument("Invalid estimator type: " + estimator_str);
     }
-    imu_worker_ = ImuWorker(use_filter, estimator);
+    imu_worker_ = ImuWorker(use_filter, estimator, init_px, init_py, init_pz);
 
     // 设置路径消息的坐标系
     path_msg_imu.header.frame_id         = "world";
