@@ -120,7 +120,10 @@ struct ImuKinematicsODE
                   const double /* t */) const
   {
     // 提取当前姿态四元数
-    double qw{x[6]}, qx{x[7]}, qy{x[8]}, qz{x[9]};
+    const double qw{x[6]};
+    const double qx{x[7]};
+    const double qy{x[8]};
+    const double qz{x[9]};
 
     // 四元数转旋转矩阵 R (用于将机体加速度转换到世界坐标系)
     const double R00{1.0 - 2.0 * qy * qy - 2.0 * qz * qz};
@@ -138,10 +141,19 @@ struct ImuKinematicsODE
     dxdt[1] = x[4];
     dxdt[2] = x[5];
 
+    // EuRoC MAV 数据集中前几个 IMU 数据：
+    // a_RS_S_x [m s^-2],a_RS_S_y [m s^-2],a_RS_S_z [m s^-2]
+    // 9.1283567083333317,0.10623870833333333,-2.6069344583333329
+    // 9.422556208333333,1.1604535833333331,-2.623278875
+
+    // 可以看出 X 轴的加速度约为 9.8 m/s^2，Y 轴和 Z 轴的加速度较小，说明重力主要作用在 X 轴上
+    // X 轴的加速度值是正数，而 IMU 测量的是比力，恰好验证了数据说明书所说的“IMU 的 X 轴朝上”
+    // 数据说明书还说 Z 轴是朝着 MAV 正前方（即双目相机的视线方向），Y 轴则是朝向 MAV 的右侧（右手坐标系）
+
     // 速度导数 = 加速度
-    dxdt[3] = R00 * a[0] + R01 * a[1] + R02 * a[2];
+    dxdt[3] = R00 * a[0] + R01 * a[1] + R02 * a[2] - g;
     dxdt[4] = R10 * a[0] + R11 * a[1] + R12 * a[2];
-    dxdt[5] = R20 * a[0] + R21 * a[1] + R22 * a[2] + g;
+    dxdt[5] = R20 * a[0] + R21 * a[1] + R22 * a[2];
 
     // 姿态导数
     dxdt[6] = 0.5 * (-qx * w[0] - qy * w[1] - qz * w[2]);
@@ -175,6 +187,7 @@ private:
 
   // 状态向量初始化 (初始原点, 速度为 0, 姿态为单位四元数)
   state_type state_;
+  double ode_time{0.0};
 
   runge_kutta4<state_type> rk4_;
   std::shared_ptr<AbstractAHRS> ahrs_;
@@ -213,7 +226,8 @@ public:
   void RK4Update(const cv::Vec3d &acc, const cv::Vec3d &gyro, double dt)
   {
     ImuKinematicsODE ode{acc, gyro, accel_bias_, gyro_bias_};
-    rk4_.do_step(ode, state_, 0.0, dt);
+    rk4_.do_step(ode, state_, ode_time, dt);
+    ode_time += dt;
   }
 
   void MahonyUpdate(const cv::Vec3d &acc, const cv::Vec3d &gyro, double dt)
@@ -258,6 +272,17 @@ public:
     const double ay{imu_msg->linear_acceleration.y};
     const double az{imu_msg->linear_acceleration.z};
 
+    geometry_msgs::msg::PoseStamped pose_msg;
+    pose_msg.header.stamp       = imu_msg->header.stamp;
+    pose_msg.header.frame_id    = "world";
+    pose_msg.pose.position.x    = 0.0;
+    pose_msg.pose.position.y    = 0.0;
+    pose_msg.pose.position.z    = 0.0;
+    pose_msg.pose.orientation.w = 1.0;
+    pose_msg.pose.orientation.x = 0.0;
+    pose_msg.pose.orientation.y = 0.0;
+    pose_msg.pose.orientation.z = 0.0;
+
     // 读取原始数据
     cv::Vec3d raw_accel(ax, ay, az);
     cv::Vec3d raw_gyro(gx, gy, gz);
@@ -273,38 +298,82 @@ public:
     {
       init_acc_buffer_.push_back(raw_accel);
 
-      if (init_acc_buffer_.size() < 200)
+      // 等积累了足够的初始加速度数据后，计算初始姿态
+      if (init_acc_buffer_.size() < 5)
       {
-        return {};
+        return pose_msg;
       }
 
-      cv::Vec3d g_body(0, 0, 0);
-      for (auto &a : init_acc_buffer_)
+      // 计算平均加速度向量，作为重力方向的估计
+      cv::Vec3d g_body(0.0, 0.0, 0.0);
+      for (const cv::Vec3d &a : init_acc_buffer_)
       {
         g_body += a;
       }
       g_body /= static_cast<double>(init_acc_buffer_.size());
       g_body /= cv::norm(g_body);
 
-      cv::Vec3d g_world(0, 0, -1);
+      // 自适应判断重力方向（假设初始时刻 MAV 是静止的，且加速度主要来自重力）
+      const double acc_x{std::abs(g_body[0])};
+      const double acc_y{std::abs(g_body[1])};
+      const double acc_z{std::abs(g_body[2])};
+      if (!(acc_x > acc_y && acc_x > acc_z))
+      {
+        throw std::runtime_error{"Assertion failed: X-axis should have the "
+                                 "largest acceleration component at rest"};
+      }
+      cv::Vec3d g_world(-1.0, 0.0, 0.0);
 
-      cv::Vec3d v = g_body.cross(g_world);
-      double c    = g_body.dot(g_world);
-      double s    = cv::norm(v);
+      cv::Vec3d v{g_body.cross(g_world)};
+      double c{g_body.dot(g_world)};
+      double s{cv::norm(v)};
 
-      cv::Mat K = (cv::Mat_<double>(3, 3) << 0, -v[2], v[1], v[2], 0, -v[0],
-                   -v[1], v[0], 0);
+      cv::Mat K{(cv::Mat_<double>(3, 3) << 0, -v[2], v[1], v[2], 0, -v[0],
+                 -v[1], v[0], 0)};
 
-      cv::Mat R
-          = cv::Mat::eye(3, 3, CV_64F) + K + K * K * ((1 - c) / (s * s + 1e-8));
+      cv::Mat R{cv::Mat::eye(3, 3, CV_64F) + K
+                + K * K * ((1 - c) / (s * s + 1e-8))};
 
       // 转 quaternion（简化）
-      double qw = std::sqrt(1 + R.at<double>(0, 0) + R.at<double>(1, 1)
-                            + R.at<double>(2, 2))
-                  / 2;
-      double qx = (R.at<double>(2, 1) - R.at<double>(1, 2)) / (4 * qw);
-      double qy = (R.at<double>(0, 2) - R.at<double>(2, 0)) / (4 * qw);
-      double qz = (R.at<double>(1, 0) - R.at<double>(0, 1)) / (4 * qw);
+      double qw{std::sqrt(1 + R.at<double>(0, 0) + R.at<double>(1, 1)
+                          + R.at<double>(2, 2))
+                * 0.5};
+      double qx{0.0}, qy{0.0}, qz{0.0};
+      if (std::abs(qw) < 1e-8)
+      {
+        // 特殊情况：qw ≈ 0（180°旋转），使用备用公式
+        qw = 0.0;
+        qx = std::sqrt(std::max(0.0, (1 + R.at<double>(0, 0)
+                                      - R.at<double>(1, 1) - R.at<double>(2, 2))
+                                         / 4.0));
+        qy = std::sqrt(std::max(0.0, (1 - R.at<double>(0, 0)
+                                      + R.at<double>(1, 1) - R.at<double>(2, 2))
+                                         / 4.0));
+        qz = std::sqrt(std::max(0.0, (1 - R.at<double>(0, 0)
+                                      - R.at<double>(1, 1) + R.at<double>(2, 2))
+                                         / 4.0));
+
+        // 符号调整（基于旋转矩阵的对称元素，确保一致性）
+        if (R.at<double>(2, 1) < 0)
+        {
+          qx = -qx;
+        }
+        if (R.at<double>(0, 2) < 0)
+        {
+          qy = -qy;
+        }
+        if (R.at<double>(1, 0) < 0)
+        {
+          qz = -qz;
+        }
+      }
+      else
+      {
+        // 正常情况
+        qx = (R.at<double>(2, 1) - R.at<double>(1, 2)) / (4 * qw);
+        qy = (R.at<double>(0, 2) - R.at<double>(2, 0)) / (4 * qw);
+        qz = (R.at<double>(1, 0) - R.at<double>(0, 1)) / (4 * qw);
+      }
 
       state_[6] = qw;
       state_[7] = qx;
@@ -313,7 +382,8 @@ public:
 
       last_time_ = current_time;
       first_msg_ = false;
-      return {}; // 首条消息仅用于初始化，不进行积分推算
+
+      return pose_msg;
     }
 
     const double dt{current_time - last_time_};
@@ -370,9 +440,6 @@ public:
         "%.9f]",
         gx, gy, gz, ax, ay, az, px, py, pz, vx, vy, vz, qw, qx, qy, qz);
 
-    geometry_msgs::msg::PoseStamped pose_msg;
-    pose_msg.header.stamp       = imu_msg->header.stamp;
-    pose_msg.header.frame_id    = "world";
     pose_msg.pose.position.x    = px;
     pose_msg.pose.position.y    = py;
     pose_msg.pose.position.z    = pz;
