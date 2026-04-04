@@ -49,9 +49,9 @@ using MsgGroundTruth = geometry_msgs::msg::TransformStamped;
 using MsgPath        = nav_msgs::msg::Path;
 
 // 状态量定义: [px, py, pz, vx, vy, vz, qw, qx, qy, qz] (大小为 10)
-struct state_type : public std::array<double, 10>
+struct ImuState : public std::array<double, 10>
 {
-  state_type()
+  ImuState()
       : std::array<double, 10>{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0}
   {
   }
@@ -270,7 +270,7 @@ public:
   {
   }
 
-  cv::Vec3d filter(const cv::Vec3d &val)
+  cv::Vec3d Filter(const cv::Vec3d &val)
   {
     if (!initialized_)
     {
@@ -296,9 +296,8 @@ public:
  *****************************/
 struct ImuKinematicsODE
 {
-  cv::Vec3d a;          // 经过滤波后的加速度 (机体坐标系)
-  cv::Vec3d w;          // 经过滤波后的角速度 (机体坐标系)
-  const double g{9.81}; // 重力加速度常数 (默认 Z 轴朝上)
+  cv::Vec3d a; // 经过滤波后的加速度 (机体坐标系)
+  cv::Vec3d w; // 经过滤波后的角速度 (机体坐标系)
 
   ImuKinematicsODE(const cv::Vec3d &accel, const cv::Vec3d &gyro,
                    const cv::Vec3d &ba, const cv::Vec3d &bw)
@@ -306,7 +305,7 @@ struct ImuKinematicsODE
   {
   }
 
-  void operator()(const state_type &x, state_type &dxdt,
+  void operator()(const ImuState &x, ImuDerivative &dxdt,
                   const double /* t */) const
   {
     // 提取当前姿态四元数
@@ -327,9 +326,7 @@ struct ImuKinematicsODE
     const double R22{1.0 - 2.0 * qx * qx - 2.0 * qy * qy};
 
     // 位置导数 = 速度
-    dxdt[0] = x[3];
-    dxdt[1] = x[4];
-    dxdt[2] = x[5];
+    dxdt.SetVelocity(x.GetVelocity());
 
     // EuRoC MAV 数据集中前几个 IMU 数据：
     // a_RS_S_x [m s^-2],a_RS_S_y [m s^-2],a_RS_S_z [m s^-2]
@@ -341,15 +338,17 @@ struct ImuKinematicsODE
     // 数据说明书还说 Z 轴是朝着 MAV 正前方（即双目相机的视线方向），Y 轴则是朝向 MAV 的右侧（右手坐标系）
 
     // 速度导数 = 加速度
-    dxdt[3] = R00 * a[0] + R01 * a[1] + R02 * a[2] - g;
-    dxdt[4] = R10 * a[0] + R11 * a[1] + R12 * a[2];
-    dxdt[5] = R20 * a[0] + R21 * a[1] + R22 * a[2];
+    dxdt.SetAcceleration(
+        cv::Vec3d{R00 * a[0] + R01 * a[1] + R02 * a[2] - g_norm,
+                  R10 * a[0] + R11 * a[1] + R12 * a[2],
+                  R20 * a[0] + R21 * a[1] + R22 * a[2]});
 
     // 姿态导数
-    dxdt[6] = 0.5 * (-qx * w[0] - qy * w[1] - qz * w[2]);
-    dxdt[7] = 0.5 * (qw * w[0] + qy * w[2] - qz * w[1]);
-    dxdt[8] = 0.5 * (qw * w[1] - qx * w[2] + qz * w[0]);
-    dxdt[9] = 0.5 * (qw * w[2] + qx * w[1] - qy * w[0]);
+    dxdt.SetQuaternionDerivative(
+        cv::Vec4d{0.5 * (-qx * w[0] - qy * w[1] - qz * w[2]),
+                  0.5 * (qw * w[0] + qy * w[2] - qz * w[1]),
+                  0.5 * (qw * w[1] - qx * w[2] + qz * w[0]),
+                  0.5 * (qw * w[2] + qx * w[1] - qy * w[0])});
   }
 };
 
@@ -376,18 +375,162 @@ private:
   double last_time_ = 0.0;
 
   // 状态向量初始化 (初始原点, 速度为 0, 姿态为单位四元数)
-  state_type state_;
+  ImuState state_;
   double ode_time{0.0};
 
-  runge_kutta4<state_type> rk4_;
+  runge_kutta4<ImuState, double, ImuDerivative> rk4_;
   std::shared_ptr<AbstractAHRS> ahrs_;
 
   // 零偏
   cv::Vec3d gyro_bias_{0, 0, 0};
   cv::Vec3d accel_bias_{0, 0, 0};
 
+  geometry_msgs::msg::PoseStamped pose_msg;
+
   // 初始重力对齐缓存
-  std::vector<cv::Vec3d> init_acc_buffer_;
+  std::vector<MsgImu> init_imu_msg_buffer_;
+
+  cv::Vec3d CalculateAverageGravity() const
+  {
+    cv::Vec3d g_body{0.0, 0.0, 0.0};
+    for (const MsgImu &imu_msg : init_imu_msg_buffer_)
+    {
+      const double ax{imu_msg.linear_acceleration.x};
+      const double ay{imu_msg.linear_acceleration.y};
+      const double az{imu_msg.linear_acceleration.z};
+      const cv::Vec3d raw_accel{ax, ay, az};
+      g_body += raw_accel;
+    }
+    g_body /= static_cast<double>(init_imu_msg_buffer_.size());
+    g_body /= cv::norm(g_body);
+    return g_body;
+  }
+
+  void EstimateInitialAttitude()
+  {
+    // 计算平均加速度向量，作为重力方向的估计
+    const cv::Vec3d g_body{CalculateAverageGravity()};
+    const cv::Vec3d g_world{-1.0, 0.0, 0.0};
+    const cv::Vec3d v{g_body.cross(g_world)};
+    const double c{g_body.dot(g_world)};
+    const double s{cv::norm(v)};
+
+    cv::Mat K{(cv::Mat_<double>(3, 3) << 0, -v[2], v[1], v[2], 0, -v[0], -v[1],
+               v[0], 0)};
+
+    cv::Mat R{cv::Mat::eye(3, 3, CV_64F) + K
+              + K * K * ((1 - c) / (s * s + 1e-8))};
+
+    // 转 quaternion（简化）
+    double qw{std::sqrt(1 + R.at<double>(0, 0) + R.at<double>(1, 1)
+                        + R.at<double>(2, 2))
+              * 0.5};
+    double qx{0.0}, qy{0.0}, qz{0.0};
+    if (std::abs(qw) < 1e-8)
+    {
+      // 特殊情况：qw ≈ 0（180°旋转），使用备用公式
+      qw = 0.0;
+      qx = std::sqrt(std::max(0.0, (1 + R.at<double>(0, 0) - R.at<double>(1, 1)
+                                    - R.at<double>(2, 2))
+                                       / 4.0));
+      qy = std::sqrt(std::max(0.0, (1 - R.at<double>(0, 0) + R.at<double>(1, 1)
+                                    - R.at<double>(2, 2))
+                                       / 4.0));
+      qz = std::sqrt(std::max(0.0, (1 - R.at<double>(0, 0) - R.at<double>(1, 1)
+                                    + R.at<double>(2, 2))
+                                       / 4.0));
+
+      // 符号调整（基于旋转矩阵的对称元素，确保一致性）
+      if (R.at<double>(2, 1) < 0)
+      {
+        qx = -qx;
+      }
+      if (R.at<double>(0, 2) < 0)
+      {
+        qy = -qy;
+      }
+      if (R.at<double>(1, 0) < 0)
+      {
+        qz = -qz;
+      }
+    }
+    else
+    {
+      // 正常情况
+      qx = (R.at<double>(2, 1) - R.at<double>(1, 2)) / (4 * qw);
+      qy = (R.at<double>(0, 2) - R.at<double>(2, 0)) / (4 * qw);
+      qz = (R.at<double>(1, 0) - R.at<double>(0, 1)) / (4 * qw);
+    }
+
+    state_.SetQuaternion(qw, qx, qy, qz);
+  }
+
+  void ProcessImuMessage(const MsgImu &imu_msg, double dt)
+  {
+    // 读取原始数据
+    const double gx{imu_msg.angular_velocity.x};
+    const double gy{imu_msg.angular_velocity.y};
+    const double gz{imu_msg.angular_velocity.z};
+    const double ax{imu_msg.linear_acceleration.x};
+    const double ay{imu_msg.linear_acceleration.y};
+    const double az{imu_msg.linear_acceleration.z};
+    const cv::Vec3d raw_accel{ax, ay, az};
+    const cv::Vec3d raw_gyro{gx, gy, gz};
+    // RC 低通滤波 (可选)
+    const cv::Vec3d filt_accel{use_filter_ ? accel_filter_.Filter(raw_accel)
+                                           : raw_accel};
+    const cv::Vec3d filt_gyro{use_filter_ ? gyro_filter_.Filter(raw_gyro)
+                                          : raw_gyro};
+    // 利用 RK4 进行积分推算
+    Integrate(filt_accel, filt_gyro, dt);
+  }
+
+  void ComposePoseMessage(geometry_msgs::msg::PoseStamped &pose_msg)
+  {
+    // 积分后必须对四元数进行归一化，因为 RK4 不保证单位模长约束
+    state_.NormalizeQuaternion();
+    pose_msg.pose.position.x    = state_.GetPositionX();
+    pose_msg.pose.position.y    = state_.GetPositionY();
+    pose_msg.pose.position.z    = state_.GetPositionZ();
+    pose_msg.pose.orientation.w = state_.GetQuaternionW();
+    pose_msg.pose.orientation.x = state_.GetQuaternionX();
+    pose_msg.pose.orientation.y = state_.GetQuaternionY();
+    pose_msg.pose.orientation.z = state_.GetQuaternionZ();
+  }
+
+  template <typename NodeType>
+  void RecoverPoseMessageFromCachedImuMessage(NodeType *node_ptr)
+  {
+    accel_filter_.Reset();
+    gyro_filter_.Reset();
+    geometry_msgs::msg::PoseStamped pose_msg;
+    pose_msg.header.frame_id = "world";
+    for (const MsgImu &imu_msg : init_imu_msg_buffer_)
+    {
+      pose_msg.header.stamp = imu_msg.header.stamp;
+      ComposePoseMessage(pose_msg);
+      node_ptr->PublishImuPath(pose_msg);
+    }
+  }
+
+  void ZeroVelocityUpdate(const cv::Vec3d &filt_accel,
+                          const cv::Vec3d &filt_gyro)
+  {
+    // 静止检测
+    const double acc_norm{cv::norm(filt_accel)};
+    const double gyro_norm{cv::norm(filt_gyro)};
+    const bool is_static{(std::abs(acc_norm - 9.81) < 0.1)
+                         && (gyro_norm < 0.02)};
+    // ZUPT + bias 更新
+    if (is_static)
+    {
+      state_.SetVelocity(0, 0, 0);
+      static constexpr double alpha{0.01};
+      gyro_bias_  = (1 - alpha) * gyro_bias_ + alpha * filt_gyro;
+      accel_bias_ = (1 - alpha) * accel_bias_
+                    + alpha * (filt_accel - cv::Vec3d(0, 0, -9.81));
+    }
+  }
 
 public:
   ImuWorker(bool use_filter         = true,
@@ -397,9 +540,7 @@ public:
         estimator_type_(estimator)
   {
     // 初始化状态向量
-    state_[0] = init_px;
-    state_[1] = init_py;
-    state_[2] = init_pz;
+    state_.SetPosition(init_px, init_py, init_pz);
     // 其他状态保持默认
 
     if (estimator == EstimatorType::RK4)
@@ -418,6 +559,8 @@ public:
     {
       throw std::invalid_argument{"Unsupported estimator type"};
     }
+
+    pose_msg.header.frame_id = "world";
   }
 
   void RK4Update(const cv::Vec3d &acc, const cv::Vec3d &gyro, double dt)
@@ -439,7 +582,7 @@ public:
     RK4Update(vecAccel, vecGyro, dt);
   }
 
-  void HeavyLift(const cv::Vec3d &filt_accel, const cv::Vec3d &filt_gyro,
+  void Integrate(const cv::Vec3d &filt_accel, const cv::Vec3d &filt_gyro,
                  double dt)
   {
     switch (estimator_type_)
@@ -456,12 +599,11 @@ public:
     }
   }
 
-  std::optional<geometry_msgs::msg::PoseStamped>
-  Work(const MsgImu::ConstSharedPtr &imu_msg, rclcpp::Logger logger)
+  template <typename NodeType>
+  void Work(const MsgImu::ConstSharedPtr &imu_msg, NodeType *node_ptr)
   {
     const double current_time{imu_msg->header.stamp.sec
                               + imu_msg->header.stamp.nanosec * 1e-9};
-
     const double gx{imu_msg->angular_velocity.x};
     const double gy{imu_msg->angular_velocity.y};
     const double gz{imu_msg->angular_velocity.z};
@@ -469,9 +611,7 @@ public:
     const double ay{imu_msg->linear_acceleration.y};
     const double az{imu_msg->linear_acceleration.z};
 
-    geometry_msgs::msg::PoseStamped pose_msg;
     pose_msg.header.stamp       = imu_msg->header.stamp;
-    pose_msg.header.frame_id    = "world";
     pose_msg.pose.position.x    = 0.0;
     pose_msg.pose.position.y    = 0.0;
     pose_msg.pose.position.z    = 0.0;
@@ -481,171 +621,49 @@ public:
     pose_msg.pose.orientation.z = 0.0;
 
     // 读取原始数据
-    cv::Vec3d raw_accel(ax, ay, az);
-    cv::Vec3d raw_gyro(gx, gy, gz);
+    const cv::Vec3d raw_accel{ax, ay, az};
+    const cv::Vec3d raw_gyro{gx, gy, gz};
 
     // 1. RC 低通滤波
-    const cv::Vec3d filt_accel{use_filter_ ? accel_filter_.filter(raw_accel)
+    const cv::Vec3d filt_accel{use_filter_ ? accel_filter_.Filter(raw_accel)
                                            : raw_accel};
-    const cv::Vec3d filt_gyro{use_filter_ ? gyro_filter_.filter(raw_gyro)
+    const cv::Vec3d filt_gyro{use_filter_ ? gyro_filter_.Filter(raw_gyro)
                                           : raw_gyro};
 
     // 初始重力对齐
     if (first_msg_)
     {
-      init_acc_buffer_.push_back(raw_accel);
+      init_imu_msg_buffer_.push_back(*imu_msg);
 
       // 等积累了足够的初始加速度数据后，计算初始姿态
-      if (init_acc_buffer_.size() < 5)
+      if (init_imu_msg_buffer_.size() < 10)
       {
-        return pose_msg;
+        return;
       }
 
-      // 计算平均加速度向量，作为重力方向的估计
-      cv::Vec3d g_body(0.0, 0.0, 0.0);
-      for (const cv::Vec3d &a : init_acc_buffer_)
-      {
-        g_body += a;
-      }
-      g_body /= static_cast<double>(init_acc_buffer_.size());
-      g_body /= cv::norm(g_body);
-
-      // 自适应判断重力方向（假设初始时刻 MAV 是静止的，且加速度主要来自重力）
-      const double acc_x{std::abs(g_body[0])};
-      const double acc_y{std::abs(g_body[1])};
-      const double acc_z{std::abs(g_body[2])};
-      if (!(acc_x > acc_y && acc_x > acc_z))
-      {
-        throw std::runtime_error{"Assertion failed: X-axis should have the "
-                                 "largest acceleration component at rest"};
-      }
-      cv::Vec3d g_world(-1.0, 0.0, 0.0);
-
-      cv::Vec3d v{g_body.cross(g_world)};
-      double c{g_body.dot(g_world)};
-      double s{cv::norm(v)};
-
-      cv::Mat K{(cv::Mat_<double>(3, 3) << 0, -v[2], v[1], v[2], 0, -v[0],
-                 -v[1], v[0], 0)};
-
-      cv::Mat R{cv::Mat::eye(3, 3, CV_64F) + K
-                + K * K * ((1 - c) / (s * s + 1e-8))};
-
-      // 转 quaternion（简化）
-      double qw{std::sqrt(1 + R.at<double>(0, 0) + R.at<double>(1, 1)
-                          + R.at<double>(2, 2))
-                * 0.5};
-      double qx{0.0}, qy{0.0}, qz{0.0};
-      if (std::abs(qw) < 1e-8)
-      {
-        // 特殊情况：qw ≈ 0（180°旋转），使用备用公式
-        qw = 0.0;
-        qx = std::sqrt(std::max(0.0, (1 + R.at<double>(0, 0)
-                                      - R.at<double>(1, 1) - R.at<double>(2, 2))
-                                         / 4.0));
-        qy = std::sqrt(std::max(0.0, (1 - R.at<double>(0, 0)
-                                      + R.at<double>(1, 1) - R.at<double>(2, 2))
-                                         / 4.0));
-        qz = std::sqrt(std::max(0.0, (1 - R.at<double>(0, 0)
-                                      - R.at<double>(1, 1) + R.at<double>(2, 2))
-                                         / 4.0));
-
-        // 符号调整（基于旋转矩阵的对称元素，确保一致性）
-        if (R.at<double>(2, 1) < 0)
-        {
-          qx = -qx;
-        }
-        if (R.at<double>(0, 2) < 0)
-        {
-          qy = -qy;
-        }
-        if (R.at<double>(1, 0) < 0)
-        {
-          qz = -qz;
-        }
-      }
-      else
-      {
-        // 正常情况
-        qx = (R.at<double>(2, 1) - R.at<double>(1, 2)) / (4 * qw);
-        qy = (R.at<double>(0, 2) - R.at<double>(2, 0)) / (4 * qw);
-        qz = (R.at<double>(1, 0) - R.at<double>(0, 1)) / (4 * qw);
-      }
-
-      state_[6] = qw;
-      state_[7] = qx;
-      state_[8] = qy;
-      state_[9] = qz;
+      EstimateInitialAttitude();
 
       last_time_ = current_time;
       first_msg_ = false;
 
-      return pose_msg;
+      RecoverPoseMessageFromCachedImuMessage(node_ptr);
     }
 
     const double dt{current_time - last_time_};
     last_time_ = current_time;
 
-    // 防御性检查：跳过时间戳异常的数据
-    if (dt <= 0 || dt > 0.1)
-    {
-      return {}; // 时间间隔异常，可能是数据乱序或丢包，跳过处理
-    }
+    // // 防御性检查：跳过时间戳异常的数据
+    // if (dt <= 0 || dt > 0.1)
+    // {
+    //   return; // 时间间隔异常，可能是数据乱序或丢包，跳过处理
+    // }
 
-    // ⭐ 静止检测
-    double acc_norm{cv::norm(filt_accel)};
-    double gyro_norm{cv::norm(filt_gyro)};
-
-    bool is_static = (std::abs(acc_norm - 9.81) < 0.1) && (gyro_norm < 0.02);
-
-    // ⭐ ZUPT + bias 更新
-    if (is_static)
-    {
-      state_[3] = 0;
-      state_[4] = 0;
-      state_[5] = 0;
-
-      double alpha = 0.01;
-      gyro_bias_   = (1 - alpha) * gyro_bias_ + alpha * filt_gyro;
-
-      accel_bias_ = (1 - alpha) * accel_bias_
-                    + alpha * (filt_accel - cv::Vec3d(0, 0, -9.81));
-    }
+    ZeroVelocityUpdate(filt_accel, filt_gyro);
 
     // 2. 利用 RK4 进行积分推算
-    HeavyLift(filt_accel, filt_gyro, dt);
-
-    double px{state_[0]}, py{state_[1]}, pz{state_[2]};
-    double vx{state_[3]}, vy{state_[4]}, vz{state_[5]};
-    double &qw{state_[6]};
-    double &qx{state_[7]};
-    double &qy{state_[8]};
-    double &qz{state_[9]};
-
-    // 3. 积分后必须对四元数进行归一化，因为 RK4 不保证单位模长约束
-    const double q_norm{std::sqrt(qw * qw + qx * qx + qy * qy + qz * qz)};
-    qw /= q_norm;
-    qx /= q_norm;
-    qy /= q_norm;
-    qz /= q_norm;
-
-    // 输出当前航位推算的结果
-    RCLCPP_INFO_THROTTLE(
-        logger, *rclcpp::Clock::make_shared(), 500,
-        "IMU State => Gyro:[%.18f, %.18f, %.18f], Accel:[%.18f, %.18f, %.18f], "
-        "Pos:[%.9f, %.9f, %.9f] Vel:[%.9f, %.9f, %.9f], Att:[%.9f, %.9f, %.9f, "
-        "%.9f]",
-        gx, gy, gz, ax, ay, az, px, py, pz, vx, vy, vz, qw, qx, qy, qz);
-
-    pose_msg.pose.position.x    = px;
-    pose_msg.pose.position.y    = py;
-    pose_msg.pose.position.z    = pz;
-    pose_msg.pose.orientation.w = qw;
-    pose_msg.pose.orientation.x = qx;
-    pose_msg.pose.orientation.y = qy;
-    pose_msg.pose.orientation.z = qz;
-
-    return pose_msg;
+    Integrate(filt_accel, filt_gyro, dt);
+    ComposePoseMessage(pose_msg);
+    node_ptr->PublishImuPath(pose_msg);
   }
 };
 
@@ -666,14 +684,7 @@ private:
 
   void ImuCallback(const MsgImu::ConstSharedPtr &imu_msg)
   {
-    auto msg{imu_worker_.Work(imu_msg, this->get_logger())};
-    // 发布处理后的 IMU 数据
-    if (msg)
-    {
-      this->path_msg_imu.header.stamp = imu_msg->header.stamp;
-      this->path_msg_imu.poses.push_back(*msg);
-      imu_pub->publish(this->path_msg_imu);
-    }
+    imu_worker_.Work(imu_msg, this);
   }
 
   void GroundTruthCallback(const MsgGroundTruth::ConstSharedPtr &gt_msg)
@@ -696,7 +707,7 @@ private:
 public:
   ImuNode(const char *input_imu_topic, const char *input_groundtruth_topic,
           const char *output_imu_topic, const char *output_groundtruth_topic)
-      : Node("VIO")
+      : Node("IMU")
   {
     this->declare_parameter("estimator", "rk4");
     this->declare_parameter("use_filter", true);
@@ -747,7 +758,7 @@ public:
     gt_pub  = create_publisher<MsgPath>(output_groundtruth_topic, qos);
   }
 
-  void Publish(const geometry_msgs::msg::PoseStamped &pose_msg)
+  void PublishImuPath(const geometry_msgs::msg::PoseStamped &pose_msg)
   {
     this->path_msg_imu.header.stamp = pose_msg.header.stamp;
     this->path_msg_imu.poses.push_back(pose_msg);
