@@ -485,17 +485,17 @@ private:
     Integrate(filt_accel, filt_gyro, dt);
   }
 
-  void ComposePoseMessage(geometry_msgs::msg::PoseStamped &pose_msg)
+  void ComposePoseMessage(geometry_msgs::msg::PoseStamped &msg)
   {
     // 积分后必须对四元数进行归一化，因为 RK4 不保证单位模长约束
     state_.NormalizeQuaternion();
-    pose_msg.pose.position.x    = state_.GetPositionX();
-    pose_msg.pose.position.y    = state_.GetPositionY();
-    pose_msg.pose.position.z    = state_.GetPositionZ();
-    pose_msg.pose.orientation.w = state_.GetQuaternionW();
-    pose_msg.pose.orientation.x = state_.GetQuaternionX();
-    pose_msg.pose.orientation.y = state_.GetQuaternionY();
-    pose_msg.pose.orientation.z = state_.GetQuaternionZ();
+    msg.pose.position.x    = state_.GetPositionX();
+    msg.pose.position.y    = state_.GetPositionY();
+    msg.pose.position.z    = state_.GetPositionZ();
+    msg.pose.orientation.w = state_.GetQuaternionW();
+    msg.pose.orientation.x = state_.GetQuaternionX();
+    msg.pose.orientation.y = state_.GetQuaternionY();
+    msg.pose.orientation.z = state_.GetQuaternionZ();
   }
 
   template <typename NodeType>
@@ -503,13 +503,13 @@ private:
   {
     accel_filter_.Reset();
     gyro_filter_.Reset();
-    geometry_msgs::msg::PoseStamped pose_msg;
-    pose_msg.header.frame_id = "world";
+    geometry_msgs::msg::PoseStamped msg;
+    msg.header.frame_id = "world";
     for (const MsgImu &imu_msg : init_imu_msg_buffer_)
     {
-      pose_msg.header.stamp = imu_msg.header.stamp;
-      ComposePoseMessage(pose_msg);
-      node_ptr->PublishImuPath(pose_msg);
+      msg.header.stamp = imu_msg.header.stamp;
+      ComposePoseMessage(msg);
+      node_ptr->PublishImuPath(msg);
     }
   }
 
