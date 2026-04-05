@@ -344,11 +344,11 @@ struct ImuKinematicsODE
                   R20 * a[0] + R21 * a[1] + R22 * a[2]});
 
     // 姿态导数
-    dxdt.SetQuaternionDerivative(
-        cv::Vec4d{0.5 * (-qx * w[0] - qy * w[1] - qz * w[2]),
-                  0.5 * (qw * w[0] + qy * w[2] - qz * w[1]),
-                  0.5 * (qw * w[1] - qx * w[2] + qz * w[0]),
-                  0.5 * (qw * w[2] + qx * w[1] - qy * w[0])});
+    dxdt.SetQuaternionDerivative(cv::Vec4d{-qx * w[0] - qy * w[1] - qz * w[2],
+                                           qw * w[0] + qy * w[2] - qz * w[1],
+                                           qw * w[1] - qx * w[2] + qz * w[0],
+                                           qw * w[2] + qx * w[1] - qy * w[0]}
+                                 * 0.5);
   }
 };
 
