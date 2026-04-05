@@ -387,17 +387,28 @@ private:
 
   struct ImuKinematicsODE
   {
-    cv::Vec3d a; // 经过滤波后的加速度 (机体坐标系)
-    cv::Vec3d w; // 经过滤波后的角速度 (机体坐标系)
+    cv::Vec3d a0, a1; // 上一帧和当前帧的加速度 (机体坐标系)
+    cv::Vec3d w0, w1; // 上一帧和当前帧的角速度 (机体坐标系)
+    double t0, t1;    // 对应的时间戳
 
-    ImuKinematicsODE(const cv::Vec3d &accel, const cv::Vec3d &gyro)
-        : a{accel}, w{gyro}
+    ImuKinematicsODE(const cv::Vec3d &accel0, const cv::Vec3d &accel1,
+                     const cv::Vec3d &gyro0, const cv::Vec3d &gyro1,
+                     double time0, double time1)
+        : a0{accel0}, a1{accel1}, w0{gyro0}, w1{gyro1}, t0{time0}, t1{time1}
     {
     }
 
     void operator()(const ImuState &x, ImuDerivative &dxdt,
-                    const double /* t */) const
+                    const double t) const
     {
+      double alpha{0.0};
+      if (t1 > t0)
+      {
+        alpha = std::clamp((t - t0) / (t1 - t0), 0.0, 1.0);
+      }
+      const cv::Vec3d a{a0 + (a1 - a0) * alpha};
+      const cv::Vec3d w{w0 + (w1 - w0) * alpha};
+
       // 提取当前姿态四元数
       const double qw{x.GetQuaternionW()};
       const double qx{x.GetQuaternionX()};
@@ -459,10 +470,23 @@ public:
       const double dt{next_time_ - last_time_};
       last_time_ = next_time_;
 
-      const ImuKinematicsODE ode{cv::Vec3d{ax, ay, az}, cv::Vec3d{gx, gy, gz}};
-      rk4_.do_step(ode, state_, 0.0, dt);
+      const cv::Vec3d a0{
+          prev_msg_imu_.linear_acceleration.x,
+          prev_msg_imu_.linear_acceleration.y,
+          prev_msg_imu_.linear_acceleration.z,
+      };
+      const cv::Vec3d w0{
+          prev_msg_imu_.angular_velocity.x,
+          prev_msg_imu_.angular_velocity.y,
+          prev_msg_imu_.angular_velocity.z,
+      };
+      const cv::Vec3d a1{ax, ay, az};
+      const cv::Vec3d w1{gx, gy, gz};
+      const ImuKinematicsODE ode{a0, a1, w0, w1, last_time_, next_time_};
+      rk4_.do_step(ode, state_, last_time_, dt);
       state_.NormalizeQuaternion();
     }
+    prev_msg_imu_ = *msg;
 
     msg_pose_.header.stamp       = now;
     msg_pose_.pose.position.x    = state_.GetPositionX();
@@ -482,6 +506,7 @@ private:
   NodeType *node_ptr_;
   rclcpp::Subscription<MsgImu>::SharedPtr subscriber_imu_;
   rclcpp::Publisher<MsgPath>::SharedPtr publisher_path_;
+  MsgImu prev_msg_imu_;
   MsgPath msg_path_;
   MsgPose msg_pose_;
   bool is_first_message_{true};
@@ -518,7 +543,7 @@ public:
       ImuPublisher::TimerCallback();
     };
 
-    timer_ = this->create_wall_timer(100ms, timer_callback);
+    timer_ = this->create_wall_timer(1ms, timer_callback);  // 1000 Hz
   }
 
 private:
