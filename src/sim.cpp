@@ -68,10 +68,10 @@ public:
     const double t_now{now.seconds()};
     const double t_delta{t_now - t_start};
 
-    if (isFirstMessage)
+    if (is_first_message_)
     {
-      isFirstMessage = false;
-      t_start        = now.seconds();
+      is_first_message_ = false;
+      t_start           = now.seconds();
 
       msg_pose_.pose.position.x = RADIUS;
       msg_pose_.pose.position.y = 0.0;
@@ -96,7 +96,7 @@ private:
   rclcpp::Publisher<MsgPath>::SharedPtr publisher_path_;
   MsgPath msg_path_;
   MsgPose msg_pose_;
-  bool isFirstMessage{true};
+  bool is_first_message_{true};
   double t_start{0.0};
 };
 
@@ -123,11 +123,11 @@ public:
     const double t_now{now.seconds()};
     double t_delta{t_now - t_start};
 
-    if (isFirstMessage)
+    if (is_first_message_)
     {
-      isFirstMessage = false;
-      t_start        = now.seconds();
-      t_delta        = 0.0;
+      is_first_message_ = false;
+      t_start           = now.seconds();
+      t_delta           = 0.0;
     }
 
     // 速度是位移的导数
@@ -147,7 +147,7 @@ private:
   NodeType *node_ptr_;
   rclcpp::Publisher<MsgImu>::SharedPtr publisher_imu_;
   MsgImu msg_imu_;
-  bool isFirstMessage{true};
+  bool is_first_message_{true};
   double t_start{0.0};
 };
 
@@ -434,8 +434,8 @@ public:
         = node_ptr_->template create_publisher<MsgPath>("/path_imu", qos);
     msg_pose_.header.frame_id = DEFAULT_FRAME_ID;
     msg_path_.header.frame_id = DEFAULT_FRAME_ID;
-    this->state_[0] = RADIUS;
-    this->state_[4] = RADIUS * ANGULAR_VELOCITY;
+    this->state_[0]           = RADIUS;
+    this->state_[4]           = RADIUS * ANGULAR_VELOCITY;
   }
 
   void SubscriberCallback(const MsgImu::ConstSharedPtr &msg)
@@ -448,9 +448,21 @@ public:
     const double ay{msg->linear_acceleration.y};
     const double az{msg->linear_acceleration.z};
 
-    const ImuKinematicsODE ode{cv::Vec3d{ax, ay, az}, cv::Vec3d{gx, gy, gz}};
-    rk4_.do_step(ode, state_, 0.0, 0.1);
-    state_.NormalizeQuaternion();
+    if (is_first_message_)
+    {
+      is_first_message_ = false;
+      last_time_        = now.seconds();
+    }
+    else
+    {
+      const double next_time_{now.seconds()};
+      const double dt{next_time_ - last_time_};
+      last_time_ = next_time_;
+
+      const ImuKinematicsODE ode{cv::Vec3d{ax, ay, az}, cv::Vec3d{gx, gy, gz}};
+      rk4_.do_step(ode, state_, 0.0, dt);
+      state_.NormalizeQuaternion();
+    }
 
     msg_pose_.header.stamp       = now;
     msg_pose_.pose.position.x    = state_.GetPositionX();
@@ -472,6 +484,8 @@ private:
   rclcpp::Publisher<MsgPath>::SharedPtr publisher_path_;
   MsgPath msg_path_;
   MsgPose msg_pose_;
+  bool is_first_message_{true};
+  double last_time_;
   ImuState state_;
   boost::numeric::odeint::runge_kutta4<ImuState, double, ImuDerivative> rk4_;
 };
