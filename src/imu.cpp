@@ -683,6 +683,24 @@ private:
 
   void ImuCallback(const MsgImu::ConstSharedPtr &imu_msg)
   {
+    static size_t msg_counter{0};
+    static double first_timestamp{0.0};
+    const double msg_timestamp{
+        static_cast<rclcpp::Time>(imu_msg->header.stamp).seconds()};
+    if (msg_counter == 0)
+    {
+      first_timestamp = msg_timestamp;
+    }
+    else
+    {
+      const double elapsed_time{msg_timestamp - first_timestamp};
+      const double average_sample_rate{msg_counter / elapsed_time};
+      RCLCPP_INFO(this->get_logger(),
+                  "Average Sample Rate (IMU): %.1f Hz",
+                  average_sample_rate);
+    }
+    ++msg_counter;
+
     imu_worker_.Work(imu_msg, this);
   }
 
