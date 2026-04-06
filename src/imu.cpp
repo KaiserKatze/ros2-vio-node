@@ -42,9 +42,11 @@ using namespace std::chrono_literals;
  *****************************/
 
 static constexpr double g_norm{9.81}; // 重力加速度常数
+static constexpr char DEFAULT_FRAME_ID[]{"world"};
 
 using MsgImu         = sensor_msgs::msg::Imu;
 using MsgGroundTruth = geometry_msgs::msg::TransformStamped;
+using MsgPose        = geometry_msgs::msg::PoseStamped;
 using MsgPath        = nav_msgs::msg::Path;
 
 // 状态量定义: [px, py, pz, vx, vy, vz, qw, qx, qy, qz] (大小为 10)
@@ -503,7 +505,7 @@ private:
     accel_filter_.Reset();
     gyro_filter_.Reset();
     geometry_msgs::msg::PoseStamped msg;
-    msg.header.frame_id = "world";
+    msg.header.frame_id = DEFAULT_FRAME_ID;
     for (const MsgImu &imu_msg : init_imu_msg_buffer_)
     {
       msg.header.stamp = imu_msg.header.stamp;
@@ -559,7 +561,7 @@ public:
       throw std::invalid_argument{"Unsupported estimator type"};
     }
 
-    pose_msg.header.frame_id = "world";
+    pose_msg.header.frame_id = DEFAULT_FRAME_ID;
   }
 
   void RK4Update(const cv::Vec3d &acc, const cv::Vec3d &gyro, double dt)
@@ -666,18 +668,61 @@ public:
   }
 };
 
+class GroundTruthPublisher
+{
+public:
+  GroundTruthPublisher(rclcpp::Node *node_ptr,
+                       const char *input_groundtruth_topic,
+                       const char *output_groundtruth_topic)
+      : node_ptr_{node_ptr}
+  {
+    using std::placeholders::_1;
+    const rclcpp::QoS qos(10);
+    subscriber_ = node_ptr_->create_subscription<MsgGroundTruth>(
+        input_groundtruth_topic, qos,
+        std::bind(&GroundTruthPublisher::SubscriberCallback, this, _1));
+    publisher_
+        = node_ptr_->create_publisher<MsgPath>(output_groundtruth_topic, qos);
+    msg_pose_.header.frame_id = DEFAULT_FRAME_ID;
+    msg_path_.header.frame_id = DEFAULT_FRAME_ID;
+  }
+
+private:
+  void SubscriberCallback(const MsgGroundTruth::ConstSharedPtr &msg)
+  {
+    const auto stamp{msg->header.stamp};
+    msg_path_.header.stamp       = stamp;
+    msg_pose_.header.stamp       = stamp;
+    msg_pose_.pose.position.x    = msg->transform.translation.x;
+    msg_pose_.pose.position.y    = msg->transform.translation.y;
+    msg_pose_.pose.position.z    = msg->transform.translation.z;
+    msg_pose_.pose.orientation.w = msg->transform.rotation.w;
+    msg_pose_.pose.orientation.x = msg->transform.rotation.x;
+    msg_pose_.pose.orientation.y = msg->transform.rotation.y;
+    msg_pose_.pose.orientation.z = msg->transform.rotation.z;
+    msg_path_.poses.push_back(msg_pose_);
+    publisher_->publish(msg_path_);
+  }
+
+  rclcpp::Node *node_ptr_;
+  rclcpp::Subscription<MsgGroundTruth>::SharedPtr subscriber_;
+  rclcpp::Publisher<MsgPath>::SharedPtr publisher_;
+  MsgPath msg_path_;
+  MsgPose msg_pose_;
+};
+
+class ImuPathPublisher
+{};
+
 /*****************************
  * ROS2 Node
  *****************************/
-class ImuNode : public rclcpp::Node
+class ImuNode : public rclcpp::Node, public GroundTruthPublisher
 {
 private:
   rclcpp::Subscription<MsgImu>::SharedPtr imu_sub_direct;
-  rclcpp::Subscription<MsgGroundTruth>::SharedPtr gt_sub_direct;
   rclcpp::Publisher<MsgPath>::SharedPtr imu_pub;
-  rclcpp::Publisher<MsgPath>::SharedPtr gt_pub;
   MsgPath path_msg_imu;
-  MsgPath path_msg_groundtruth;
 
   ImuWorker imu_worker_;
 
@@ -695,8 +740,7 @@ private:
     {
       const double elapsed_time{msg_timestamp - first_timestamp};
       const double average_sample_rate{msg_counter / elapsed_time};
-      RCLCPP_INFO(this->get_logger(),
-                  "Average Sample Rate (IMU): %.1f Hz",
+      RCLCPP_INFO(this->get_logger(), "Average Sample Rate (IMU): %.1f Hz",
                   average_sample_rate);
     }
     ++msg_counter;
@@ -704,27 +748,11 @@ private:
     imu_worker_.Work(imu_msg, this);
   }
 
-  void GroundTruthCallback(const MsgGroundTruth::ConstSharedPtr &gt_msg)
-  {
-    this->path_msg_groundtruth.header.stamp = gt_msg->header.stamp;
-    geometry_msgs::msg::PoseStamped msg;
-    msg.header.stamp       = gt_msg->header.stamp;
-    msg.header.frame_id    = "world";
-    msg.pose.position.x    = gt_msg->transform.translation.x;
-    msg.pose.position.y    = gt_msg->transform.translation.y;
-    msg.pose.position.z    = gt_msg->transform.translation.z;
-    msg.pose.orientation.w = gt_msg->transform.rotation.w;
-    msg.pose.orientation.x = gt_msg->transform.rotation.x;
-    msg.pose.orientation.y = gt_msg->transform.rotation.y;
-    msg.pose.orientation.z = gt_msg->transform.rotation.z;
-    this->path_msg_groundtruth.poses.push_back(std::move(msg));
-    gt_pub->publish(this->path_msg_groundtruth);
-  }
-
 public:
   ImuNode(const char *input_imu_topic, const char *input_groundtruth_topic,
           const char *output_imu_topic, const char *output_groundtruth_topic)
-      : Node("IMU")
+      : Node("IMU"), GroundTruthPublisher(this, input_groundtruth_topic,
+                                          output_groundtruth_topic)
   {
     this->declare_parameter("estimator", "rk4");
     this->declare_parameter("use_filter", true);
@@ -757,8 +785,7 @@ public:
     imu_worker_ = ImuWorker(use_filter, estimator, init_px, init_py, init_pz);
 
     // 设置路径消息的坐标系
-    path_msg_imu.header.frame_id         = "world";
-    path_msg_groundtruth.header.frame_id = "world";
+    path_msg_imu.header.frame_id         = DEFAULT_FRAME_ID;
 
     const rclcpp::QoS qos(10);
 
@@ -767,12 +794,7 @@ public:
     imu_sub_direct = this->create_subscription<MsgImu>(
         input_imu_topic, qos, std::bind(&ImuNode::ImuCallback, this, _1));
 
-    gt_sub_direct = this->create_subscription<MsgGroundTruth>(
-        input_groundtruth_topic, qos,
-        std::bind(&ImuNode::GroundTruthCallback, this, _1));
-
     imu_pub = create_publisher<MsgPath>(output_imu_topic, qos);
-    gt_pub  = create_publisher<MsgPath>(output_groundtruth_topic, qos);
   }
 
   void PublishImuPath(const geometry_msgs::msg::PoseStamped &pose_msg)
