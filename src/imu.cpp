@@ -36,7 +36,6 @@
 #include "euroc_vio/ahrs.hpp"
 
 using namespace std::chrono_literals;
-using namespace boost::numeric::odeint;
 
 /*****************************
  * 常数与类型定义
@@ -378,7 +377,7 @@ private:
   ImuState state_;
   double ode_time{0.0};
 
-  runge_kutta4<ImuState, double, ImuDerivative> rk4_;
+  boost::numeric::odeint::runge_kutta4<ImuState, double, ImuDerivative> rk4_;
   std::shared_ptr<AbstractAHRS> ahrs_;
 
   // 零偏
