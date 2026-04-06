@@ -297,18 +297,28 @@ public:
  *****************************/
 struct ImuKinematicsODE
 {
-  cv::Vec3d a; // 经过滤波后的加速度 (机体坐标系)
-  cv::Vec3d w; // 经过滤波后的角速度 (机体坐标系)
+  cv::Vec3d a0, a1; // 上一帧和当前帧的加速度 (机体坐标系)
+  cv::Vec3d w0, w1; // 上一帧和当前帧的角速度 (机体坐标系)
+  double t0, t1;    // 对应的时间戳
 
-  ImuKinematicsODE(const cv::Vec3d &accel, const cv::Vec3d &gyro,
-                   const cv::Vec3d &ba, const cv::Vec3d &bw)
-      : a(accel - ba), w(gyro - bw)
+  ImuKinematicsODE(const cv::Vec3d &accel0, const cv::Vec3d &accel1,
+                   const cv::Vec3d &gyro0, const cv::Vec3d &gyro1, double time0,
+                   double time1)
+      : a0{accel0}, a1{accel1}, w0{gyro0}, w1{gyro1}, t0{time0}, t1{time1}
   {
   }
 
-  void operator()(const ImuState &x, ImuDerivative &dxdt,
-                  const double /* t */) const
+  void operator()(const ImuState &x, ImuDerivative &dxdt, const double t) const
   {
+    // 采用一阶线性插值作为保持器
+    double alpha{0.0};
+    if (t1 > t0)
+    {
+      alpha = std::clamp((t - t0) / (t1 - t0), 0.0, 1.0);
+    }
+    const cv::Vec3d a{a0 + (a1 - a0) * alpha};
+    const cv::Vec3d w{w0 + (w1 - w0) * alpha};
+
     // 提取当前姿态四元数
     const double qw{x.GetQuaternionW()};
     const double qx{x.GetQuaternionX()};
@@ -339,17 +349,19 @@ struct ImuKinematicsODE
     // 数据说明书还说 Z 轴是朝着 MAV 正前方（即双目相机的视线方向），Y 轴则是朝向 MAV 的右侧（右手坐标系）
 
     // 速度导数 = 加速度
-    dxdt.SetAcceleration(
-        cv::Vec3d{R00 * a[0] + R01 * a[1] + R02 * a[2] - g_norm,
-                  R10 * a[0] + R11 * a[1] + R12 * a[2],
-                  R20 * a[0] + R21 * a[1] + R22 * a[2]});
+    cv::Vec3d accInWorldFrame{R00 * a[0] + R01 * a[1] + R02 * a[2] - g_norm,
+                              R10 * a[0] + R11 * a[1] + R12 * a[2],
+                              R20 * a[0] + R21 * a[1] + R22 * a[2]};
+    dxdt.SetAcceleration(accInWorldFrame);
 
     // 姿态导数
-    dxdt.SetQuaternionDerivative(cv::Vec4d{-qx * w[0] - qy * w[1] - qz * w[2],
-                                           qw * w[0] + qy * w[2] - qz * w[1],
-                                           qw * w[1] - qx * w[2] + qz * w[0],
-                                           qw * w[2] + qx * w[1] - qy * w[0]}
-                                 * 0.5);
+    const cv::Vec4d attDerivative{
+        0.5 * (-qx * w[0] - qy * w[1] - qz * w[2]),
+        0.5 * (qw * w[0] + qy * w[2] - qz * w[1]),
+        0.5 * (qw * w[1] - qx * w[2] + qz * w[0]),
+        0.5 * (qw * w[2] + qx * w[1] - qy * w[0]),
+    };
+    dxdt.SetQuaternionDerivative(attDerivative);
   }
 };
 
@@ -377,8 +389,9 @@ private:
 
   EstimatorType estimator_type_;
 
-  bool first_msg_   = true;
-  double last_time_ = 0.0;
+  bool is_gravity_aligned_{false};
+  double last_time_{0.0};
+  MsgImu prev_msg_imu_;
 
   // 状态向量初始化 (初始原点, 速度为 0, 姿态为单位四元数)
   ImuState state_;
@@ -391,7 +404,7 @@ private:
   cv::Vec3d gyro_bias_{0, 0, 0};
   cv::Vec3d accel_bias_{0, 0, 0};
 
-  MsgPose pose_msg;
+  MsgPose pose_msg_;
 
   // 初始重力对齐缓存
   std::vector<MsgImu> init_imu_msg_buffer_;
@@ -471,26 +484,6 @@ private:
     state_.SetQuaternion(qw, qx, qy, qz);
   }
 
-  void ProcessImuMessage(const MsgImu &imu_msg, double dt)
-  {
-    // 读取原始数据
-    const double gx{imu_msg.angular_velocity.x};
-    const double gy{imu_msg.angular_velocity.y};
-    const double gz{imu_msg.angular_velocity.z};
-    const double ax{imu_msg.linear_acceleration.x};
-    const double ay{imu_msg.linear_acceleration.y};
-    const double az{imu_msg.linear_acceleration.z};
-    const cv::Vec3d raw_accel{ax, ay, az};
-    const cv::Vec3d raw_gyro{gx, gy, gz};
-    // RC 低通滤波 (可选)
-    const cv::Vec3d filt_accel{use_filter_ ? accel_filter_.Filter(raw_accel)
-                                           : raw_accel};
-    const cv::Vec3d filt_gyro{use_filter_ ? gyro_filter_.Filter(raw_gyro)
-                                          : raw_gyro};
-    // 利用 RK4 进行积分推算
-    Integrate(filt_accel, filt_gyro, dt);
-  }
-
   void ComposePoseMessage(MsgPose &msg)
   {
     // 积分后必须对四元数进行归一化，因为 RK4 不保证单位模长约束
@@ -504,17 +497,65 @@ private:
     msg.pose.orientation.z = state_.GetQuaternionZ();
   }
 
+  void HandleImu(const MsgImu &imu_msg, PoseHandler auto *node_ptr)
+  {
+    const rclcpp::Time msg_stamp{imu_msg.header.stamp};
+    const double current_time{msg_stamp.seconds()};
+    const double gx{imu_msg.angular_velocity.x};
+    const double gy{imu_msg.angular_velocity.y};
+    const double gz{imu_msg.angular_velocity.z};
+    const double ax{imu_msg.linear_acceleration.x};
+    const double ay{imu_msg.linear_acceleration.y};
+    const double az{imu_msg.linear_acceleration.z};
+    const cv::Vec3d accel0{
+        prev_msg_imu_.linear_acceleration.x,
+        prev_msg_imu_.linear_acceleration.y,
+        prev_msg_imu_.linear_acceleration.z,
+    };
+    const cv::Vec3d accel1{ax, ay, az};
+    const cv::Vec3d gyro0{
+        prev_msg_imu_.angular_velocity.x,
+        prev_msg_imu_.angular_velocity.y,
+        prev_msg_imu_.angular_velocity.z,
+    };
+    const cv::Vec3d gyro1{gx, gy, gz};
+
+    // // 读取原始数据
+    // const cv::Vec3d raw_accel{ax, ay, az};
+    // const cv::Vec3d raw_gyro{gx, gy, gz};
+
+    // // RC 低通滤波
+    // const cv::Vec3d filt_accel{use_filter_ ? accel_filter_.Filter(raw_accel)
+    //                                        : raw_accel};
+    // const cv::Vec3d filt_gyro{use_filter_ ? gyro_filter_.Filter(raw_gyro)
+    //                                       : raw_gyro};
+
+    ZeroVelocityUpdate(accel1, gyro1);
+
+    // 利用 RK4 进行积分推算
+    Integrate(accel0, accel1, gyro0, gyro1, last_time_, current_time);
+    pose_msg_.header.stamp = msg_stamp;
+    ComposePoseMessage(pose_msg_);
+    node_ptr->HandlePose(pose_msg_);
+  }
+
   void RecoverPoseMessageFromCachedImuMessage(PoseHandler auto *node_ptr)
   {
+    // 恢复初始状态
     accel_filter_.Reset();
     gyro_filter_.Reset();
-    MsgPose msg;
-    msg.header.frame_id = DEFAULT_FRAME_ID;
+    bool first_msg{true};
     for (const MsgImu &imu_msg : init_imu_msg_buffer_)
     {
-      msg.header.stamp = imu_msg.header.stamp;
-      ComposePoseMessage(msg);
-      node_ptr->HandlePose(msg);
+      const rclcpp::Time msg_stamp{imu_msg.header.stamp};
+      const double current_time{msg_stamp.seconds()};
+      if (!first_msg)
+      {
+        HandleImu(imu_msg, node_ptr);
+        first_msg = false;
+      }
+      prev_msg_imu_ = imu_msg;
+      last_time_    = current_time;
     }
   }
 
@@ -565,39 +606,45 @@ public:
       throw std::invalid_argument{"Unsupported estimator type"};
     }
 
-    pose_msg.header.frame_id = DEFAULT_FRAME_ID;
+    pose_msg_.header.frame_id = DEFAULT_FRAME_ID;
   }
 
-  void RK4Update(const cv::Vec3d &acc, const cv::Vec3d &gyro, double dt)
+  void RK4Update(const cv::Vec3d &accel0, const cv::Vec3d &accel1,
+                 const cv::Vec3d &gyro0, const cv::Vec3d &gyro1, double time0,
+                 double time1)
   {
-    ImuKinematicsODE ode{acc, gyro, accel_bias_, gyro_bias_};
+    const double dt{time1 - time0};
+    ImuKinematicsODE ode{accel0, accel1, gyro0, gyro1, time0, time1};
     rk4_.do_step(ode, state_, ode_time, dt);
     ode_time += dt;
   }
 
-  void MahonyUpdate(const cv::Vec3d &acc, const cv::Vec3d &gyro, double dt)
+  void MahonyUpdate(const cv::Vec3d &accel0, const cv::Vec3d &accel1,
+                    const cv::Vec3d &gyro0, const cv::Vec3d &gyro1,
+                    double time0, double time1)
   {
     // 利用 Mahony 算法或 Madgwick 算法，计算姿态四元数
-    cv::Vec3f vecAccel{static_cast<cv::Vec3f>(acc)};
-    cv::Vec3f vecGyro{static_cast<cv::Vec3f>(gyro)};
-    ahrs_->Update(vecGyro, vecAccel, dt);
+    cv::Vec3f accel2{static_cast<cv::Vec3f>(accel1)};
+    cv::Vec3f gyro2{static_cast<cv::Vec3f>(gyro1)};
+    ahrs_->Update(gyro2, accel2, time1 - time0);
     // 更新姿态四元数
     this->state_.SetQuaternion(ahrs_->GetQuaternion());
     // 用龙格库塔法计算速度、位置
-    RK4Update(vecAccel, vecGyro, dt);
+    RK4Update(accel0, accel2, gyro0, gyro2, time0, time1);
   }
 
-  void Integrate(const cv::Vec3d &filt_accel, const cv::Vec3d &filt_gyro,
-                 double dt)
+  void Integrate(const cv::Vec3d &accel0, const cv::Vec3d &accel1,
+                 const cv::Vec3d &gyro0, const cv::Vec3d &gyro1, double time0,
+                 double time1)
   {
     switch (estimator_type_)
     {
     case EstimatorType::RK4:
-      RK4Update(filt_accel, filt_gyro, dt);
+      RK4Update(accel0, accel1, gyro0, gyro1, time0, time1);
       break;
     case EstimatorType::MAHONY:
     case EstimatorType::MADGWICK:
-      MahonyUpdate(filt_accel, filt_gyro, dt);
+      MahonyUpdate(accel0, accel1, gyro0, gyro1, time0, time1);
       break;
     default:
       break;
@@ -606,36 +653,11 @@ public:
 
   void Work(const MsgImu::ConstSharedPtr &imu_msg, PoseHandler auto *node_ptr)
   {
-    const double current_time{imu_msg->header.stamp.sec
-                              + imu_msg->header.stamp.nanosec * 1e-9};
-    const double gx{imu_msg->angular_velocity.x};
-    const double gy{imu_msg->angular_velocity.y};
-    const double gz{imu_msg->angular_velocity.z};
-    const double ax{imu_msg->linear_acceleration.x};
-    const double ay{imu_msg->linear_acceleration.y};
-    const double az{imu_msg->linear_acceleration.z};
-
-    pose_msg.header.stamp       = imu_msg->header.stamp;
-    pose_msg.pose.position.x    = 0.0;
-    pose_msg.pose.position.y    = 0.0;
-    pose_msg.pose.position.z    = 0.0;
-    pose_msg.pose.orientation.w = 1.0;
-    pose_msg.pose.orientation.x = 0.0;
-    pose_msg.pose.orientation.y = 0.0;
-    pose_msg.pose.orientation.z = 0.0;
-
-    // 读取原始数据
-    const cv::Vec3d raw_accel{ax, ay, az};
-    const cv::Vec3d raw_gyro{gx, gy, gz};
-
-    // 1. RC 低通滤波
-    const cv::Vec3d filt_accel{use_filter_ ? accel_filter_.Filter(raw_accel)
-                                           : raw_accel};
-    const cv::Vec3d filt_gyro{use_filter_ ? gyro_filter_.Filter(raw_gyro)
-                                          : raw_gyro};
+    const rclcpp::Time msg_stamp{imu_msg->header.stamp};
+    const double current_time{msg_stamp.seconds()};
 
     // 初始重力对齐
-    if (first_msg_)
+    if (!is_gravity_aligned_)
     {
       init_imu_msg_buffer_.push_back(*imu_msg);
 
@@ -645,29 +667,20 @@ public:
         return;
       }
 
+      // 主要目的：估计无人机的初始姿态
       EstimateInitialAttitude();
 
-      last_time_ = current_time;
-      first_msg_ = false;
+      is_gravity_aligned_ = true;
 
       RecoverPoseMessageFromCachedImuMessage(node_ptr);
     }
-
-    const double dt{current_time - last_time_};
-    last_time_ = current_time;
-
-    // // 防御性检查：跳过时间戳异常的数据
-    // if (dt <= 0 || dt > 0.1)
-    // {
-    //   return; // 时间间隔异常，可能是数据乱序或丢包，跳过处理
-    // }
-
-    ZeroVelocityUpdate(filt_accel, filt_gyro);
-
-    // 2. 利用 RK4 进行积分推算
-    Integrate(filt_accel, filt_gyro, dt);
-    ComposePoseMessage(pose_msg);
-    node_ptr->HandlePose(pose_msg);
+    else
+    {
+      HandleImu(*imu_msg, node_ptr);
+    }
+    // 缓存上一条 IMU 消息
+    prev_msg_imu_ = *imu_msg;
+    last_time_    = current_time;
   }
 };
 
