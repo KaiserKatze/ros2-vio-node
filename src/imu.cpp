@@ -360,6 +360,11 @@ enum class EstimatorType
   MADGWICK
 };
 
+template <typename T>
+concept PoseHandler = requires(T t, const MsgPose &msg) {
+  { t.HandlePose(msg) } -> std::same_as<void>;
+};
+
 /*****************************
  * IMU 数据处理单元
  *****************************/
@@ -386,7 +391,7 @@ private:
   cv::Vec3d gyro_bias_{0, 0, 0};
   cv::Vec3d accel_bias_{0, 0, 0};
 
-  geometry_msgs::msg::PoseStamped pose_msg;
+  MsgPose pose_msg;
 
   // 初始重力对齐缓存
   std::vector<MsgImu> init_imu_msg_buffer_;
@@ -486,7 +491,7 @@ private:
     Integrate(filt_accel, filt_gyro, dt);
   }
 
-  void ComposePoseMessage(geometry_msgs::msg::PoseStamped &msg)
+  void ComposePoseMessage(MsgPose &msg)
   {
     // 积分后必须对四元数进行归一化，因为 RK4 不保证单位模长约束
     state_.NormalizeQuaternion();
@@ -499,18 +504,17 @@ private:
     msg.pose.orientation.z = state_.GetQuaternionZ();
   }
 
-  template <typename NodeType>
-  void RecoverPoseMessageFromCachedImuMessage(NodeType *node_ptr)
+  void RecoverPoseMessageFromCachedImuMessage(PoseHandler auto *node_ptr)
   {
     accel_filter_.Reset();
     gyro_filter_.Reset();
-    geometry_msgs::msg::PoseStamped msg;
+    MsgPose msg;
     msg.header.frame_id = DEFAULT_FRAME_ID;
     for (const MsgImu &imu_msg : init_imu_msg_buffer_)
     {
       msg.header.stamp = imu_msg.header.stamp;
       ComposePoseMessage(msg);
-      node_ptr->PublishImuPath(msg);
+      node_ptr->HandlePose(msg);
     }
   }
 
@@ -600,8 +604,7 @@ public:
     }
   }
 
-  template <typename NodeType>
-  void Work(const MsgImu::ConstSharedPtr &imu_msg, NodeType *node_ptr)
+  void Work(const MsgImu::ConstSharedPtr &imu_msg, PoseHandler auto *node_ptr)
   {
     const double current_time{imu_msg->header.stamp.sec
                               + imu_msg->header.stamp.nanosec * 1e-9};
@@ -664,8 +667,66 @@ public:
     // 2. 利用 RK4 进行积分推算
     Integrate(filt_accel, filt_gyro, dt);
     ComposePoseMessage(pose_msg);
-    node_ptr->PublishImuPath(pose_msg);
+    node_ptr->HandlePose(pose_msg);
   }
+};
+
+class ImuPathPublisher
+{
+public:
+  ImuPathPublisher(rclcpp::Node *node_ptr, const char *input_imu_topic,
+                   const char *output_imu_topic, ImuWorker &&worker)
+      : node_ptr_{node_ptr}, imu_worker_{std::move(worker)}
+  {
+    using std::placeholders::_1;
+    const rclcpp::QoS qos(10);
+    subscriber_ = node_ptr_->create_subscription<MsgImu>(
+        input_imu_topic, qos,
+        std::bind(&ImuPathPublisher::SubscriberCallback, this, _1));
+    publisher_ = node_ptr_->create_publisher<MsgPath>(output_imu_topic, qos);
+    // 设置路径消息的坐标系
+    this->msg_path_.header.frame_id = DEFAULT_FRAME_ID;
+  }
+
+  void HandlePose(const MsgPose &msg)
+  {
+    this->msg_path_.header.stamp = msg.header.stamp;
+    this->msg_path_.poses.push_back(msg);
+    this->publisher_->publish(this->msg_path_);
+  }
+
+private:
+  void PrintAverageSampleRate(const MsgImu::ConstSharedPtr &msg)
+  {
+    static size_t msg_counter{0};
+    static double first_timestamp{0.0};
+    const double msg_timestamp{
+        static_cast<rclcpp::Time>(msg->header.stamp).seconds()};
+    if (msg_counter == 0)
+    {
+      first_timestamp = msg_timestamp;
+    }
+    else
+    {
+      const double elapsed_time{msg_timestamp - first_timestamp};
+      const double average_sample_rate{msg_counter / elapsed_time};
+      RCLCPP_INFO(node_ptr_->get_logger(), "Average Sample Rate (IMU): %.1f Hz",
+                  average_sample_rate);
+    }
+    ++msg_counter;
+  }
+
+  void SubscriberCallback(const MsgImu::ConstSharedPtr &msg)
+  {
+    PrintAverageSampleRate(msg);
+    this->imu_worker_.Work(msg, this);
+  }
+
+  rclcpp::Node *node_ptr_;
+  rclcpp::Subscription<MsgImu>::SharedPtr subscriber_;
+  rclcpp::Publisher<MsgPath>::SharedPtr publisher_;
+  MsgPath msg_path_;
+  ImuWorker imu_worker_;
 };
 
 class GroundTruthPublisher
@@ -711,59 +772,27 @@ private:
   MsgPose msg_pose_;
 };
 
-class ImuPathPublisher
-{};
-
 /*****************************
  * ROS2 Node
  *****************************/
-class ImuNode : public rclcpp::Node, public GroundTruthPublisher
+class ImuNode : public rclcpp::Node
 {
-private:
-  rclcpp::Subscription<MsgImu>::SharedPtr imu_sub_direct;
-  rclcpp::Publisher<MsgPath>::SharedPtr imu_pub;
-  MsgPath path_msg_imu;
-
-  ImuWorker imu_worker_;
-
-  void ImuCallback(const MsgImu::ConstSharedPtr &imu_msg)
-  {
-    static size_t msg_counter{0};
-    static double first_timestamp{0.0};
-    const double msg_timestamp{
-        static_cast<rclcpp::Time>(imu_msg->header.stamp).seconds()};
-    if (msg_counter == 0)
-    {
-      first_timestamp = msg_timestamp;
-    }
-    else
-    {
-      const double elapsed_time{msg_timestamp - first_timestamp};
-      const double average_sample_rate{msg_counter / elapsed_time};
-      RCLCPP_INFO(this->get_logger(), "Average Sample Rate (IMU): %.1f Hz",
-                  average_sample_rate);
-    }
-    ++msg_counter;
-
-    imu_worker_.Work(imu_msg, this);
-  }
-
 public:
   ImuNode(const char *input_imu_topic, const char *input_groundtruth_topic,
           const char *output_imu_topic, const char *output_groundtruth_topic)
-      : Node("IMU"), GroundTruthPublisher(this, input_groundtruth_topic,
-                                          output_groundtruth_topic)
+      : Node("IMU")
   {
     this->declare_parameter("estimator", "rk4");
     this->declare_parameter("use_filter", true);
     this->declare_parameter("initial_position_x", 0.0);
     this->declare_parameter("initial_position_y", 0.0);
     this->declare_parameter("initial_position_z", 0.0);
-    std::string estimator_str{this->get_parameter("estimator").as_string()};
-    bool use_filter{this->get_parameter("use_filter").as_bool()};
-    double init_px{this->get_parameter("initial_position_x").as_double()};
-    double init_py{this->get_parameter("initial_position_y").as_double()};
-    double init_pz{this->get_parameter("initial_position_z").as_double()};
+    const std::string estimator_str{
+        this->get_parameter("estimator").as_string()};
+    const bool use_filter{this->get_parameter("use_filter").as_bool()};
+    const double init_px{this->get_parameter("initial_position_x").as_double()};
+    const double init_py{this->get_parameter("initial_position_y").as_double()};
+    const double init_pz{this->get_parameter("initial_position_z").as_double()};
 
     EstimatorType estimator;
     if (estimator_str == "rk4")
@@ -782,27 +811,16 @@ public:
     {
       throw std::invalid_argument("Invalid estimator type: " + estimator_str);
     }
-    imu_worker_ = ImuWorker(use_filter, estimator, init_px, init_py, init_pz);
-
-    // 设置路径消息的坐标系
-    path_msg_imu.header.frame_id         = DEFAULT_FRAME_ID;
-
-    const rclcpp::QoS qos(10);
-
-    using std::placeholders::_1;
-
-    imu_sub_direct = this->create_subscription<MsgImu>(
-        input_imu_topic, qos, std::bind(&ImuNode::ImuCallback, this, _1));
-
-    imu_pub = create_publisher<MsgPath>(output_imu_topic, qos);
+    pub_imu = std::make_unique<ImuPathPublisher>(
+        this, input_imu_topic, output_imu_topic,
+        ImuWorker{use_filter, estimator, init_px, init_py, init_pz});
+    pub_gt = std::make_unique<GroundTruthPublisher>(
+        this, input_groundtruth_topic, output_groundtruth_topic);
   }
 
-  void PublishImuPath(const geometry_msgs::msg::PoseStamped &pose_msg)
-  {
-    this->path_msg_imu.header.stamp = pose_msg.header.stamp;
-    this->path_msg_imu.poses.push_back(pose_msg);
-    imu_pub->publish(this->path_msg_imu);
-  }
+private:
+  std::unique_ptr<GroundTruthPublisher> pub_gt;
+  std::unique_ptr<ImuPathPublisher> pub_imu;
 };
 
 int main(int argc, char **argv)
