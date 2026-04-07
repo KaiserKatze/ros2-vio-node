@@ -9,4 +9,6 @@
 
 #define CORNER_DETECTION_ALGORITHM CORNER_USE_FAST
 
+static constexpr char DEFAULT_FRAME_ID[]{"world"};
+
 #endif /* MAIN_H */
