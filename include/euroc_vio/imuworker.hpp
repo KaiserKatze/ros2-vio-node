@@ -180,7 +180,10 @@ private:
   {
     // 计算平均加速度向量，作为重力方向的估计
     const cv::Vec3d g_body{CalculateAverageGravity()};
-    const cv::Vec3d g_world{-1.0, 0.0, 0.0};
+
+    // 静止时，IMU 测量的是抵消重力的支撑力（比力），方向垂直向上。
+    // 该数据集说明 X 轴向上，因此目标世界向量应该是 [1.0, 0.0, 0.0]
+    const cv::Vec3d g_world{1.0, 0.0, 0.0};
     const cv::Vec3d v{g_body.cross(g_world)};
     const double c{g_body.dot(g_world)};
     const double s{cv::norm(v)};
@@ -191,10 +194,11 @@ private:
     cv::Mat R{cv::Mat::eye(3, 3, CV_64F) + K
               + K * K * ((1 - c) / (s * s + 1e-8))};
 
-    // 转 quaternion（简化）
-    double qw{std::sqrt(1 + R.at<double>(0, 0) + R.at<double>(1, 1)
-                        + R.at<double>(2, 2))
-              * 0.5};
+    // 转 quaternion
+    double qw{
+        std::sqrt(std::max(0.0, 1 + R.at<double>(0, 0) + R.at<double>(1, 1)
+                                    + R.at<double>(2, 2)))
+        * 0.5};
     double qx{0.0}, qy{0.0}, qz{0.0};
     if (std::abs(qw) < 1e-8)
     {
@@ -252,39 +256,33 @@ private:
   {
     const rclcpp::Time msg_stamp{imu_msg.header.stamp};
     const double current_time{msg_stamp.seconds()};
-    const double gx{imu_msg.angular_velocity.x};
-    const double gy{imu_msg.angular_velocity.y};
-    const double gz{imu_msg.angular_velocity.z};
-    const double ax{imu_msg.linear_acceleration.x};
-    const double ay{imu_msg.linear_acceleration.y};
-    const double az{imu_msg.linear_acceleration.z};
-    const cv::Vec3d accel0{
-        prev_msg_imu_.linear_acceleration.x,
-        prev_msg_imu_.linear_acceleration.y,
-        prev_msg_imu_.linear_acceleration.z,
-    };
-    const cv::Vec3d accel1{ax, ay, az};
-    const cv::Vec3d gyro0{
-        prev_msg_imu_.angular_velocity.x,
-        prev_msg_imu_.angular_velocity.y,
-        prev_msg_imu_.angular_velocity.z,
-    };
-    const cv::Vec3d gyro1{gx, gy, gz};
 
-    // // 读取原始数据
-    // const cv::Vec3d raw_accel{ax, ay, az};
-    // const cv::Vec3d raw_gyro{gx, gy, gz};
+    // 提取原始数据
+    const cv::Vec3d raw_accel1{imu_msg.linear_acceleration.x,
+                               imu_msg.linear_acceleration.y,
+                               imu_msg.linear_acceleration.z};
+    const cv::Vec3d raw_gyro1{imu_msg.angular_velocity.x,
+                              imu_msg.angular_velocity.y,
+                              imu_msg.angular_velocity.z};
+    const cv::Vec3d raw_accel0{prev_msg_imu_.linear_acceleration.x,
+                               prev_msg_imu_.linear_acceleration.y,
+                               prev_msg_imu_.linear_acceleration.z};
+    const cv::Vec3d raw_gyro0{prev_msg_imu_.angular_velocity.x,
+                              prev_msg_imu_.angular_velocity.y,
+                              prev_msg_imu_.angular_velocity.z};
 
-    // // RC 低通滤波
-    // const cv::Vec3d filt_accel{use_filter_ ? accel_filter_.Filter(raw_accel)
-    //                                        : raw_accel};
-    // const cv::Vec3d filt_gyro{use_filter_ ? gyro_filter_.Filter(raw_gyro)
-    //                                       : raw_gyro};
+    // 零速检测及零偏更新 (使用原始数据)
+    ZeroVelocityUpdate(raw_accel1, raw_gyro1);
 
-    ZeroVelocityUpdate(accel1, gyro1);
+    // 【修改点】：实际代入积分器进行解算时，必须扣除已估计出的零偏 (Bias)
+    const cv::Vec3d unbiased_accel0{raw_accel0 - accel_bias_};
+    const cv::Vec3d unbiased_gyro0{raw_gyro0 - gyro_bias_};
+    const cv::Vec3d unbiased_accel1{raw_accel1 - accel_bias_};
+    const cv::Vec3d unbiased_gyro1{raw_gyro1 - gyro_bias_};
 
-    // 利用 RK4 进行积分推算
-    Integrate(accel0, accel1, gyro0, gyro1, last_time_, current_time);
+    Integrate(unbiased_accel0, unbiased_accel1, unbiased_gyro0, unbiased_gyro1,
+              last_time_, current_time);
+
     pose_msg_.header.stamp = msg_stamp;
     ComposePoseMessage(pose_msg_);
     node_ptr->HandlePose(pose_msg_);
@@ -394,13 +392,20 @@ public:
                     double time0, double time1)
   {
     // 利用 Mahony 算法或 Madgwick 算法，计算姿态四元数
-    cv::Vec3f accel2{static_cast<cv::Vec3f>(accel1)};
-    cv::Vec3f gyro2{static_cast<cv::Vec3f>(gyro1)};
-    ahrs_->Update(gyro2, accel2, time1 - time0);
-    // 更新姿态四元数
-    this->state_.SetQuaternion(static_cast<cv::Vec4d>(ahrs_->GetQuaternion()));
-    // 用龙格库塔法计算速度、位置
-    RK4Update(accel0, accel2, gyro0, gyro2, time0, time1);
+
+    // 步进更新 AHRS 算法以获得精确的有重力修正的姿态
+    this->ahrs_->Update(gyro1, accel1, time1 - time0);
+
+    // 切忌在 RK4 积分之前覆盖状态变量 state_
+
+    // 如果先覆盖，RK4 会再次利用 gyro 数据对姿态求导并积分，导致同一帧的角速度被积分两次（或者与 Mahony 抗衡）。
+    // 正确的做法是：利用现有的姿态去推算速度和位置（RK4），推算完成后，抛弃纯运动学算出的漂移姿态，用 Mahony 的姿态覆盖它。
+
+    // 正常运行 RK4 计算速度和位置 (RK4 内部会自己处理自己的四元数状态)
+    this->RK4Update(accel0, accel1, gyro0, gyro1, time0, time1);
+
+    // 将 RK4 推算出的纯积分姿态替换为由 Mahony 滤波器校准过的姿态
+    this->state_.SetQuaternion(this->ahrs_->GetQuaternion());
   }
 
   void Integrate(const cv::Vec3d &accel0, const cv::Vec3d &accel1,
