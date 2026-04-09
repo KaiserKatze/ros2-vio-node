@@ -149,6 +149,7 @@ private:
   MsgPose pose_msg_;
 
   // 初始重力对齐缓存
+  static constexpr size_t init_imu_msg_buffer_capacity_{10};
   std::vector<MsgImu> init_imu_msg_buffer_;
 
   cv::Vec3d CalculateAverageGravity() const
@@ -349,6 +350,7 @@ public:
     }
 
     pose_msg_.header.frame_id = DEFAULT_FRAME_ID;
+    init_imu_msg_buffer_.reserve(init_imu_msg_buffer_capacity_);
   }
 
   void RK4Update(const cv::Vec3d &accel0, const cv::Vec3d &accel1,
@@ -404,7 +406,7 @@ public:
       init_imu_msg_buffer_.push_back(*imu_msg);
 
       // 等积累了足够的初始加速度数据后，计算初始姿态
-      if (init_imu_msg_buffer_.size() < 10)
+      if (init_imu_msg_buffer_.size() < init_imu_msg_buffer_capacity_)
       {
         return;
       }
