@@ -2,8 +2,21 @@
 #define IMUSTATE_HPP
 
 #include <array>
+#include <type_traits>
 
 #include <opencv2/core.hpp>
+
+#include <Eigen/Dense>
+
+template <typename T, typename E, size_t S>
+concept VectorLike = std::is_same_v<T, typename cv::Vec<E, S>>
+                     || std::is_same_v<T, typename Eigen::Matrix<E, S, 1>>;
+
+template <typename T>
+concept VectorLike3d = VectorLike<T, double, 3>;
+
+template <typename T>
+concept VectorLike4d = VectorLike<T, double, 4>;
 
 // 状态量定义: [px, py, pz, vx, vy, vz, qw, qx, qy, qz] (大小为 10)
 struct ImuState : public std::array<double, 10>
@@ -78,9 +91,11 @@ struct ImuState : public std::array<double, 10>
     return (*this)[2];
   }
 
-  cv::Vec3d GetPosition() const
+  Eigen::Vector3d GetPosition() const
   {
-    return cv::Vec3d(GetPositionX(), GetPositionY(), GetPositionZ());
+    Eigen::Vector3d pos;
+    pos << GetPositionX(), GetPositionY(), GetPositionZ();
+    return pos;
   }
 
   double GetVelocityX() const
@@ -98,9 +113,11 @@ struct ImuState : public std::array<double, 10>
     return (*this)[5];
   }
 
-  cv::Vec3d GetVelocity() const
+  Eigen::Vector3d GetVelocity() const
   {
-    return cv::Vec3d(GetVelocityX(), GetVelocityY(), GetVelocityZ());
+    Eigen::Vector3d vel;
+    vel << GetVelocityX(), GetVelocityY(), GetVelocityZ();
+    return vel;
   }
 
   double GetQuaternionW() const
@@ -130,7 +147,7 @@ struct ImuState : public std::array<double, 10>
     (*this)[2] = pz;
   }
 
-  void SetPosition(const cv::Vec3d &pos)
+  void SetPosition(const VectorLike3d auto &pos)
   {
     (*this)[0] = pos[0];
     (*this)[1] = pos[1];
@@ -144,7 +161,7 @@ struct ImuState : public std::array<double, 10>
     (*this)[5] = vz;
   }
 
-  void SetVelocity(const cv::Vec3d &vel)
+  void SetVelocity(const VectorLike3d auto &vel)
   {
     (*this)[3] = vel[0];
     (*this)[4] = vel[1];
@@ -159,7 +176,7 @@ struct ImuState : public std::array<double, 10>
     (*this)[9] = qz;
   }
 
-  void SetQuaternion(const cv::Vec4f &quat)
+  void SetQuaternion(const VectorLike4d auto &quat)
   {
     (*this)[6] = quat[0];
     (*this)[7] = quat[1];
@@ -188,21 +205,21 @@ struct ImuDerivative : public std::array<double, 10>
   {
   }
 
-  void SetVelocity(const cv::Vec3d &velocity)
+  void SetVelocity(const VectorLike3d auto &velocity)
   {
     (*this)[0] = velocity[0];
     (*this)[1] = velocity[1];
     (*this)[2] = velocity[2];
   }
 
-  void SetAcceleration(const cv::Vec3d &acceleration)
+  void SetAcceleration(const VectorLike3d auto &acceleration)
   {
     (*this)[3] = acceleration[0];
     (*this)[4] = acceleration[1];
     (*this)[5] = acceleration[2];
   }
 
-  void SetQuaternionDerivative(const cv::Vec4d &quat_derivative)
+  void SetQuaternionDerivative(const VectorLike4d auto &quat_derivative)
   {
     (*this)[6] = quat_derivative[0];
     (*this)[7] = quat_derivative[1];

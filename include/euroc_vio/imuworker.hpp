@@ -398,7 +398,7 @@ public:
     cv::Vec3f gyro2{static_cast<cv::Vec3f>(gyro1)};
     ahrs_->Update(gyro2, accel2, time1 - time0);
     // 更新姿态四元数
-    this->state_.SetQuaternion(ahrs_->GetQuaternion());
+    this->state_.SetQuaternion(static_cast<cv::Vec4d>(ahrs_->GetQuaternion()));
     // 用龙格库塔法计算速度、位置
     RK4Update(accel0, accel2, gyro0, gyro2, time0, time1);
   }
