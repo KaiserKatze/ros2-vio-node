@@ -161,7 +161,6 @@ private:
       throw std::runtime_error{"init_imu_msg_buffer_ is empty"};
     }
     cv::Vec3d g_body{std::transform_reduce(
-        // std::execution::par,
         init_imu_msg_buffer_.cbegin(), init_imu_msg_buffer_.cend(),
         cv::Vec3d::zeros(), std::plus<>(),
         [](const MsgImu &imu_msg) -> cv::Vec3d

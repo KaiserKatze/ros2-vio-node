@@ -4,7 +4,6 @@
 #include <Eigen/Dense>
 
 #include <array>
-#include <execution>
 #include <numeric>
 
 /**
@@ -184,8 +183,7 @@ public:
      * 1. 陀螺仪能量（并行 + 向量化）
      * ========================= */
     double gyro_energy{std::transform_reduce(
-                           std::execution::par, window_.cbegin(),
-                           window_.cend(), 0.0, std::plus<>(),
+                           window_.cbegin(), window_.cend(), 0.0, std::plus<>(),
                            [](const data_type &e)
                            {
                              return e.template head<3>().norm(); // Eigen SIMD
@@ -201,9 +199,8 @@ public:
      * 2. 加速度均值（向量 reduce）
      * ========================= */
     const Eigen::Vector3d acc_mean{
-        std::transform_reduce(std::execution::par, window_.cbegin(),
-                              window_.cend(), Eigen::Vector3d::Zero(),
-                              std::plus<>(),
+        std::transform_reduce(window_.cbegin(), window_.cend(),
+                              Eigen::Vector3d::Zero(), std::plus<>(),
                               [](const data_type &e)
                               {
                                 return e.template tail<3>(); // Eigen SIMD
@@ -221,14 +218,13 @@ public:
      * 3. 加速度方差（并行 + SIMD）
      * ========================= */
     const double acc_variance{
-        std::transform_reduce(std::execution::par, window_.cbegin(),
-                              window_.cend(), 0.0, std::plus<>(),
-                              [&](const data_type &e)
-                              {
-                                Eigen::Vector3d delta{e.template tail<3>()
-                                                      - acc_mean};
-                                return delta.squaredNorm(); // SIMD
-                              })
+        std::transform_reduce(
+            window_.cbegin(), window_.cend(), 0.0, std::plus<>(),
+            [&](const data_type &e)
+            {
+              Eigen::Vector3d delta{e.template tail<3>() - acc_mean};
+              return delta.squaredNorm(); // SIMD
+            })
         * denom};
 
     if (acc_variance > config_.accelerometer_variance_threshold)
