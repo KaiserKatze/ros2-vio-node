@@ -41,25 +41,39 @@ template <std::floating_point T> struct FloatInt
   static_assert(!std::is_same_v<type, void>, "Unsupported float type");
 };
 
+template <std::floating_point T> struct MagicNumber
+{
+};
+
+template <> struct MagicNumber<double>
+{
+  static constexpr typename FloatInt<double>::type value{0x5fe6eb50c7b537a9ll};
+};
+
+template <> struct MagicNumber<float>
+{
+  static constexpr typename FloatInt<float>::type value{0x5f3759df};
+};
+
 /**
  * @brief Fast inverse square-root calculation
  * @param x Input value
  * @return Inverse square-root of x
  * @note http://en.wikipedia.org/wiki/Fast_inverse_square_root
  */
-float invSqrt(float x)
+template <std::floating_point FloatType> FloatType invSqrt(FloatType x)
 {
-  using fint = typename FloatInt<float>::type;
+  using fint = typename FloatInt<FloatType>::type;
   union
   {
-    float f;
+    FloatType f;
     fint i;
   } fi;
   fi.f = x;
-  float y{0.5f * x};
-  fi.i = 0x5f3759df - (fi.i >> 1);
-  float z{fi.f};
-  z = z * (1.5f - (y * z * z));
+  FloatType y{static_cast<FloatType>(0.5) * x};
+  fi.i = MagicNumber<FloatType>::value - (fi.i >> 1);
+  FloatType z{fi.f};
+  z = z * (static_cast<FloatType>(1.5) - (y * z * z));
   return z;
 }
 
