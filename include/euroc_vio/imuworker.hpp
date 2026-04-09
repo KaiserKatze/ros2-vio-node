@@ -144,7 +144,7 @@ private:
   double ode_time{0.0};
 
   boost::numeric::odeint::runge_kutta4<ImuState, double, ImuDerivative> rk4_;
-  std::shared_ptr<AbstractAHRS> ahrs_;
+  std::shared_ptr<AbstractAHRS<double>> ahrs_;
 
   // 零偏
   cv::Vec3d gyro_bias_{0, 0, 0};
@@ -364,11 +364,11 @@ public:
     }
     else if (estimator == EstimatorType::MAHONY)
     {
-      ahrs_ = std::make_shared<MahonyAHRS>();
+      ahrs_ = std::make_shared<MahonyAHRS<double>>();
     }
     else if (estimator == EstimatorType::MADGWICK)
     {
-      ahrs_ = std::make_shared<MadgwickAHRS>();
+      ahrs_ = std::make_shared<MadgwickAHRS<double>>();
     }
     else
     {

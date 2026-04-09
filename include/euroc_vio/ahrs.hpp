@@ -23,25 +23,34 @@
 #include <cstdint>
 #include <type_traits>
 
+#include <Eigen/Dense>
 #include <opencv2/core.hpp>
 
-static constexpr float betaDef{0.1f};         // 2 * proportional gain
-static constexpr float twoKpDef{2.0f * 0.5f}; // 2 * proportional gain
-static constexpr float twoKiDef{2.0f * 0.0f}; // 2 * integral gain
+// 2 * proportional gain
+template <std::floating_point FloatType>
+static constexpr FloatType betaDef{static_cast<FloatType>(0.1)};
 
-template <std::floating_point T> struct FloatInt
+// 2 * proportional gain
+template <std::floating_point FloatType>
+static constexpr FloatType twoKpDef{static_cast<FloatType>(2.0 * 0.5)};
+
+// 2 * integral gain
+template <std::floating_point FloatType>
+static constexpr FloatType twoKiDef{static_cast<FloatType>(2.0 * 0.0)};
+
+template <std::floating_point FloatType> struct FloatInt
 {
   using type = std::conditional_t<
-      sizeof(T) == 1, std::int8_t,
+      sizeof(FloatType) == 1, std::int8_t,
       std::conditional_t<
-          sizeof(T) == 2, std::int16_t,
+          sizeof(FloatType) == 2, std::int16_t,
           std::conditional_t<
-              sizeof(T) == 4, std::int32_t,
-              std::conditional_t<sizeof(T) == 8, std::int64_t, void>>>>;
-  static_assert(!std::is_same_v<type, void>, "Unsupported float type");
+              sizeof(FloatType) == 4, std::int32_t,
+              std::conditional_t<sizeof(FloatType) == 8, std::int64_t, void>>>>;
+  static_assert(!std::is_same_v<type, void>, "Unsupported floating type");
 };
 
-template <std::floating_point T> struct MagicNumber
+template <std::floating_point FloatType> struct MagicNumber
 {
 };
 
@@ -77,38 +86,55 @@ template <std::floating_point FloatType> FloatType invSqrt(FloatType x)
   return z;
 }
 
-struct AbstractAHRS
+template <std::floating_point FloatType> struct AbstractAHRS
 {
-  virtual void Update(cv::Vec3f &gyro, cv::Vec3f &accel, float dt) = 0;
-  virtual void Update(cv::Vec3f &gyro, cv::Vec3f &accel, cv::Vec3f &mag,
-                      float dt)                                    = 0;
-  virtual cv::Vec4f GetQuaternion() const                          = 0;
+  using Vec3 = Eigen::Matrix<FloatType, 3, 1>;
+  using Vec4 = Eigen::Matrix<FloatType, 4, 1>;
+
+  virtual void Update(Vec3 &gyro, Vec3 &accel, FloatType dt)            = 0;
+  virtual void Update(Vec3 &gyro, Vec3 &accel, Vec3 &mag, FloatType dt) = 0;
+  virtual Vec4 GetQuaternion() const                                    = 0;
 };
 
-struct MahonyAHRS : public AbstractAHRS
+template <std::floating_point FloatType>
+struct MahonyAHRS : public AbstractAHRS<FloatType>
 {
-  volatile float twoKp{twoKpDef}; // 2 * proportional gain (Kp)
-  volatile float twoKi{twoKiDef}; // 2 * integral gain (Ki)
-  volatile float beta{betaDef};   // 2 * proportional gain (Kp)
+  using Vec3 = Eigen::Matrix<FloatType, 3, 1>;
+  using Vec4 = Eigen::Matrix<FloatType, 4, 1>;
+  static constexpr FloatType atol_zero{static_cast<FloatType>(1e-8)};
+
+  volatile FloatType twoKp{twoKpDef<FloatType>}; // 2 * proportional gain (Kp)
+  volatile FloatType twoKi{twoKiDef<FloatType>}; // 2 * integral gain (Ki)
+  volatile FloatType beta{betaDef<FloatType>};   // 2 * proportional gain (Kp)
 
   // quaternion of sensor frame relative to auxiliary frame
-  cv::Vec4f q{1.0f, 0.0f, 0.0f, 0.0f};
+  Vec4 q;
   // integral error terms scaled by Ki
-  cv::Vec3f integralFB{0.0f, 0.0f, 0.0f};
+  Vec3 integralFB;
 
-  void Update(cv::Vec3f &gyro, cv::Vec3f &accel, float dt) override
+  MahonyAHRS()
   {
-    float recipNorm;
-    float halfvx, halfvy, halfvz;
-    float halfex, halfey, halfez;
-    float qa, qb, qc;
+    q << static_cast<FloatType>(1.0), static_cast<FloatType>(0.0),
+        static_cast<FloatType>(0.0), static_cast<FloatType>(0.0);
+    integralFB << static_cast<FloatType>(0.0), static_cast<FloatType>(0.0),
+        static_cast<FloatType>(0.0);
+  }
 
-    float &gx{gyro[0]}, &gy{gyro[1]}, &gz{gyro[2]};
-    float &ax{accel[0]}, &ay{accel[1]}, &az{accel[2]};
-    float &q0{q[0]}, &q1{q[1]}, &q2{q[2]}, &q3{q[3]};
+  void Update(Vec3 &gyro, Vec3 &accel, FloatType dt) override
+  {
+    FloatType recipNorm;
+    FloatType qa, qb, qc;
+    Vec3 halfv;
+    Vec3 halfe;
+
+    FloatType &gx{gyro[0]}, &gy{gyro[1]}, &gz{gyro[2]};
+    FloatType &ax{accel[0]}, &ay{accel[1]}, &az{accel[2]};
+    FloatType &q0{q[0]}, &q1{q[1]}, &q2{q[2]}, &q3{q[3]};
+    FloatType &halfvx{halfv[0]}, &halfvy{halfv[1]}, &halfvz{halfv[2]};
+    FloatType &halfex{halfe[0]}, &halfey{halfe[1]}, &halfez{halfe[2]};
 
     // Compute feedback only if accelerometer measurement valid (avoids NaN in accelerometer normalisation)
-    if (!((ax == 0.0f) && (ay == 0.0f) && (az == 0.0f)))
+    if (!accel.isZero(atol_zero))
     {
 
       // Normalise accelerometer measurement
@@ -120,7 +146,7 @@ struct MahonyAHRS : public AbstractAHRS
       // Estimated direction of gravity and vector perpendicular to magnetic flux
       halfvx = q1 * q3 - q0 * q2;
       halfvy = q0 * q1 + q2 * q3;
-      halfvz = q0 * q0 - 0.5f + q3 * q3;
+      halfvz = q0 * q0 - static_cast<FloatType>(0.5) + q3 * q3;
 
       // Error is sum of cross product between estimated and measured direction of gravity
       halfex = (ay * halfvz - az * halfvy);
@@ -128,17 +154,17 @@ struct MahonyAHRS : public AbstractAHRS
       halfez = (ax * halfvy - ay * halfvx);
 
       // Compute and apply integral feedback if enabled
-      if (twoKi > 0.0f)
+      if (twoKi > static_cast<FloatType>(0.0))
       {
         // integral error scaled by Ki
-        integralFB += twoKi * cv::Vec3f{halfex, halfey, halfez} * dt;
+        integralFB += twoKi * halfe * dt;
         // apply integral feedback
         gyro += integralFB;
       }
       else
       {
         // prevent integral windup
-        integralFB = cv::Vec3f{0.0f, 0.0f, 0.0f};
+        integralFB = Vec3::Zero();
       }
 
       // Apply proportional feedback
@@ -148,9 +174,9 @@ struct MahonyAHRS : public AbstractAHRS
     }
 
     // Integrate rate of change of quaternion
-    gx *= (0.5f * dt); // pre-multiply common factors
-    gy *= (0.5f * dt);
-    gz *= (0.5f * dt);
+    gx *= (static_cast<FloatType>(0.5) * dt); // pre-multiply common factors
+    gy *= (static_cast<FloatType>(0.5) * dt);
+    gz *= (static_cast<FloatType>(0.5) * dt);
     qa = q0;
     qb = q1;
     qc = q2;
@@ -167,30 +193,33 @@ struct MahonyAHRS : public AbstractAHRS
     q3 *= recipNorm;
   }
 
-  void Update(cv::Vec3f &gyro, cv::Vec3f &accel, cv::Vec3f &mag,
-              float dt) override
+  void Update(Vec3 &gyro, Vec3 &accel, Vec3 &mag, FloatType dt) override
   {
-    float recipNorm;
-    float q0q0, q0q1, q0q2, q0q3, q1q1, q1q2, q1q3, q2q2, q2q3, q3q3;
-    float hx, hy, bx, bz;
-    float halfvx, halfvy, halfvz, halfwx, halfwy, halfwz;
-    float halfex, halfey, halfez;
-    float qa, qb, qc;
+    FloatType recipNorm;
+    FloatType q0q0, q0q1, q0q2, q0q3, q1q1, q1q2, q1q3, q2q2, q2q3, q3q3;
+    FloatType hx, hy, bx, bz;
+    FloatType qa, qb, qc;
+    Vec3 halfv;
+    Vec3 halfw;
+    Vec3 halfe;
 
-    float &gx{gyro[0]}, &gy{gyro[1]}, &gz{gyro[2]};
-    float &ax{accel[0]}, &ay{accel[1]}, &az{accel[2]};
-    float &mx{mag[0]}, &my{mag[1]}, &mz{mag[2]};
-    float &q0{q[0]}, &q1{q[1]}, &q2{q[2]}, &q3{q[3]};
+    FloatType &gx{gyro[0]}, &gy{gyro[1]}, &gz{gyro[2]};
+    FloatType &ax{accel[0]}, &ay{accel[1]}, &az{accel[2]};
+    FloatType &mx{mag[0]}, &my{mag[1]}, &mz{mag[2]};
+    FloatType &q0{q[0]}, &q1{q[1]}, &q2{q[2]}, &q3{q[3]};
+    FloatType &halfvx{halfv[0]}, &halfvy{halfv[1]}, &halfvz{halfv[2]};
+    FloatType &halfwx{halfw[0]}, &halfwy{halfw[1]}, &halfwz{halfw[2]};
+    FloatType &halfex{halfe[0]}, &halfey{halfe[1]}, &halfez{halfe[2]};
 
     // Use IMU algorithm if magnetometer measurement invalid (avoids NaN in magnetometer normalisation)
-    if ((mx == 0.0f) && (my == 0.0f) && (mz == 0.0f))
+    if (mag.isZero(atol_zero))
     {
       Update(gyro, accel, dt);
       return;
     }
 
     // Compute feedback only if accelerometer measurement valid (avoids NaN in accelerometer normalisation)
-    if (!((ax == 0.0f) && (ay == 0.0f) && (az == 0.0f)))
+    if (!accel.isZero(atol_zero))
     {
 
       // Normalise accelerometer measurement
@@ -218,24 +247,27 @@ struct MahonyAHRS : public AbstractAHRS
       q3q3 = q3 * q3;
 
       // Reference direction of Earth's magnetic field
-      hx = 2.0f
-           * (mx * (0.5f - q2q2 - q3q3) + my * (q1q2 - q0q3)
-              + mz * (q1q3 + q0q2));
-      hy = 2.0f
-           * (mx * (q1q2 + q0q3) + my * (0.5f - q1q1 - q3q3)
+      hx = static_cast<FloatType>(2.0)
+           * (mx * (static_cast<FloatType>(0.5) - q2q2 - q3q3)
+              + my * (q1q2 - q0q3) + mz * (q1q3 + q0q2));
+      hy = static_cast<FloatType>(2.0)
+           * (mx * (q1q2 + q0q3)
+              + my * (static_cast<FloatType>(0.5) - q1q1 - q3q3)
               + mz * (q2q3 - q0q1));
       bx = sqrt(hx * hx + hy * hy);
-      bz = 2.0f
+      bz = static_cast<FloatType>(2.0)
            * (mx * (q1q3 - q0q2) + my * (q2q3 + q0q1)
-              + mz * (0.5f - q1q1 - q2q2));
+              + mz * (static_cast<FloatType>(0.5) - q1q1 - q2q2));
 
       // Estimated direction of gravity and magnetic field
       halfvx = q1q3 - q0q2;
       halfvy = q0q1 + q2q3;
-      halfvz = q0q0 - 0.5f + q3q3;
-      halfwx = bx * (0.5f - q2q2 - q3q3) + bz * (q1q3 - q0q2);
+      halfvz = q0q0 - static_cast<FloatType>(0.5) + q3q3;
+      halfwx = bx * (static_cast<FloatType>(0.5) - q2q2 - q3q3)
+               + bz * (q1q3 - q0q2);
       halfwy = bx * (q1q2 - q0q3) + bz * (q0q1 + q2q3);
-      halfwz = bx * (q0q2 + q1q3) + bz * (0.5f - q1q1 - q2q2);
+      halfwz = bx * (q0q2 + q1q3)
+               + bz * (static_cast<FloatType>(0.5) - q1q1 - q2q2);
 
       // Error is sum of cross product between estimated direction and measured direction of field vectors
       halfex = (ay * halfvz - az * halfvy) + (my * halfwz - mz * halfwy);
@@ -243,17 +275,17 @@ struct MahonyAHRS : public AbstractAHRS
       halfez = (ax * halfvy - ay * halfvx) + (mx * halfwy - my * halfwx);
 
       // Compute and apply integral feedback if enabled
-      if (twoKi > 0.0f)
+      if (twoKi > static_cast<FloatType>(0.0))
       {
         // integral error scaled by Ki
-        integralFB += twoKi * cv::Vec3f{halfex, halfey, halfez} * dt;
+        integralFB += twoKi * halfe * dt;
         // apply integral feedback
         gyro += integralFB;
       }
       else
       {
         // prevent integral windup
-        integralFB = cv::Vec3f{0.0f, 0.0f, 0.0f};
+        integralFB = Vec3::Zero();
       }
 
       // Apply proportional feedback
@@ -263,9 +295,9 @@ struct MahonyAHRS : public AbstractAHRS
     }
 
     // Integrate rate of change of quaternion
-    gx *= (0.5f * dt); // pre-multiply common factors
-    gy *= (0.5f * dt);
-    gz *= (0.5f * dt);
+    gx *= (static_cast<FloatType>(0.5) * dt); // pre-multiply common factors
+    gy *= (static_cast<FloatType>(0.5) * dt);
+    gz *= (static_cast<FloatType>(0.5) * dt);
     qa = q0;
     qb = q1;
     qc = q2;
@@ -282,39 +314,50 @@ struct MahonyAHRS : public AbstractAHRS
     q3 *= recipNorm;
   }
 
-  cv::Vec4f GetQuaternion() const override
+  Vec4 GetQuaternion() const override
   {
     return q;
   }
 };
 
-struct MadgwickAHRS : public AbstractAHRS
+template <std::floating_point FloatType>
+struct MadgwickAHRS : public AbstractAHRS<FloatType>
 {
-  volatile float beta{betaDef}; // 2 * proportional gain (Kp)
+  using Vec3 = Eigen::Matrix<FloatType, 3, 1>;
+  using Vec4 = Eigen::Matrix<FloatType, 4, 1>;
+  static constexpr FloatType atol_zero{static_cast<FloatType>(1e-8)};
+
+  volatile FloatType beta{betaDef<FloatType>}; // 2 * proportional gain (Kp)
 
   // quaternion of sensor frame relative to auxiliary frame
-  cv::Vec4f q{1.0f, 0.0f, 0.0f, 0.0f};
+  Vec4 q;
 
-  void Update(cv::Vec3f &gyro, cv::Vec3f &accel, float dt) override
+  MadgwickAHRS()
   {
-    float recipNorm;
-    float s0, s1, s2, s3;
-    float qDot1, qDot2, qDot3, qDot4;
-    float _2q0, _2q1, _2q2, _2q3, _4q0, _4q1, _4q2, _8q1, _8q2, q0q0, q1q1,
+    q << static_cast<FloatType>(1.0), static_cast<FloatType>(0.0),
+        static_cast<FloatType>(0.0), static_cast<FloatType>(0.0);
+  }
+
+  void Update(Vec3 &gyro, Vec3 &accel, FloatType dt) override
+  {
+    FloatType recipNorm;
+    FloatType s0, s1, s2, s3;
+    FloatType qDot1, qDot2, qDot3, qDot4;
+    FloatType _2q0, _2q1, _2q2, _2q3, _4q0, _4q1, _4q2, _8q1, _8q2, q0q0, q1q1,
         q2q2, q3q3;
 
-    float &gx{gyro[0]}, &gy{gyro[1]}, &gz{gyro[2]};
-    float &ax{accel[0]}, &ay{accel[1]}, &az{accel[2]};
-    float &q0{q[0]}, &q1{q[1]}, &q2{q[2]}, &q3{q[3]};
+    FloatType &gx{gyro[0]}, &gy{gyro[1]}, &gz{gyro[2]};
+    FloatType &ax{accel[0]}, &ay{accel[1]}, &az{accel[2]};
+    FloatType &q0{q[0]}, &q1{q[1]}, &q2{q[2]}, &q3{q[3]};
 
     // Rate of change of quaternion from gyroscope
-    qDot1 = 0.5f * (-q1 * gx - q2 * gy - q3 * gz);
-    qDot2 = 0.5f * (q0 * gx + q2 * gz - q3 * gy);
-    qDot3 = 0.5f * (q0 * gy - q1 * gz + q3 * gx);
-    qDot4 = 0.5f * (q0 * gz + q1 * gy - q2 * gx);
+    qDot1 = static_cast<FloatType>(0.5) * (-q1 * gx - q2 * gy - q3 * gz);
+    qDot2 = static_cast<FloatType>(0.5) * (q0 * gx + q2 * gz - q3 * gy);
+    qDot3 = static_cast<FloatType>(0.5) * (q0 * gy - q1 * gz + q3 * gx);
+    qDot4 = static_cast<FloatType>(0.5) * (q0 * gz + q1 * gy - q2 * gx);
 
     // Compute feedback only if accelerometer measurement valid (avoids NaN in accelerometer normalisation)
-    if (!((ax == 0.0f) && (ay == 0.0f) && (az == 0.0f)))
+    if (!accel.isZero(atol_zero))
     {
 
       // Normalise accelerometer measurement
@@ -324,27 +367,28 @@ struct MadgwickAHRS : public AbstractAHRS
       az *= recipNorm;
 
       // Auxiliary variables to avoid repeated arithmetic
-      _2q0 = 2.0f * q0;
-      _2q1 = 2.0f * q1;
-      _2q2 = 2.0f * q2;
-      _2q3 = 2.0f * q3;
-      _4q0 = 4.0f * q0;
-      _4q1 = 4.0f * q1;
-      _4q2 = 4.0f * q2;
-      _8q1 = 8.0f * q1;
-      _8q2 = 8.0f * q2;
+      _2q0 = static_cast<FloatType>(2.0) * q0;
+      _2q1 = static_cast<FloatType>(2.0) * q1;
+      _2q2 = static_cast<FloatType>(2.0) * q2;
+      _2q3 = static_cast<FloatType>(2.0) * q3;
+      _4q0 = static_cast<FloatType>(4.0) * q0;
+      _4q1 = static_cast<FloatType>(4.0) * q1;
+      _4q2 = static_cast<FloatType>(4.0) * q2;
+      _8q1 = static_cast<FloatType>(8.0) * q1;
+      _8q2 = static_cast<FloatType>(8.0) * q2;
       q0q0 = q0 * q0;
       q1q1 = q1 * q1;
       q2q2 = q2 * q2;
       q3q3 = q3 * q3;
 
       // Gradient decent algorithm corrective step
-      s0        = _4q0 * q2q2 + _2q2 * ax + _4q0 * q1q1 - _2q1 * ay;
-      s1        = _4q1 * q3q3 - _2q3 * ax + 4.0f * q0q0 * q1 - _2q0 * ay - _4q1
-                  + _8q1 * q1q1 + _8q1 * q2q2 + _4q1 * az;
-      s2        = 4.0f * q0q0 * q2 + _2q0 * ax + _4q2 * q3q3 - _2q3 * ay - _4q2
-                  + _8q2 * q1q1 + _8q2 * q2q2 + _4q2 * az;
-      s3        = 4.0f * q1q1 * q3 - _2q1 * ax + 4.0f * q2q2 * q3 - _2q2 * ay;
+      s0 = _4q0 * q2q2 + _2q2 * ax + _4q0 * q1q1 - _2q1 * ay;
+      s1 = _4q1 * q3q3 - _2q3 * ax + static_cast<FloatType>(4.0) * q0q0 * q1
+           - _2q0 * ay - _4q1 + _8q1 * q1q1 + _8q1 * q2q2 + _4q1 * az;
+      s2 = static_cast<FloatType>(4.0) * q0q0 * q2 + _2q0 * ax + _4q2 * q3q3
+           - _2q3 * ay - _4q2 + _8q2 * q1q1 + _8q2 * q2q2 + _4q2 * az;
+      s3 = static_cast<FloatType>(4.0) * q1q1 * q3 - _2q1 * ax
+           + static_cast<FloatType>(4.0) * q2q2 * q3 - _2q2 * ay;
       recipNorm = invSqrt(s0 * s0 + s1 * s1 + s2 * s2
                           + s3 * s3); // normalise step magnitude
       s0 *= recipNorm;
@@ -373,37 +417,36 @@ struct MadgwickAHRS : public AbstractAHRS
     q3 *= recipNorm;
   }
 
-  void Update(cv::Vec3f &gyro, cv::Vec3f &accel, cv::Vec3f &mag,
-              float dt) override
+  void Update(Vec3 &gyro, Vec3 &accel, Vec3 &mag, FloatType dt) override
   {
-    float recipNorm;
-    float s0, s1, s2, s3;
-    float qDot1, qDot2, qDot3, qDot4;
-    float hx, hy;
-    float _2q0mx, _2q0my, _2q0mz, _2q1mx, _2bx, _2bz, _4bx, _4bz, _2q0, _2q1,
-        _2q2, _2q3, _2q0q2, _2q2q3, q0q0, q0q1, q0q2, q0q3, q1q1, q1q2, q1q3,
-        q2q2, q2q3, q3q3;
+    FloatType recipNorm;
+    FloatType s0, s1, s2, s3;
+    FloatType qDot1, qDot2, qDot3, qDot4;
+    FloatType hx, hy;
+    FloatType _2q0mx, _2q0my, _2q0mz, _2q1mx, _2bx, _2bz, _4bx, _4bz, _2q0,
+        _2q1, _2q2, _2q3, _2q0q2, _2q2q3, q0q0, q0q1, q0q2, q0q3, q1q1, q1q2,
+        q1q3, q2q2, q2q3, q3q3;
 
-    float &gx{gyro[0]}, &gy{gyro[1]}, &gz{gyro[2]};
-    float &ax{accel[0]}, &ay{accel[1]}, &az{accel[2]};
-    float &mx{mag[0]}, &my{mag[1]}, &mz{mag[2]};
-    float &q0{q[0]}, &q1{q[1]}, &q2{q[2]}, &q3{q[3]};
+    FloatType &gx{gyro[0]}, &gy{gyro[1]}, &gz{gyro[2]};
+    FloatType &ax{accel[0]}, &ay{accel[1]}, &az{accel[2]};
+    FloatType &mx{mag[0]}, &my{mag[1]}, &mz{mag[2]};
+    FloatType &q0{q[0]}, &q1{q[1]}, &q2{q[2]}, &q3{q[3]};
 
     // Use IMU algorithm if magnetometer measurement invalid (avoids NaN in magnetometer normalisation)
-    if ((mx == 0.0f) && (my == 0.0f) && (mz == 0.0f))
+    if (mag.isZero(atol_zero))
     {
       Update(gyro, accel, dt);
       return;
     }
 
     // Rate of change of quaternion from gyroscope
-    qDot1 = 0.5f * (-q1 * gx - q2 * gy - q3 * gz);
-    qDot2 = 0.5f * (q0 * gx + q2 * gz - q3 * gy);
-    qDot3 = 0.5f * (q0 * gy - q1 * gz + q3 * gx);
-    qDot4 = 0.5f * (q0 * gz + q1 * gy - q2 * gx);
+    qDot1 = static_cast<FloatType>(0.5) * (-q1 * gx - q2 * gy - q3 * gz);
+    qDot2 = static_cast<FloatType>(0.5) * (q0 * gx + q2 * gz - q3 * gy);
+    qDot3 = static_cast<FloatType>(0.5) * (q0 * gy - q1 * gz + q3 * gx);
+    qDot4 = static_cast<FloatType>(0.5) * (q0 * gz + q1 * gy - q2 * gx);
 
     // Compute feedback only if accelerometer measurement valid (avoids NaN in accelerometer normalisation)
-    if (!((ax == 0.0f) && (ay == 0.0f) && (az == 0.0f)))
+    if (!accel.isZero(atol_zero))
     {
 
       // Normalise accelerometer measurement
@@ -419,16 +462,16 @@ struct MadgwickAHRS : public AbstractAHRS
       mz *= recipNorm;
 
       // Auxiliary variables to avoid repeated arithmetic
-      _2q0mx = 2.0f * q0 * mx;
-      _2q0my = 2.0f * q0 * my;
-      _2q0mz = 2.0f * q0 * mz;
-      _2q1mx = 2.0f * q1 * mx;
-      _2q0   = 2.0f * q0;
-      _2q1   = 2.0f * q1;
-      _2q2   = 2.0f * q2;
-      _2q3   = 2.0f * q3;
-      _2q0q2 = 2.0f * q0 * q2;
-      _2q2q3 = 2.0f * q2 * q3;
+      _2q0mx = static_cast<FloatType>(2.0) * q0 * mx;
+      _2q0my = static_cast<FloatType>(2.0) * q0 * my;
+      _2q0mz = static_cast<FloatType>(2.0) * q0 * mz;
+      _2q1mx = static_cast<FloatType>(2.0) * q1 * mx;
+      _2q0   = static_cast<FloatType>(2.0) * q0;
+      _2q1   = static_cast<FloatType>(2.0) * q1;
+      _2q2   = static_cast<FloatType>(2.0) * q2;
+      _2q3   = static_cast<FloatType>(2.0) * q3;
+      _2q0q2 = static_cast<FloatType>(2.0) * q0 * q2;
+      _2q2q3 = static_cast<FloatType>(2.0) * q2 * q3;
       q0q0   = q0 * q0;
       q0q1   = q0 * q1;
       q0q2   = q0 * q2;
@@ -448,44 +491,56 @@ struct MadgwickAHRS : public AbstractAHRS
       _2bx = sqrt(hx * hx + hy * hy);
       _2bz = -_2q0mx * q2 + _2q0my * q1 + mz * q0q0 + _2q1mx * q3 - mz * q1q1
              + _2q2 * my * q3 - mz * q2q2 + mz * q3q3;
-      _4bx = 2.0f * _2bx;
-      _4bz = 2.0f * _2bz;
+      _4bx = static_cast<FloatType>(2.0) * _2bx;
+      _4bz = static_cast<FloatType>(2.0) * _2bz;
 
       // Gradient decent algorithm corrective step
-      s0 = -_2q2 * (2.0f * q1q3 - _2q0q2 - ax)
-           + _2q1 * (2.0f * q0q1 + _2q2q3 - ay)
+      s0 = -_2q2 * (static_cast<FloatType>(2.0) * q1q3 - _2q0q2 - ax)
+           + _2q1 * (static_cast<FloatType>(2.0) * q0q1 + _2q2q3 - ay)
            - _2bz * q2
-                 * (_2bx * (0.5f - q2q2 - q3q3) + _2bz * (q1q3 - q0q2) - mx)
+                 * (_2bx * (static_cast<FloatType>(0.5) - q2q2 - q3q3)
+                    + _2bz * (q1q3 - q0q2) - mx)
            + (-_2bx * q3 + _2bz * q1)
                  * (_2bx * (q1q2 - q0q3) + _2bz * (q0q1 + q2q3) - my)
            + _2bx * q2
-                 * (_2bx * (q0q2 + q1q3) + _2bz * (0.5f - q1q1 - q2q2) - mz);
-      s1 = _2q3 * (2.0f * q1q3 - _2q0q2 - ax)
-           + _2q0 * (2.0f * q0q1 + _2q2q3 - ay)
-           - 4.0f * q1 * (1 - 2.0f * q1q1 - 2.0f * q2q2 - az)
+                 * (_2bx * (q0q2 + q1q3)
+                    + _2bz * (static_cast<FloatType>(0.5) - q1q1 - q2q2) - mz);
+      s1 = _2q3 * (static_cast<FloatType>(2.0) * q1q3 - _2q0q2 - ax)
+           + _2q0 * (static_cast<FloatType>(2.0) * q0q1 + _2q2q3 - ay)
+           - static_cast<FloatType>(4.0) * q1
+                 * (1 - static_cast<FloatType>(2.0) * q1q1
+                    - static_cast<FloatType>(2.0) * q2q2 - az)
            + _2bz * q3
-                 * (_2bx * (0.5f - q2q2 - q3q3) + _2bz * (q1q3 - q0q2) - mx)
+                 * (_2bx * (static_cast<FloatType>(0.5) - q2q2 - q3q3)
+                    + _2bz * (q1q3 - q0q2) - mx)
            + (_2bx * q2 + _2bz * q0)
                  * (_2bx * (q1q2 - q0q3) + _2bz * (q0q1 + q2q3) - my)
            + (_2bx * q3 - _4bz * q1)
-                 * (_2bx * (q0q2 + q1q3) + _2bz * (0.5f - q1q1 - q2q2) - mz);
-      s2 = -_2q0 * (2.0f * q1q3 - _2q0q2 - ax)
-           + _2q3 * (2.0f * q0q1 + _2q2q3 - ay)
-           - 4.0f * q2 * (1 - 2.0f * q1q1 - 2.0f * q2q2 - az)
+                 * (_2bx * (q0q2 + q1q3)
+                    + _2bz * (static_cast<FloatType>(0.5) - q1q1 - q2q2) - mz);
+      s2 = -_2q0 * (static_cast<FloatType>(2.0) * q1q3 - _2q0q2 - ax)
+           + _2q3 * (static_cast<FloatType>(2.0) * q0q1 + _2q2q3 - ay)
+           - static_cast<FloatType>(4.0) * q2
+                 * (1 - static_cast<FloatType>(2.0) * q1q1
+                    - static_cast<FloatType>(2.0) * q2q2 - az)
            + (-_4bx * q2 - _2bz * q0)
-                 * (_2bx * (0.5f - q2q2 - q3q3) + _2bz * (q1q3 - q0q2) - mx)
+                 * (_2bx * (static_cast<FloatType>(0.5) - q2q2 - q3q3)
+                    + _2bz * (q1q3 - q0q2) - mx)
            + (_2bx * q1 + _2bz * q3)
                  * (_2bx * (q1q2 - q0q3) + _2bz * (q0q1 + q2q3) - my)
            + (_2bx * q0 - _4bz * q2)
-                 * (_2bx * (q0q2 + q1q3) + _2bz * (0.5f - q1q1 - q2q2) - mz);
-      s3 = _2q1 * (2.0f * q1q3 - _2q0q2 - ax)
-           + _2q2 * (2.0f * q0q1 + _2q2q3 - ay)
+                 * (_2bx * (q0q2 + q1q3)
+                    + _2bz * (static_cast<FloatType>(0.5) - q1q1 - q2q2) - mz);
+      s3 = _2q1 * (static_cast<FloatType>(2.0) * q1q3 - _2q0q2 - ax)
+           + _2q2 * (static_cast<FloatType>(2.0) * q0q1 + _2q2q3 - ay)
            + (-_4bx * q3 + _2bz * q1)
-                 * (_2bx * (0.5f - q2q2 - q3q3) + _2bz * (q1q3 - q0q2) - mx)
+                 * (_2bx * (static_cast<FloatType>(0.5) - q2q2 - q3q3)
+                    + _2bz * (q1q3 - q0q2) - mx)
            + (-_2bx * q0 + _2bz * q2)
                  * (_2bx * (q1q2 - q0q3) + _2bz * (q0q1 + q2q3) - my)
            + _2bx * q1
-                 * (_2bx * (q0q2 + q1q3) + _2bz * (0.5f - q1q1 - q2q2) - mz);
+                 * (_2bx * (q0q2 + q1q3)
+                    + _2bz * (static_cast<FloatType>(0.5) - q1q1 - q2q2) - mz);
       recipNorm = invSqrt(s0 * s0 + s1 * s1 + s2 * s2
                           + s3 * s3); // normalise step magnitude
       s0 *= recipNorm;
@@ -514,7 +569,7 @@ struct MadgwickAHRS : public AbstractAHRS
     q3 *= recipNorm;
   }
 
-  cv::Vec4f GetQuaternion() const override
+  Vec4 GetQuaternion() const override
   {
     return q;
   }
