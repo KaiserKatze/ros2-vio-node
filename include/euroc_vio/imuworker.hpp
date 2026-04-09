@@ -6,7 +6,9 @@
 #include <concepts>
 #include <cstdio>
 #include <cstdlib>
+#include <execution>
 #include <memory>
+#include <numeric>
 #include <stdexcept>
 #include <vector>
 
@@ -154,15 +156,20 @@ private:
 
   cv::Vec3d CalculateAverageGravity() const
   {
-    cv::Vec3d g_body{0.0, 0.0, 0.0};
-    for (const MsgImu &imu_msg : init_imu_msg_buffer_)
+    if (init_imu_msg_buffer_.empty())
     {
-      const double ax{imu_msg.linear_acceleration.x};
-      const double ay{imu_msg.linear_acceleration.y};
-      const double az{imu_msg.linear_acceleration.z};
-      const cv::Vec3d raw_accel{ax, ay, az};
-      g_body += raw_accel;
+      throw std::runtime_error{"init_imu_msg_buffer_ is empty"};
     }
+    cv::Vec3d g_body{std::transform_reduce(
+        // std::execution::par,
+        init_imu_msg_buffer_.cbegin(), init_imu_msg_buffer_.cend(),
+        cv::Vec3d::zeros(), std::plus<>(),
+        [](const MsgImu &imu_msg) -> cv::Vec3d
+        {
+          return cv::Vec3d{imu_msg.linear_acceleration.x,
+                           imu_msg.linear_acceleration.y,
+                           imu_msg.linear_acceleration.z};
+        })};
     g_body /= static_cast<double>(init_imu_msg_buffer_.size());
     g_body /= cv::norm(g_body);
     return g_body;
