@@ -36,12 +36,11 @@ static constexpr double g_norm{9.81}; // 重力加速度常数
 
 /*****************************
  * IMU 运动学 ODE (常微分方程) 系统
- * 用于给 boost::numeric::odeint 进行 RK4 积分
  *****************************/
 struct ImuKinematicsODE
 {
-  cv::Vec3d a0, a1; // 上一帧和当前帧的加速度 (机体坐标系)
-  cv::Vec3d w0, w1; // 上一帧和当前帧的角速度 (机体坐标系)
+  cv::Vec3d a0, a1; // 上一帧和当前帧的【已扣除零偏】加速度 (机体坐标系)
+  cv::Vec3d w0, w1; // 上一帧和当前帧的【已扣除零偏】角速度 (机体坐标系)
   double t0, t1;    // 对应的时间戳
 
   ImuKinematicsODE(const cv::Vec3d &accel0, const cv::Vec3d &accel1,
@@ -68,7 +67,7 @@ struct ImuKinematicsODE
     const double qy{x.GetQuaternionY()};
     const double qz{x.GetQuaternionZ()};
 
-    // 四元数转旋转矩阵 R (用于将机体加速度转换到世界坐标系)
+    // 四元数转旋转矩阵 R_wv (载体系到世界系的变换)
     const double R00{1.0 - 2.0 * qy * qy - 2.0 * qz * qz};
     const double R01{2.0 * (qx * qy - qw * qz)};
     const double R02{2.0 * (qx * qz + qw * qy)};
@@ -92,12 +91,16 @@ struct ImuKinematicsODE
     // 数据说明书还说 Z 轴是朝着 MAV 正前方（即双目相机的视线方向），Y 轴则是朝向 MAV 的右侧（右手坐标系）
 
     // 速度导数 = 加速度
+    // 对应公式推导：accInWorldFrame = R_wv * a_body + g_world
+    // 由于重力向量指向 X 轴负方向，所以真正的重力加速度是 [-9.81, 0, 0]。
+    // 加上重力相当于对 X 轴减去 g_norm
     cv::Vec3d accInWorldFrame{R00 * a[0] + R01 * a[1] + R02 * a[2] - g_norm,
                               R10 * a[0] + R11 * a[1] + R12 * a[2],
                               R20 * a[0] + R21 * a[1] + R22 * a[2]};
     dxdt.SetAcceleration(accInWorldFrame);
 
     // 姿态导数
+    // 基于纯运动学的陀螺仪积分 q_dot = 0.5 * q \otimes w
     const cv::Vec4d attDerivative{
         0.5 * (-qx * w[0] - qy * w[1] - qz * w[2]),
         0.5 * (qw * w[0] + qy * w[2] - qz * w[1]),
@@ -315,14 +318,32 @@ private:
     const double gyro_norm{cv::norm(filt_gyro)};
     const bool is_static{(std::abs(acc_norm - 9.81) < 0.1)
                          && (gyro_norm < 0.02)};
+
     // ZUPT + bias 更新
     if (is_static)
     {
-      state_.SetVelocity(0, 0, 0);
+      state_.SetVelocity(0, 0, 0); // 严格置零速度，防止漂移
       static constexpr double alpha{0.01};
-      gyro_bias_  = (1 - alpha) * gyro_bias_ + alpha * filt_gyro;
+
+      // 更新陀螺仪零偏
+      gyro_bias_ = (1 - alpha) * gyro_bias_ + alpha * filt_gyro;
+
+      // 加速度计的零偏不能固定减去 [0,0,-9.81]。
+      // 我们需要将期望的静止比力(世界系的 [9.81, 0, 0]) 投影到当前的机体坐标系下，
+      // 再与测量值作差来计算偏差。
+      const double qw{state_.GetQuaternionW()};
+      const double qx{state_.GetQuaternionX()};
+      const double qy{state_.GetQuaternionY()};
+      const double qz{state_.GetQuaternionZ()};
+
+      // 矩阵 R_wv 的转置，即世界系到机体系的旋转 R_vw 第一列
+      cv::Vec3d expected_accel_body{
+          (1.0 - 2.0 * qy * qy - 2.0 * qz * qz) * 9.81,
+          (2.0 * (qx * qy + qw * qz)) * 9.81, // 注意转置
+          (2.0 * (qx * qz - qw * qy)) * 9.81};
+
       accel_bias_ = (1 - alpha) * accel_bias_
-                    + alpha * (filt_accel - cv::Vec3d(0, 0, -9.81));
+                    + alpha * (filt_accel - expected_accel_body);
     }
   }
 

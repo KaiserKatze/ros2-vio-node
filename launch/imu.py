@@ -13,7 +13,7 @@ def generate_launch_description():
     logger.info("Starting EuRoC trajectory launch ...")
 
     workdir_path = get_package_share_path("euroc_vio")
-    default_rviz_config_path = workdir_path / "rviz/trajectory.rviz"
+    default_rviz_config_path = workdir_path / "rviz/imu.rviz"
 
     logger.info(f"Default RViz config path: {default_rviz_config_path}")
 

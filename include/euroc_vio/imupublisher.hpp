@@ -47,6 +47,7 @@ public:
   }
 
 private:
+#ifdef DEBUG
   void PrintAverageSampleRate(const MsgImu::ConstSharedPtr &msg)
   {
     static size_t msg_counter{0};
@@ -66,10 +67,13 @@ private:
     }
     ++msg_counter;
   }
+#endif
 
   void SubscriberCallback(const MsgImu::ConstSharedPtr &msg)
   {
+#ifdef DEBUG
     PrintAverageSampleRate(msg);
+#endif
     this->imu_worker_.Work(msg, this);
   }
 
