@@ -6,7 +6,6 @@
 #include <concepts>
 #include <cstdio>
 #include <cstdlib>
-#include <execution>
 #include <memory>
 #include <numeric>
 #include <stdexcept>
