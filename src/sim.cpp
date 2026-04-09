@@ -2,25 +2,12 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
-#include <concepts>
-#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <fstream>
 #include <functional>
-#include <iostream>
 #include <memory>
-#include <optional>
-#include <random>
-#include <ranges>
-#include <sstream>
-#include <stdexcept>
 #include <string>
-#include <type_traits>
-#include <utility>
-#include <vector>
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/transform.hpp>

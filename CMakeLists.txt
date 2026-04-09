@@ -131,18 +131,18 @@ target_link_libraries(euroc_imu
 )
 target_compile_options(euroc_imu PRIVATE -Wno-maybe-uninitialized)
 
-add_ros2_executable(imu_sim src/sim.cpp)
-ament_target_dependencies(imu_sim
-  rclcpp
-  std_msgs
-  sensor_msgs
-  geometry_msgs
-  nav_msgs
-)
-target_link_libraries(imu_sim
-  Boost::boost
-  ${OpenCV_LIBS}
-)
+# add_ros2_executable(imu_sim src/sim.cpp)
+# ament_target_dependencies(imu_sim
+#   rclcpp
+#   std_msgs
+#   sensor_msgs
+#   geometry_msgs
+#   nav_msgs
+# )
+# target_link_libraries(imu_sim
+#   Boost::boost
+#   ${OpenCV_LIBS}
+# )
 
 # --- 编译 VIO 结点：融合视觉、惯性测量单元数据 ---
 # add_ros2_executable(euroc_vio src/vio.cpp)
