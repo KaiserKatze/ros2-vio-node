@@ -36,7 +36,7 @@ public:
     using reference         = const T &;
     using iterator_category = std::forward_iterator_tag;
 
-    const_iterator(const CircularBuffer *buf, size_t pos) : buf_(buf), pos_(pos)
+    const_iterator(const CircularBuffer *buf, size_t pos) : buf_{buf}, pos_{pos}
     {
     }
 
@@ -92,10 +92,10 @@ public:
     data_[index] = value;
 
     // 计算是否满（tail - head == N）
-    const size_t size = tail_ - head_;
+    const size_t size{tail_ - head_};
 
     // mask = 0 或 ~0（全1），无分支选择
-    const size_t mask = static_cast<size_t>(-(size == N));
+    const size_t mask{static_cast<size_t>(-(size == N))};
 
     // 若满，则 head_ += 1，否则 +=0（无分支）
     head_ += (mask & 1);
@@ -176,11 +176,22 @@ public:
    */
   bool Update(const data_type &imu_data)
   {
-    window_.push(imu_data);
+    const data_type old_data{window_.push(imu_data)};
 
     if (!window_.full())
     {
       return true;
+    }
+
+    // 队列第一次充满
+    if (!initialized_)
+    {
+      initialized_ = true;
+      // TODO 先把所有数据统计一遍
+    }
+    else
+    {
+      // TODO 利用“期望”“方差”的线性性，从统计量中减去旧数据对应的，再加上新数据对应的
     }
 
     const double denom{1.0 / window_.size()};
@@ -244,6 +255,11 @@ public:
 private:
   Config config_;
   window_type window_;
+  bool initialized_{false};
+
+  double gyro_norm_sum_{0.0};
+  Eigen::Vector3d accel_sum_{Eigen::Vector3d::Zero()};
+  double acc_variance_{0.0};
 };
 
 #endif /* ZUPT_HPP */
