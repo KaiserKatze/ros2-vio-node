@@ -256,10 +256,10 @@ public:
         acc_mean.array().square().matrix()}; // 逐元素平方
     Eigen::Vector3d acc_variance{accel_sq_sum_ * denom - acc_mean_sq};
     // 抵消由于浮点数精度累积误差可能导致的极微小负数
-    double acc_variance_max_component{
-        std::max(0.0, acc_variance.maxCoeff())}; // 取最大分量方差
+    double acc_total_variance{
+        std::max(0.0, acc_variance.sum())}; // 取最大分量方差
 
-    if (acc_variance_max_component > config_.accelerometer_variance_threshold)
+    if (acc_total_variance > config_.accelerometer_variance_threshold)
     {
       return false;
     }
