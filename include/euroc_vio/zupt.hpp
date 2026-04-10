@@ -3,8 +3,8 @@
 
 #include <Eigen/Dense>
 
+#include <algorithm>
 #include <array>
-#include <numeric>
 
 /**
  * @brief 可遍历的无锁环形缓冲区（固定容量）
@@ -149,9 +149,8 @@ using Vector6d = Eigen::Matrix<double, 6, 1>;
  * @brief 零速更新（ZUPT）
  *
  * 优化点：
- * - 使用 transform_reduce（线程安全并行）
- * - Eigen 向量化（SIMD）
- * - 避免数据竞争
+ * - 维护滑动窗口的增量统计（O(1) 更新）
+ * - 移除不必要的数据遍历，利用线性系统更新期望与方差
  */
 template <size_t WindowSize = 64> class ZUPT
 {
@@ -171,41 +170,68 @@ public:
   ZUPT() : ZUPT(Config{}) {}
   ZUPT(Config &&config) : config_{std::move(config)} {}
 
+  static Eigen::Vector3d GetAccel(const data_type &e)
+  {
+    return e.template tail<3>();
+  }
+
+  static Eigen::Vector3d GetGyro(const data_type &e)
+  {
+    return e.template head<3>();
+  }
+
+  static double GetGyroNorm(const data_type &e)
+  {
+    return GetGyro(e).norm();
+  }
+
   /**
    * @brief 更新一帧 IMU 数据并判断是否静止
    */
   bool Update(const data_type &imu_data)
   {
+    // 记录推送前的状态，决定是否需要从统计量中“减去”被挤出的旧数据
+    const bool was_full{window_.full()};
+
+    // push 返回的是那个位置原本的数据（如果已满，那就是将要丢弃的老数据）
     const data_type old_data{window_.push(imu_data)};
 
+    // === 计算新数据的特征量 ===
+    const double new_gyro_norm{ZUPT::GetGyroNorm(imu_data)};
+    const Eigen::Vector3d new_acc{ZUPT::GetAccel(imu_data)};
+    const Eigen::Vector3d new_acc_sq{
+        new_acc.array().square().matrix()}; // 逐元素平方
+
+    // === 统计量加上新数据 ===
+    gyro_norm_sum_ += new_gyro_norm;
+    accel_sum_ += new_acc;
+    accel_sq_sum_ += new_acc_sq;
+
+    // === 统计量减去旧数据（仅当缓冲区原本已满时） ===
+    if (was_full)
+    {
+      const double old_gyro_norm{ZUPT::GetGyroNorm(old_data)};
+      const Eigen::Vector3d old_acc{ZUPT::GetAccel(old_data)};
+      const Eigen::Vector3d old_acc_sq{
+          old_acc.array().square().matrix()}; // 逐元素平方
+
+      gyro_norm_sum_ -= old_gyro_norm;
+      accel_sum_ -= old_acc;
+      accel_sq_sum_ -= old_acc_sq;
+    }
+
+    // 缓冲区未满前，统计量还不具备统计学意义，直接返回 true
     if (!window_.full())
     {
       return true;
     }
 
-    // 队列第一次充满
-    if (!initialized_)
-    {
-      initialized_ = true;
-      // TODO 先把所有数据统计一遍
-    }
-    else
-    {
-      // TODO 利用“期望”“方差”的线性性，从统计量中减去旧数据对应的，再加上新数据对应的
-    }
-
-    const double denom{1.0 / window_.size()};
+    const double denom{1.0 / static_cast<double>(WindowSize)};
 
     /** =========================
-     * 1. 陀螺仪能量（并行 + 向量化）
+     * 陀螺仪能量判断
      * ========================= */
-    double gyro_energy{std::transform_reduce(
-                           window_.cbegin(), window_.cend(), 0.0, std::plus<>(),
-                           [](const data_type &e)
-                           {
-                             return e.template head<3>().norm(); // Eigen SIMD
-                           })
-                       * denom};
+    const double gyro_energy{gyro_norm_sum_ * denom};
 
     if (gyro_energy > config_.gyroscope_magnitude_threshold)
     {
@@ -213,17 +239,9 @@ public:
     }
 
     /** =========================
-     * 2. 加速度均值（向量 reduce）
+     * 加速度均值判断
      * ========================= */
-    const Eigen::Vector3d acc_mean{
-        std::transform_reduce(window_.cbegin(), window_.cend(),
-                              Eigen::Vector3d::Zero().eval(), std::plus<>(),
-                              [](const data_type &e)
-                              {
-                                return e.template tail<3>(); // Eigen SIMD
-                              })
-        * denom};
-
+    const Eigen::Vector3d acc_mean{accel_sum_ * denom};
     const double acc_mean_norm{acc_mean.norm()};
 
     if (std::abs(acc_mean_norm - config_.local_gravity) > config_.g_tolerance)
@@ -232,19 +250,16 @@ public:
     }
 
     /** =========================
-     * 3. 加速度方差（并行 + SIMD）
+     * 加速度各分量方差判断 (D(X) = E(X^2) - [E(X)]^2)
      * ========================= */
-    const double acc_variance{
-        std::transform_reduce(
-            window_.cbegin(), window_.cend(), 0.0, std::plus<>(),
-            [&](const data_type &e)
-            {
-              Eigen::Vector3d delta{e.template tail<3>() - acc_mean};
-              return delta.squaredNorm(); // SIMD
-            })
-        * denom};
+    const Eigen::Vector3d acc_mean_sq{
+        acc_mean.array().square().matrix()}; // 逐元素平方
+    Eigen::Vector3d acc_variance{accel_sq_sum_ * denom - acc_mean_sq};
+    // 抵消由于浮点数精度累积误差可能导致的极微小负数
+    double acc_variance_max_component{
+        std::max(0.0, acc_variance.maxCoeff())}; // 取最大分量方差
 
-    if (acc_variance > config_.accelerometer_variance_threshold)
+    if (acc_variance_max_component > config_.accelerometer_variance_threshold)
     {
       return false;
     }
@@ -255,11 +270,11 @@ public:
 private:
   Config config_;
   window_type window_;
-  bool initialized_{false};
 
-  double gyro_norm_sum_{0.0};
-  Eigen::Vector3d accel_sum_{Eigen::Vector3d::Zero()};
-  double acc_variance_{0.0};
+  // 滑动窗口的全局状态变量
+  double gyro_norm_sum_{0.0};                             // 角速度向量范数和
+  Eigen::Vector3d accel_sum_{Eigen::Vector3d::Zero()};    // 加速度向量和
+  Eigen::Vector3d accel_sq_sum_{Eigen::Vector3d::Zero()}; // 加速度向量平方和
 };
 
 #endif /* ZUPT_HPP */
