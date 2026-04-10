@@ -79,15 +79,17 @@ public:
   };
 
   /**
-   * @brief 入队（无分支覆盖最旧数据）
+   * @brief 入队（无分支覆盖最旧数据），返回被覆盖前的数据
    *
    * 利用：
    * - 无符号整数自然溢出
    * - XOR + 位运算避免显式 if(full())
    */
-  void push(const T &value)
+  T push(const T &value)
   {
-    data_[tail_ & (N - 1)] = value;
+    const size_t index{tail_ & (N - 1)};
+    const T old{data_[index]};
+    data_[index] = value;
 
     // 计算是否满（tail - head == N）
     const size_t size = tail_ - head_;
@@ -99,6 +101,8 @@ public:
     head_ += (mask & 1);
 
     ++tail_;
+
+    return old;
   }
 
   /**
@@ -153,6 +157,7 @@ template <size_t WindowSize = 64> class ZUPT
 {
 public:
   using data_type   = Vector6d;
+  using chunk_type  = Eigen::Vector3d;
   using window_type = CircularBuffer<data_type, WindowSize>;
 
   struct Config
