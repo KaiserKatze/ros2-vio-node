@@ -140,6 +140,14 @@ struct ImuState : public std::array<double, 10>
     return (*this)[9];
   }
 
+  Eigen::Quaterniond GetQuaternion() const
+  {
+    Eigen::Quaterniond q{GetQuaternionW(), GetQuaternionX(), GetQuaternionY(),
+                         GetQuaternionZ()};
+    q.normalize();
+    return q;
+  }
+
   void SetPosition(double px, double py, double pz)
   {
     (*this)[0] = px;
@@ -225,6 +233,14 @@ struct ImuDerivative : public std::array<double, 10>
     (*this)[7] = quat_derivative[1];
     (*this)[8] = quat_derivative[2];
     (*this)[9] = quat_derivative[3];
+  }
+
+  void SetQuaternionDerivative(const Eigen::Quaterniond &quat_derivative)
+  {
+    (*this)[6] = quat_derivative.w();
+    (*this)[7] = quat_derivative.x();
+    (*this)[8] = quat_derivative.y();
+    (*this)[9] = quat_derivative.z();
   }
 };
 

@@ -42,10 +42,10 @@ public:
     this->declare_parameter("initial_position_z", 0.0);
     const std::string estimator_str{
         this->get_parameter("estimator").as_string()};
-    const bool use_filter{this->get_parameter("use_filter").as_bool()};
-    const double init_px{this->get_parameter("initial_position_x").as_double()};
-    const double init_py{this->get_parameter("initial_position_y").as_double()};
-    const double init_pz{this->get_parameter("initial_position_z").as_double()};
+    // const bool use_filter{this->get_parameter("use_filter").as_bool()};
+    // const double init_px{this->get_parameter("initial_position_x").as_double()};
+    // const double init_py{this->get_parameter("initial_position_y").as_double()};
+    // const double init_pz{this->get_parameter("initial_position_z").as_double()};
 
     EstimatorType estimator;
     if (estimator_str == "rk4")
@@ -65,8 +65,7 @@ public:
       throw std::invalid_argument("Invalid estimator type: " + estimator_str);
     }
     pub_imu = std::make_unique<ImuPathPublisher>(
-        this, input_imu_topic, output_imu_topic,
-        ImuWorker{use_filter, estimator, init_px, init_py, init_pz});
+        this, input_imu_topic, output_imu_topic, ImuWorker{estimator});
     pub_gt = std::make_unique<GroundTruthPublisher>(
         this, input_groundtruth_topic, output_groundtruth_topic);
   }

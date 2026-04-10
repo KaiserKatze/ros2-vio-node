@@ -200,7 +200,7 @@ public:
      * ========================= */
     const Eigen::Vector3d acc_mean{
         std::transform_reduce(window_.cbegin(), window_.cend(),
-                              Eigen::Vector3d::Zero(), std::plus<>(),
+                              Eigen::Vector3d::Zero().eval(), std::plus<>(),
                               [](const data_type &e)
                               {
                                 return e.template tail<3>(); // Eigen SIMD

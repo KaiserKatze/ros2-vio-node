@@ -8,8 +8,9 @@
 #include <cstdlib>
 #include <memory>
 #include <numeric>
-#include <stdexcept>
 #include <vector>
+
+#include <Eigen/Dense>
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/transform.hpp>
@@ -18,19 +19,19 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 
-#include <opencv2/core.hpp>
-
 #include <boost/numeric/odeint.hpp>
 
 #include "euroc_vio/ahrs.hpp"
 #include "euroc_vio/imustate.hpp"
 #include "euroc_vio/main.h"
-#include "euroc_vio/rcfilter.hpp"
+#include "euroc_vio/zupt.hpp"
 
 using MsgImu         = sensor_msgs::msg::Imu;
 using MsgGroundTruth = geometry_msgs::msg::TransformStamped;
 using MsgPose        = geometry_msgs::msg::PoseStamped;
 using MsgPath        = nav_msgs::msg::Path;
+using Vec3           = Eigen::Vector3d;
+using Vec4           = Eigen::Vector4d;
 
 static constexpr double g_norm{9.81}; // 重力加速度常数
 
@@ -39,13 +40,12 @@ static constexpr double g_norm{9.81}; // 重力加速度常数
  *****************************/
 struct ImuKinematicsODE
 {
-  cv::Vec3d a0, a1; // 上一帧和当前帧的【已扣除零偏】加速度 (机体坐标系)
-  cv::Vec3d w0, w1; // 上一帧和当前帧的【已扣除零偏】角速度 (机体坐标系)
-  double t0, t1;    // 对应的时间戳
+  Vec3 a0, a1;   // 上一帧和当前帧的【已扣除零偏】加速度 (机体坐标系)
+  Vec3 w0, w1;   // 上一帧和当前帧的【已扣除零偏】角速度 (机体坐标系)
+  double t0, t1; // 对应的时间戳
 
-  ImuKinematicsODE(const cv::Vec3d &accel0, const cv::Vec3d &accel1,
-                   const cv::Vec3d &gyro0, const cv::Vec3d &gyro1, double time0,
-                   double time1)
+  ImuKinematicsODE(const Vec3 &accel0, const Vec3 &accel1, const Vec3 &gyro0,
+                   const Vec3 &gyro1, double time0, double time1)
       : a0{accel0}, a1{accel1}, w0{gyro0}, w1{gyro1}, t0{time0}, t1{time1}
   {
   }
@@ -53,19 +53,17 @@ struct ImuKinematicsODE
   void operator()(const ImuState &x, ImuDerivative &dxdt, const double t) const
   {
     // 采用一阶线性插值作为保持器
-    double alpha{0.0};
-    if (t1 > t0)
-    {
-      alpha = std::clamp((t - t0) / (t1 - t0), 0.0, 1.0);
-    }
-    const cv::Vec3d a{a0 + (a1 - a0) * alpha};
-    const cv::Vec3d w{w0 + (w1 - w0) * alpha};
+    double alpha{(t1 > t0) ? std::clamp((t - t0) / (t1 - t0), 0.0, 1.0) : 0.0};
+
+    const Vec3 a{a0 + (a1 - a0) * alpha};
+    const Vec3 w{w0 + (w1 - w0) * alpha};
 
     // 提取当前姿态四元数
     const double qw{x.GetQuaternionW()};
     const double qx{x.GetQuaternionX()};
     const double qy{x.GetQuaternionY()};
     const double qz{x.GetQuaternionZ()};
+    Eigen::Quaterniond q{x.GetQuaternion()};
 
     // 四元数转旋转矩阵 R_wv (载体系到世界系的变换)
     const double R00{1.0 - 2.0 * qy * qy - 2.0 * qz * qz};

@@ -103,9 +103,9 @@ struct MahonyAHRS : public AbstractAHRS<FloatType>
   using Vec4 = Eigen::Matrix<FloatType, 4, 1>;
   static constexpr FloatType atol_zero{static_cast<FloatType>(1e-8)};
 
-  volatile FloatType twoKp{twoKpDef<FloatType>}; // 2 * proportional gain (Kp)
-  volatile FloatType twoKi{twoKiDef<FloatType>}; // 2 * integral gain (Ki)
-  volatile FloatType beta{betaDef<FloatType>};   // 2 * proportional gain (Kp)
+  FloatType twoKp{twoKpDef<FloatType>}; // 2 * proportional gain (Kp)
+  FloatType twoKi{twoKiDef<FloatType>}; // 2 * integral gain (Ki)
+  FloatType beta{betaDef<FloatType>};   // 2 * proportional gain (Kp)
 
   // quaternion of sensor frame relative to auxiliary frame
   Vec4 q;
@@ -164,7 +164,7 @@ struct MahonyAHRS : public AbstractAHRS<FloatType>
       else
       {
         // prevent integral windup
-        integralFB = Vec3::Zero();
+        integralFB = Vec3::Zero().eval();
       }
 
       // Apply proportional feedback
@@ -285,7 +285,7 @@ struct MahonyAHRS : public AbstractAHRS<FloatType>
       else
       {
         // prevent integral windup
-        integralFB = Vec3::Zero();
+        integralFB = Vec3::Zero().eval();
       }
 
       // Apply proportional feedback
@@ -327,7 +327,7 @@ struct MadgwickAHRS : public AbstractAHRS<FloatType>
   using Vec4 = Eigen::Matrix<FloatType, 4, 1>;
   static constexpr FloatType atol_zero{static_cast<FloatType>(1e-8)};
 
-  volatile FloatType beta{betaDef<FloatType>}; // 2 * proportional gain (Kp)
+  FloatType beta{betaDef<FloatType>}; // 2 * proportional gain (Kp)
 
   // quaternion of sensor frame relative to auxiliary frame
   Vec4 q;
