@@ -192,6 +192,14 @@ struct ImuState : public std::array<double, 10>
     (*this)[9] = quat[3];
   }
 
+  void SetQuaternion(const Eigen::Quaterniond &quat)
+  {
+    (*this)[6] = quat.w();
+    (*this)[7] = quat.x();
+    (*this)[8] = quat.y();
+    (*this)[9] = quat.z();
+  }
+
   void NormalizeQuaternion()
   {
     double &qw{GetQuaternionW()};

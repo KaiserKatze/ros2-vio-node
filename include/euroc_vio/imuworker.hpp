@@ -59,22 +59,10 @@ struct ImuKinematicsODE
     const Vec3 w{w0 + (w1 - w0) * alpha};
 
     // 提取当前姿态四元数
-    const double qw{x.GetQuaternionW()};
-    const double qx{x.GetQuaternionX()};
-    const double qy{x.GetQuaternionY()};
-    const double qz{x.GetQuaternionZ()};
     Eigen::Quaterniond q{x.GetQuaternion()};
 
     // 四元数转旋转矩阵 R_wv (载体系到世界系的变换)
-    const double R00{1.0 - 2.0 * qy * qy - 2.0 * qz * qz};
-    const double R01{2.0 * (qx * qy - qw * qz)};
-    const double R02{2.0 * (qx * qz + qw * qy)};
-    const double R10{2.0 * (qx * qy + qw * qz)};
-    const double R11{1.0 - 2.0 * qx * qx - 2.0 * qz * qz};
-    const double R12{2.0 * (qy * qz - qw * qx)};
-    const double R20{2.0 * (qx * qz - qw * qy)};
-    const double R21{2.0 * (qy * qz + qw * qx)};
-    const double R22{1.0 - 2.0 * qx * qx - 2.0 * qy * qy};
+    Eigen::Matrix3d R{q.toRotationMatrix()};
 
     // 位置导数 = 速度
     dxdt.SetVelocity(x.GetVelocity());
@@ -92,19 +80,15 @@ struct ImuKinematicsODE
     // 对应公式推导：accInWorldFrame = R_wv * a_body + g_world
     // 由于重力向量指向 X 轴负方向，所以真正的重力加速度是 [-9.81, 0, 0]。
     // 加上重力相当于对 X 轴减去 g_norm
-    cv::Vec3d accInWorldFrame{R00 * a[0] + R01 * a[1] + R02 * a[2] - g_norm,
-                              R10 * a[0] + R11 * a[1] + R12 * a[2],
-                              R20 * a[0] + R21 * a[1] + R22 * a[2]};
+    Vec3 accInWorldFrame{R * a};
+    accInWorldFrame.x() -= g_norm;
     dxdt.SetAcceleration(accInWorldFrame);
 
     // 姿态导数
     // 基于纯运动学的陀螺仪积分 q_dot = 0.5 * q \otimes w
-    const cv::Vec4d attDerivative{
-        0.5 * (-qx * w[0] - qy * w[1] - qz * w[2]),
-        0.5 * (qw * w[0] + qy * w[2] - qz * w[1]),
-        0.5 * (qw * w[1] - qx * w[2] + qz * w[0]),
-        0.5 * (qw * w[2] + qx * w[1] - qy * w[0]),
-    };
+    Eigen::Quaterniond omega{0.0, w.x(), w.y(), w.z()};
+    Eigen::Quaterniond attDerivative{q * omega};
+    attDerivative.coeffs() *= 0.5;
     dxdt.SetQuaternionDerivative(attDerivative);
   }
 };
@@ -127,26 +111,21 @@ concept PoseHandler = requires(T t, const MsgPose &msg) {
 class ImuWorker
 {
 private:
-  bool use_filter_;
-  RCFilter accel_filter_;
-  RCFilter gyro_filter_;
-
   EstimatorType estimator_type_;
 
-  bool is_gravity_aligned_{false};
   double last_time_{0.0};
   MsgImu prev_msg_imu_;
 
   // 状态向量初始化 (初始原点, 速度为 0, 姿态为单位四元数)
   ImuState state_;
-  double ode_time{0.0};
+  double ode_time_{0.0};
 
   boost::numeric::odeint::runge_kutta4<ImuState, double, ImuDerivative> rk4_;
   std::shared_ptr<AbstractAHRS<double>> ahrs_;
 
   // 零偏
-  cv::Vec3d gyro_bias_{0, 0, 0};
-  cv::Vec3d accel_bias_{0, 0, 0};
+  Vec3 gyro_bias_{0, 0, 0};
+  Vec3 accel_bias_{0, 0, 0};
 
   MsgPose pose_msg_;
 
@@ -154,96 +133,48 @@ private:
   static constexpr size_t init_imu_msg_buffer_capacity_{10};
   std::vector<MsgImu> init_imu_msg_buffer_;
 
-  cv::Vec3d CalculateAverageGravity() const
+  ZUPT<> zupt_{};
+
+  Vec3 CalculateAverageGravity() const
   {
     if (init_imu_msg_buffer_.empty())
     {
       throw std::runtime_error{"init_imu_msg_buffer_ is empty"};
     }
-    cv::Vec3d g_body{std::transform_reduce(
+    Vec3 g_body{std::transform_reduce(
         init_imu_msg_buffer_.cbegin(), init_imu_msg_buffer_.cend(),
-        cv::Vec3d::zeros(), std::plus<>(),
-        [](const MsgImu &imu_msg) -> cv::Vec3d
+        Vec3::Zero().eval(), std::plus<>(),
+        [](const MsgImu &imu_msg) -> Vec3
         {
-          return cv::Vec3d{imu_msg.linear_acceleration.x,
-                           imu_msg.linear_acceleration.y,
-                           imu_msg.linear_acceleration.z};
+          return Vec3{imu_msg.linear_acceleration.x,
+                      imu_msg.linear_acceleration.y,
+                      imu_msg.linear_acceleration.z};
         })};
     g_body /= static_cast<double>(init_imu_msg_buffer_.size());
-    g_body /= cv::norm(g_body);
+    g_body.normalize();
     return g_body;
   }
 
   void EstimateInitialAttitude()
   {
     // 计算平均加速度向量，作为重力方向的估计
-    const cv::Vec3d g_body{CalculateAverageGravity()};
+    const Vec3 g_body{CalculateAverageGravity()};
 
     // 静止时，IMU 测量的是抵消重力的支撑力（比力），方向垂直向上。
     // 该数据集说明 X 轴向上，因此目标世界向量应该是 [1.0, 0.0, 0.0]
-    const cv::Vec3d g_world{1.0, 0.0, 0.0};
-    const cv::Vec3d v{g_body.cross(g_world)};
-    const double c{g_body.dot(g_world)};
-    const double s{cv::norm(v)};
+    const Vec3 g_world{1, 0, 0};
 
-    cv::Mat K{(cv::Mat_<double>(3, 3) << 0, -v[2], v[1], v[2], 0, -v[0], -v[1],
-               v[0], 0)};
-
-    cv::Mat R{cv::Mat::eye(3, 3, CV_64F) + K
-              + K * K * ((1 - c) / (s * s + 1e-8))};
-
-    // 转 quaternion
-    double qw{
-        std::sqrt(std::max(0.0, 1 + R.at<double>(0, 0) + R.at<double>(1, 1)
-                                    + R.at<double>(2, 2)))
-        * 0.5};
-    double qx{0.0}, qy{0.0}, qz{0.0};
-    if (std::abs(qw) < 1e-8)
-    {
-      // 特殊情况：qw ≈ 0（180°旋转），使用备用公式
-      qw = 0.0;
-      qx = std::sqrt(std::max(0.0, (1 + R.at<double>(0, 0) - R.at<double>(1, 1)
-                                    - R.at<double>(2, 2))
-                                       / 4.0));
-      qy = std::sqrt(std::max(0.0, (1 - R.at<double>(0, 0) + R.at<double>(1, 1)
-                                    - R.at<double>(2, 2))
-                                       / 4.0));
-      qz = std::sqrt(std::max(0.0, (1 - R.at<double>(0, 0) - R.at<double>(1, 1)
-                                    + R.at<double>(2, 2))
-                                       / 4.0));
-
-      // 符号调整（基于旋转矩阵的对称元素，确保一致性）
-      if (R.at<double>(2, 1) < 0)
-      {
-        qx = -qx;
-      }
-      if (R.at<double>(0, 2) < 0)
-      {
-        qy = -qy;
-      }
-      if (R.at<double>(1, 0) < 0)
-      {
-        qz = -qz;
-      }
-    }
-    else
-    {
-      // 正常情况
-      qx = (R.at<double>(2, 1) - R.at<double>(1, 2)) / (4 * qw);
-      qy = (R.at<double>(0, 2) - R.at<double>(2, 0)) / (4 * qw);
-      qz = (R.at<double>(1, 0) - R.at<double>(0, 1)) / (4 * qw);
-    }
-
-    state_.SetQuaternion(qw, qx, qy, qz);
+    state_.SetQuaternion(Eigen::Quaterniond::FromTwoVectors(g_body, g_world));
   }
 
   void ComposePoseMessage(MsgPose &msg)
   {
     // 积分后必须对四元数进行归一化，因为 RK4 不保证单位模长约束
     state_.NormalizeQuaternion();
-    msg.pose.position.x    = state_.GetPositionX();
-    msg.pose.position.y    = state_.GetPositionY();
-    msg.pose.position.z    = state_.GetPositionZ();
+    msg.pose.position.x = state_.GetPositionX();
+    msg.pose.position.y = state_.GetPositionY();
+    msg.pose.position.z = state_.GetPositionZ();
+
     msg.pose.orientation.w = state_.GetQuaternionW();
     msg.pose.orientation.x = state_.GetQuaternionX();
     msg.pose.orientation.y = state_.GetQuaternionY();
@@ -344,12 +275,12 @@ private:
   }
 
 public:
-  ImuWorker(bool use_filter         = true,
-            EstimatorType estimator = EstimatorType::RK4, double init_px = 0.0,
-            double init_py = 0.0, double init_pz = 0.0)
-      : use_filter_(use_filter), accel_filter_(0.15), gyro_filter_(0.15),
-        estimator_type_(estimator)
+  ImuWorker(EstimatorType estimator = EstimatorType::RK4)
+      : estimator_type_(estimator)
   {
+    double init_px{0.0};
+    double init_py{0.0};
+    double init_pz{0.0};
     // 初始化状态向量
     state_.SetPosition(init_px, init_py, init_pz);
     // 其他状态保持默认
@@ -375,24 +306,26 @@ public:
     init_imu_msg_buffer_.reserve(init_imu_msg_buffer_capacity_);
   }
 
-  void RK4Update(const cv::Vec3d &accel0, const cv::Vec3d &accel1,
-                 const cv::Vec3d &gyro0, const cv::Vec3d &gyro1, double time0,
-                 double time1)
+  void RK4Update(const Vec3 &accel0, const Vec3 &accel1, const Vec3 &gyro0,
+                 const Vec3 &gyro1, double time0, double time1)
   {
     const double dt{time1 - time0};
     ImuKinematicsODE ode{accel0, accel1, gyro0, gyro1, time0, time1};
-    rk4_.do_step(ode, state_, ode_time, dt);
-    ode_time += dt;
+    rk4_.do_step(ode, state_, ode_time_, dt);
+    ode_time_ += dt;
   }
 
-  void MahonyUpdate(const cv::Vec3d &accel0, const cv::Vec3d &accel1,
-                    const cv::Vec3d &gyro0, const cv::Vec3d &gyro1,
-                    double time0, double time1)
+  /**
+   * @brief 利用 Mahony 算法或 Madgwick 算法，计算姿态四元数
+   */
+  void MahonyUpdate(const Vec3 &accel0, const Vec3 &accel1, const Vec3 &gyro0,
+                    const Vec3 &gyro1, double time0, double time1)
   {
-    // 利用 Mahony 算法或 Madgwick 算法，计算姿态四元数
+    Vec3 accel{accel1};
+    Vec3 gyro{gyro1};
 
     // 步进更新 AHRS 算法以获得精确的有重力修正的姿态
-    this->ahrs_->Update(gyro1, accel1, time1 - time0);
+    this->ahrs_->Update(gyro, accel, time1 - time0);
 
     // 切忌在 RK4 积分之前覆盖状态变量 state_
 
@@ -406,9 +339,8 @@ public:
     this->state_.SetQuaternion(this->ahrs_->GetQuaternion());
   }
 
-  void Integrate(const cv::Vec3d &accel0, const cv::Vec3d &accel1,
-                 const cv::Vec3d &gyro0, const cv::Vec3d &gyro1, double time0,
-                 double time1)
+  void Integrate(const Vec3 &accel0, const Vec3 &accel1, const Vec3 &gyro0,
+                 const Vec3 &gyro1, double time0, double time1)
   {
     switch (estimator_type_)
     {

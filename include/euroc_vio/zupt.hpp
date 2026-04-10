@@ -163,6 +163,7 @@ public:
     double local_gravity{9.81};
   };
 
+  ZUPT() : ZUPT(Config{}) {}
   ZUPT(Config &&config) : config_{std::move(config)} {}
 
   /**
