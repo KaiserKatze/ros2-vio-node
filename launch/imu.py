@@ -8,18 +8,19 @@ from launch_ros.actions import Node
 from launch.logging import get_logger
 
 
+logger = get_logger('euroc_vio')
+logger.info("Starting EuRoC trajectory launch ...")
+
+workdir_path = get_package_share_path("euroc_vio")
+default_rviz_config_path = workdir_path / "rviz/imu.rviz"
+
+logger.info(f"Default RViz config path: {default_rviz_config_path}")
+
+if not default_rviz_config_path.exists() or not default_rviz_config_path.is_file():
+    raise FileNotFoundError(f"RViz config file not found at: {default_rviz_config_path}")
+
+
 def generate_launch_description():
-    logger = get_logger('euroc_vio')
-    logger.info("Starting EuRoC trajectory launch ...")
-
-    workdir_path = get_package_share_path("euroc_vio")
-    default_rviz_config_path = workdir_path / "rviz/imu.rviz"
-
-    logger.info(f"Default RViz config path: {default_rviz_config_path}")
-
-    if not default_rviz_config_path.exists() or not default_rviz_config_path.is_file():
-        raise FileNotFoundError(f"RViz config file not found at: {default_rviz_config_path}")
-
     bag_replay = ExecuteProcess(
         cmd=[
             "ros2",
