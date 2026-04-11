@@ -134,7 +134,12 @@ private:
   {
     try
     {
-      this->state_.SetQuaternion(this->zupt_.EstimateOrientation());
+      const Eigen::Quaterniond q{this->zupt_.EstimateOrientation()};
+      this->state_.SetQuaternion(q);
+      RCLCPP_INFO(rclcpp::get_logger(NODE_NAME),
+                  "Estimated orientation (quaternion): [w: %.3f, x: %.3f, y: "
+                  "%.3f, z: %.3f]",
+                  q.w(), q.x(), q.y(), q.z());
     }
     catch (const std::exception &e)
     {
@@ -166,8 +171,11 @@ private:
 
     if (!is_static)
     {
+      RCLCPP_WARN(rclcpp::get_logger(NODE_NAME), "MAV is not static.");
       return;
     }
+
+    RCLCPP_WARN(rclcpp::get_logger(NODE_NAME), "MAV is static.");
 
     this->state_.SetVelocity(0.0, 0.0, 0.0);
     this->EstimateOrientation();
