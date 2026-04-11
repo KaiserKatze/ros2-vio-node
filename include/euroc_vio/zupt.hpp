@@ -165,11 +165,18 @@ public:
     double accelerometer_variance_threshold{0.05};
     double g_tolerance{0.3};
     double local_gravity{9.81};
+
+    bool IsAccelWithinGravityRange(const Eigen::Vector3d &acc_mean) const
+    {
+      const double acc_mean_norm{acc_mean.norm()};
+      return std::abs(acc_mean_norm - local_gravity) <= g_tolerance;
+    }
   };
 
   ZUPT() : ZUPT(Config{}) {}
   ZUPT(Config &&config) : config_{std::move(config)} {}
 
+private:
   static Eigen::Vector3d GetAccel(const data_type &e)
   {
     return e.template tail<3>();
@@ -185,8 +192,52 @@ public:
     return GetGyro(e).norm();
   }
 
+  Eigen::Vector3d GetAverageAccel() const
+  {
+    if (window_.size() == 0)
+    {
+      return Eigen::Vector3d::Zero();
+    }
+    return accel_sum_ / static_cast<double>(window_.size());
+  }
+
+public:
+  /**
+   * @brief 估计当前姿态四元数（仅在静止时可靠）
+   * @note 返回的四元数是从世界坐标系到机体坐标系的旋转（即 C_21）
+   */
+  Eigen::Quaterniond EstimateOrientation() const
+  {
+    // 默认初始状态是静止的
+    if (window_.size() == 0)
+    {
+      return Eigen::Quaterniond::Identity();
+    }
+    if (!this->is_static_)
+    {
+      // 当前状态被判断为非静止，无法可靠估计姿态
+      throw std::runtime_error{
+          "Cannot estimate orientation reliably when not static."};
+    }
+    // 计算平均加速度向量，作为重力方向的估计
+    const Eigen::Vector3d acc_mean{GetAverageAccel()};
+    if (!config_.IsAccelWithinGravityRange(acc_mean))
+    {
+      // 平均加速度不在重力范围内，无法可靠估计姿态
+      throw std::runtime_error{
+          "Average acceleration norm is out of expected gravity range. "
+          "Cannot estimate orientation reliably."};
+    }
+    const Eigen::Vector3d gravity_direction{-acc_mean.normalized()};
+    // 构造一个旋转，使得机体坐标系的 x 轴（前向）与重力方向对齐
+    // 注意：这只是一个近似的估计，实际应用中可能需要更复杂的处理
+    return Eigen::Quaterniond::FromTwoVectors(Eigen::Vector3d::UnitX(),
+                                              gravity_direction);
+  }
+
   /**
    * @brief 更新一帧 IMU 数据并判断是否静止
+   * @return 当前是否被判断为静止状态
    */
   bool Update(const data_type &imu_data)
   {
@@ -223,7 +274,7 @@ public:
     // 缓冲区未满前，统计量还不具备统计学意义，直接返回 true
     if (!window_.full())
     {
-      return true;
+      return this->is_static_ = true;
     }
 
     const double denom{1.0 / static_cast<double>(WindowSize)};
@@ -235,18 +286,16 @@ public:
 
     if (gyro_energy > config_.gyroscope_magnitude_threshold)
     {
-      return false;
+      return this->is_static_ = false;
     }
 
     /** =========================
      * 加速度均值判断
      * ========================= */
     const Eigen::Vector3d acc_mean{accel_sum_ * denom};
-    const double acc_mean_norm{acc_mean.norm()};
-
-    if (std::abs(acc_mean_norm - config_.local_gravity) > config_.g_tolerance)
+    if (!config_.IsAccelWithinGravityRange(acc_mean))
     {
-      return false;
+      return this->is_static_ = false;
     }
 
     /** =========================
@@ -261,10 +310,10 @@ public:
 
     if (acc_total_variance > config_.accelerometer_variance_threshold)
     {
-      return false;
+      return this->is_static_ = false;
     }
 
-    return true;
+    return this->is_static_ = true;
   }
 
 private:
@@ -275,6 +324,7 @@ private:
   double gyro_norm_sum_{0.0};                             // 角速度向量范数和
   Eigen::Vector3d accel_sum_{Eigen::Vector3d::Zero()};    // 加速度向量和
   Eigen::Vector3d accel_sq_sum_{Eigen::Vector3d::Zero()}; // 加速度向量平方和
+  bool is_static_{true};                                  // 当前是否静止
 };
 
 #endif /* ZUPT_HPP */

@@ -114,7 +114,8 @@ private:
   EstimatorType estimator_type_;
 
   double last_time_{0.0};
-  MsgImu prev_msg_imu_;
+  Vec3 acc_prev_{Vec3::Zero()};
+  Vec3 gyro_prev_{Vec3::Zero()};
 
   // 状态向量初始化 (初始原点, 速度为 0, 姿态为单位四元数)
   ImuState state_;
@@ -124,47 +125,16 @@ private:
   std::shared_ptr<AbstractAHRS<double>> ahrs_;
 
   // 零偏
-  Vec3 gyro_bias_{0, 0, 0};
-  Vec3 accel_bias_{0, 0, 0};
+  Vec3 gyro_bias_{Vec3::Zero()};
+  Vec3 accel_bias_{Vec3::Zero()};
 
   MsgPose pose_msg_;
 
-  // 初始重力对齐缓存
-  static constexpr size_t init_imu_msg_buffer_capacity_{10};
-  std::vector<MsgImu> init_imu_msg_buffer_;
-
   ZUPT<> zupt_{};
 
-  Vec3 CalculateAverageGravity() const
+  void EstimateOrientation()
   {
-    if (init_imu_msg_buffer_.empty())
-    {
-      throw std::runtime_error{"init_imu_msg_buffer_ is empty"};
-    }
-    Vec3 g_body{std::transform_reduce(
-        init_imu_msg_buffer_.cbegin(), init_imu_msg_buffer_.cend(),
-        Vec3::Zero().eval(), std::plus<>(),
-        [](const MsgImu &imu_msg) -> Vec3
-        {
-          return Vec3{imu_msg.linear_acceleration.x,
-                      imu_msg.linear_acceleration.y,
-                      imu_msg.linear_acceleration.z};
-        })};
-    g_body /= static_cast<double>(init_imu_msg_buffer_.size());
-    g_body.normalize();
-    return g_body;
-  }
-
-  void EstimateInitialAttitude()
-  {
-    // 计算平均加速度向量，作为重力方向的估计
-    const Vec3 g_body{CalculateAverageGravity()};
-
-    // 静止时，IMU 测量的是抵消重力的支撑力（比力），方向垂直向上。
-    // 该数据集说明 X 轴向上，因此目标世界向量应该是 [1.0, 0.0, 0.0]
-    const Vec3 g_world{1, 0, 0};
-
-    state_.SetQuaternion(Eigen::Quaterniond::FromTwoVectors(g_body, g_world));
+    this->state_.SetQuaternion(this->zupt_.EstimateOrientation());
   }
 
   void ComposePoseMessage(MsgPose &msg)
@@ -181,97 +151,39 @@ private:
     msg.pose.orientation.z = state_.GetQuaternionZ();
   }
 
-  void HandleImu(const MsgImu &imu_msg, PoseHandler auto *node_ptr)
+  void ZeroVelocityUpdate(const Vec3 &accel, const Vec3 &gyro)
   {
-    const rclcpp::Time msg_stamp{imu_msg.header.stamp};
-    const double current_time{msg_stamp.seconds()};
+    Vector6d data;
+    data << gyro, accel;
 
-    // 提取原始数据
-    const cv::Vec3d raw_accel1{imu_msg.linear_acceleration.x,
-                               imu_msg.linear_acceleration.y,
-                               imu_msg.linear_acceleration.z};
-    const cv::Vec3d raw_gyro1{imu_msg.angular_velocity.x,
-                              imu_msg.angular_velocity.y,
-                              imu_msg.angular_velocity.z};
-    const cv::Vec3d raw_accel0{prev_msg_imu_.linear_acceleration.x,
-                               prev_msg_imu_.linear_acceleration.y,
-                               prev_msg_imu_.linear_acceleration.z};
-    const cv::Vec3d raw_gyro0{prev_msg_imu_.angular_velocity.x,
-                              prev_msg_imu_.angular_velocity.y,
-                              prev_msg_imu_.angular_velocity.z};
+    const bool is_static{zupt_.Update(data)};
 
-    // 零速检测及零偏更新 (使用原始数据)
-    ZeroVelocityUpdate(raw_accel1, raw_gyro1);
-
-    // 【修改点】：实际代入积分器进行解算时，必须扣除已估计出的零偏 (Bias)
-    const cv::Vec3d unbiased_accel0{raw_accel0 - accel_bias_};
-    const cv::Vec3d unbiased_gyro0{raw_gyro0 - gyro_bias_};
-    const cv::Vec3d unbiased_accel1{raw_accel1 - accel_bias_};
-    const cv::Vec3d unbiased_gyro1{raw_gyro1 - gyro_bias_};
-
-    Integrate(unbiased_accel0, unbiased_accel1, unbiased_gyro0, unbiased_gyro1,
-              last_time_, current_time);
-
-    pose_msg_.header.stamp = msg_stamp;
-    ComposePoseMessage(pose_msg_);
-    node_ptr->HandlePose(pose_msg_);
-  }
-
-  void RecoverPoseMessageFromCachedImuMessage(PoseHandler auto *node_ptr)
-  {
-    // 恢复初始状态
-    accel_filter_.Reset();
-    gyro_filter_.Reset();
-    bool first_msg{true};
-    for (const MsgImu &imu_msg : init_imu_msg_buffer_)
+    if (!is_static)
     {
-      const rclcpp::Time msg_stamp{imu_msg.header.stamp};
-      const double current_time{msg_stamp.seconds()};
-      if (!first_msg)
-      {
-        HandleImu(imu_msg, node_ptr);
-        first_msg = false;
-      }
-      prev_msg_imu_ = imu_msg;
-      last_time_    = current_time;
+      return;
     }
-  }
 
-  void ZeroVelocityUpdate(const cv::Vec3d &filt_accel,
-                          const cv::Vec3d &filt_gyro)
-  {
-    // 静止检测
-    const double acc_norm{cv::norm(filt_accel)};
-    const double gyro_norm{cv::norm(filt_gyro)};
-    const bool is_static{(std::abs(acc_norm - 9.81) < 0.1)
-                         && (gyro_norm < 0.02)};
+    this->state_.SetVelocity(0.0, 0.0, 0.0);
+    this->EstimateOrientation();
 
-    // ZUPT + bias 更新
-    if (is_static)
-    {
-      state_.SetVelocity(0, 0, 0); // 严格置零速度，防止漂移
-      static constexpr double alpha{0.01};
+    static constexpr double alpha{0.01};
 
-      // 更新陀螺仪零偏
-      gyro_bias_ = (1 - alpha) * gyro_bias_ + alpha * filt_gyro;
+    gyro_bias_ = (1 - alpha) * gyro_bias_ + alpha * gyro;
 
-      // 加速度计的零偏不能固定减去 [0,0,-9.81]。
-      // 我们需要将期望的静止比力(世界系的 [9.81, 0, 0]) 投影到当前的机体坐标系下，
-      // 再与测量值作差来计算偏差。
-      const double qw{state_.GetQuaternionW()};
-      const double qx{state_.GetQuaternionX()};
-      const double qy{state_.GetQuaternionY()};
-      const double qz{state_.GetQuaternionZ()};
+    // 加速度计的零偏不能固定减去 [0,0,-9.81]。
+    // 我们需要将期望的静止比力(世界系的 [9.81, 0, 0]) 投影到当前的机体坐标系下，
+    // 再与测量值作差来计算偏差。
 
-      // 矩阵 R_wv 的转置，即世界系到机体系的旋转 R_vw 第一列
-      cv::Vec3d expected_accel_body{
-          (1.0 - 2.0 * qy * qy - 2.0 * qz * qz) * 9.81,
-          (2.0 * (qx * qy + qw * qz)) * 9.81, // 注意转置
-          (2.0 * (qx * qz - qw * qy)) * 9.81};
+    // 提取当前姿态四元数
+    Eigen::Quaterniond q{state_.GetQuaternion()};
 
-      accel_bias_ = (1 - alpha) * accel_bias_
-                    + alpha * (filt_accel - expected_accel_body);
-    }
+    // 四元数转旋转矩阵 R_wv (载体系到世界系的变换)
+    Eigen::Matrix3d R{q.toRotationMatrix()};
+
+    // 矩阵 R_wv 的转置，即世界系到机体系的旋转 R_vw 第一列
+    Vec3 expected_g{R.col(0)};
+    expected_g *= g_norm;
+    accel_bias_ = (1 - alpha) * accel_bias_ + alpha * (accel - expected_g);
   }
 
 public:
@@ -303,7 +215,6 @@ public:
     }
 
     pose_msg_.header.frame_id = DEFAULT_FRAME_ID;
-    init_imu_msg_buffer_.reserve(init_imu_msg_buffer_capacity_);
   }
 
   void RK4Update(const Vec3 &accel0, const Vec3 &accel1, const Vec3 &gyro0,
@@ -361,31 +272,26 @@ public:
     const rclcpp::Time msg_stamp{imu_msg->header.stamp};
     const double current_time{msg_stamp.seconds()};
 
-    // 初始重力对齐
-    if (!is_gravity_aligned_)
-    {
-      init_imu_msg_buffer_.push_back(*imu_msg);
+    Vec3 accel{imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y,
+               imu_msg->linear_acceleration.z};
 
-      // 等积累了足够的初始加速度数据后，计算初始姿态
-      if (init_imu_msg_buffer_.size() < init_imu_msg_buffer_capacity_)
-      {
-        return;
-      }
+    Vec3 gyro{imu_msg->angular_velocity.x, imu_msg->angular_velocity.y,
+              imu_msg->angular_velocity.z};
 
-      // 主要目的：估计无人机的初始姿态
-      EstimateInitialAttitude();
+    ZeroVelocityUpdate(accel, gyro);
 
-      is_gravity_aligned_ = true;
+    Integrate(acc_prev_ - accel_bias_, accel - accel_bias_,
+              gyro_prev_ - gyro_bias_, gyro - gyro_bias_, last_time_,
+              current_time);
 
-      RecoverPoseMessageFromCachedImuMessage(node_ptr);
-    }
-    else
-    {
-      HandleImu(*imu_msg, node_ptr);
-    }
+    pose_msg_.header.stamp = msg_stamp;
+    ComposePoseMessage(pose_msg_);
+    node_ptr->HandlePose(pose_msg_);
+
     // 缓存上一条 IMU 消息
-    prev_msg_imu_ = *imu_msg;
-    last_time_    = current_time;
+    acc_prev_  = accel;
+    gyro_prev_ = gyro;
+    last_time_ = current_time;
   }
 };
 
