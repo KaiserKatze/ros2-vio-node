@@ -7,8 +7,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
-#include <numeric>
-#include <vector>
 
 #include <Eigen/Dense>
 

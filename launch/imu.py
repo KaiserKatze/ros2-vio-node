@@ -17,6 +17,9 @@ def generate_launch_description():
 
     logger.info(f"Default RViz config path: {default_rviz_config_path}")
 
+    if not default_rviz_config_path.exists() or not default_rviz_config_path.is_file():
+        raise FileNotFoundError(f"RViz config file not found at: {default_rviz_config_path}")
+
     bag_replay = ExecuteProcess(
         cmd=[
             "ros2",

@@ -60,7 +60,7 @@ Visualization Manager:
       Length: 0.30000001192092896
       Line Style: Lines
       Line Width: 0.029999999329447746
-      Name: Path
+      Name: Path [GT]
       Offset:
         X: 0
         Y: 0
@@ -88,7 +88,7 @@ Visualization Manager:
       Length: 0.30000001192092896
       Line Style: Lines
       Line Width: 0.029999999329447746
-      Name: Path
+      Name: Path [IMU]
       Offset:
         X: 0
         Y: 0
