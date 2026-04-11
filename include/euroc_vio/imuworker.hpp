@@ -132,7 +132,15 @@ private:
 
   void EstimateOrientation()
   {
-    this->state_.SetQuaternion(this->zupt_.EstimateOrientation());
+    try
+    {
+      this->state_.SetQuaternion(this->zupt_.EstimateOrientation());
+    }
+    catch (const std::exception &e)
+    {
+      RCLCPP_WARN(rclcpp::get_logger(NODE_NAME),
+                  "Failed to estimate orientation: %s", e.what());
+    }
   }
 
   void ComposePoseMessage(MsgPose &msg)

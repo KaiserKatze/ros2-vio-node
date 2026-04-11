@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <array>
+#include <iomanip>
+#include <sstream>
 
 /**
  * @brief 可遍历的无锁环形缓冲区（固定容量）
@@ -224,9 +226,13 @@ public:
     if (!config_.IsAccelWithinGravityRange(acc_mean))
     {
       // 平均加速度不在重力范围内，无法可靠估计姿态
-      throw std::runtime_error{
-          "Average acceleration norm is out of expected gravity range. "
-          "Cannot estimate orientation reliably."};
+      std::stringstream ss;
+      ss << std::fixed << std::setprecision(3) << "Average acceleration norm "
+         << acc_mean.norm() << " is out of expected gravity range ("
+         << this->config_.local_gravity - this->config_.g_tolerance << ", "
+         << this->config_.local_gravity + this->config_.g_tolerance
+         << "). Cannot estimate orientation reliably.";
+      throw std::runtime_error{ss.str()};
     }
     const Eigen::Vector3d gravity_direction{-acc_mean.normalized()};
     // 构造一个旋转，使得机体坐标系的 x 轴（前向）与重力方向对齐
