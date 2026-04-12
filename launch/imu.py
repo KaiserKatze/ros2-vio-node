@@ -1,110 +1,112 @@
 from ament_index_python.packages import get_package_share_path
-
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess
-from launch.substitutions import Command, LaunchConfiguration
-
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    OpaqueFunction,
+    RegisterEventHandler,
+    EmitEvent,
+    LogInfo,
+)
+from launch.event_handlers import OnProcessIO
+from launch.substitutions import LaunchConfiguration
+from launch.events import Shutdown
 from launch_ros.actions import Node
 from launch.logging import get_logger
 
-
-logger = get_logger('euroc_vio')
-logger.info("Starting EuRoC trajectory launch ...")
-
-workdir_path = get_package_share_path("euroc_vio")
-default_rviz_config_path = workdir_path / "rviz/imu.rviz"
-
-logger.info(f"Default RViz config path: {default_rviz_config_path}")
-
-if not default_rviz_config_path.exists() or not default_rviz_config_path.is_file():
-    raise FileNotFoundError(f"RViz config file not found at: {default_rviz_config_path}")
+import os
+import pathlib
 
 
-def generate_launch_description():
-    bag_replay = ExecuteProcess(
+def setup_launch_entities(context, *args, **kwargs):
+    logger = get_logger("euroc_vio")
+
+    # 1. 获取参数
+    target_str = LaunchConfiguration("target").perform(context)
+    estimator_val = LaunchConfiguration("estimator").perform(context)
+
+    home_path = pathlib.PosixPath(os.path.expanduser("~"))
+    # 根据上一个 package 的录制路径定位 Bag 文件夹
+    bag_path = home_path / "EuRoC_MAV_Datasets_As_ROS2_Bags" / target_str
+
+    if not bag_path.exists():
+        raise FileNotFoundError(f"未找到对应的 ROS2 Bag 路径: {bag_path}")
+
+    # 获取 RViz 配置
+    pkg_path = get_package_share_path("euroc_vio")
+    rviz_config_path = pkg_path / "rviz" / "imu.rviz"
+
+    # 2. 定义播放进程
+    bag_play = ExecuteProcess(
         cmd=[
             "ros2",
             "bag",
             "play",
-            "/mnt/e/Documents/mav0/bag/V2_01_easy_ros2/V2_01_easy_ros2.db3",
+            str(bag_path.resolve()),
             "--read-ahead-queue-size",
             "5000",
         ],
         output="screen",
     )
 
-    imu_arg_use_filter = DeclareLaunchArgument(
-        name="use_filter",
-        default_value="false",
-        description="Whether to use the RC low-pass filter for IMU data (true/false)",
-    )
-
-    imu_arg_estimator = DeclareLaunchArgument(
-        name="estimator",
-        default_value="rk4",
-        description="The estimator to use (rk4, mahony, madgwick)",
-    )
-
-    imu_arg_init_position_x = DeclareLaunchArgument(
-        name="initial_position_x",
-        default_value="-0.98248653560578914",
-        description="Initial position x (default: 0.0)",
-    )
-
-    imu_arg_init_position_y = DeclareLaunchArgument(
-        name="initial_position_y",
-        default_value="0.46277992113897914",
-        description="Initial position y (default: 0.0)",
-    )
-
-    imu_arg_init_position_z = DeclareLaunchArgument(
-        name="initial_position_z",
-        default_value="1.4401002233560267",
-        description="Initial position z (default: 0.0)",
-    )
-
+    # 3. 定义 IMU 节点
     imu_node = Node(
         package="euroc_vio",
         executable="euroc_imu",
         name="trajectory_publisher",
         output="screen",
-        parameters=[
-            {"use_filter": LaunchConfiguration("use_filter")},
-            {"estimator": LaunchConfiguration("estimator")},
-            {"initial_position_x": LaunchConfiguration("initial_position_x")},
-            {"initial_position_y": LaunchConfiguration("initial_position_y")},
-            {"initial_position_z": LaunchConfiguration("initial_position_z")},
-        ],
+        parameters=[{"estimator": estimator_val}],
     )
 
-    rviz_arg = DeclareLaunchArgument(
-        name="rvizconfig",
-        default_value=str(default_rviz_config_path),
-        description="Absolute path to rviz config file",
-    )
-
+    # 4. 定义 RViz 节点
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",
         name="rviz2",
         output="screen",
-        arguments=["-d", LaunchConfiguration("rvizconfig")],
+        arguments=["-d", str(rviz_config_path)],
     )
 
+    # 状态锁
+    trigger_state = {"is_started": False}
+
+    # 启动回调：监听 "Ready to play"
+    def check_play_started(info):
+        if trigger_state["is_started"]:
+            return None
+        text = info.text.decode("utf-8", errors="replace")
+        if "Playback until timestamp" in text:
+            trigger_state["is_started"] = True
+            return [
+                LogInfo(msg="====== Bag 播放器已就绪，启动算法和 RViz ======"),
+                imu_node,
+                rviz_node,
+            ]
+        return None
+
+    # 注册事件处理器
+    start_pub_node_on_replay = RegisterEventHandler(
+        OnProcessIO(
+            target_action=bag_play,
+            on_stdout=check_play_started,
+            on_stderr=check_play_started,
+        )
+    )
+
+    return [bag_play, start_pub_node_on_replay]
+
+
+def generate_launch_description():
     return LaunchDescription(
         [
-            # Declare launch arguments
-            imu_arg_use_filter,
-            imu_arg_estimator,
-            imu_arg_init_position_x,
-            imu_arg_init_position_y,
-            imu_arg_init_position_z,
-            rviz_arg,
-            # 1. 播放 rosbag (非阻塞方式)
-            bag_replay,
-            # 2. 启动 IMU 预处理节点
-            imu_node,
-            # 3. 启动 RViz2 并自动加载配置
-            rviz_node,
+            DeclareLaunchArgument(
+                name="target", default_value="V2_01_easy", description="数据集序列名称"
+            ),
+            DeclareLaunchArgument(
+                name="estimator",
+                default_value="rk4",
+                description="估计算法 (rk4, mahony, madgwick)",
+            ),
+            OpaqueFunction(function=setup_launch_entities),
         ]
     )
