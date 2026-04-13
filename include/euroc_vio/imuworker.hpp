@@ -118,6 +118,7 @@ class ImuWorker
 private:
   EstimatorType estimator_type_;
 
+  bool is_first_frame_{true};
   double last_time_{0.0};
   Vec3 acc_prev_{Vec3::Zero()};
   Vec3 gyro_prev_{Vec3::Zero()};
@@ -306,6 +307,16 @@ public:
               imu_msg->angular_velocity.z};
 
     ZeroVelocityUpdate(accel, gyro);
+
+    // 如果是第一帧，只记录初始状态，不进行积分计算
+    if (is_first_frame_)
+    {
+      acc_prev_       = accel;
+      gyro_prev_      = gyro;
+      last_time_      = current_time;
+      is_first_frame_ = false;
+      return;
+    }
 
     Integrate(acc_prev_ - accel_bias_, accel - accel_bias_,
               gyro_prev_ - gyro_bias_, gyro - gyro_bias_, last_time_,
