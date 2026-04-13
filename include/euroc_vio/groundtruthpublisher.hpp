@@ -44,16 +44,25 @@ private:
   void SubscriberCallback(const MsgGroundTruth::ConstSharedPtr &msg)
   {
     const auto stamp{msg->header.stamp};
-    msg_path_.header.stamp       = stamp;
-    msg_pose_.header.stamp       = stamp;
-    msg_pose_.pose.position.x    = msg->transform.translation.x;
-    msg_pose_.pose.position.y    = msg->transform.translation.y;
-    msg_pose_.pose.position.z    = msg->transform.translation.z;
-    msg_pose_.pose.orientation.w = msg->transform.rotation.w;
-    msg_pose_.pose.orientation.x = msg->transform.rotation.x;
-    msg_pose_.pose.orientation.y = msg->transform.rotation.y;
-    msg_pose_.pose.orientation.z = msg->transform.rotation.z;
-    msg_path_.poses.push_back(msg_pose_);
+    msg_path_.header.stamp = stamp;
+    if constexpr (std::is_same_v<MsgGroundTruth,
+                                 geometry_msgs::msg::TransformStamped>)
+    {
+      msg_pose_.header.stamp       = stamp;
+      msg_pose_.pose.position.x    = msg->transform.translation.x;
+      msg_pose_.pose.position.y    = msg->transform.translation.y;
+      msg_pose_.pose.position.z    = msg->transform.translation.z;
+      msg_pose_.pose.orientation.w = msg->transform.rotation.w;
+      msg_pose_.pose.orientation.x = msg->transform.rotation.x;
+      msg_pose_.pose.orientation.y = msg->transform.rotation.y;
+      msg_pose_.pose.orientation.z = msg->transform.rotation.z;
+      msg_path_.poses.push_back(msg_pose_);
+    }
+    else if constexpr (std::is_same_v<MsgGroundTruth,
+                                 geometry_msgs::msg::PoseStamped>)
+    {
+      msg_path_.poses.push_back(*msg);
+    }
     publisher_->publish(msg_path_);
   }
 

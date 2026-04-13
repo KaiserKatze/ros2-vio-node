@@ -80,8 +80,26 @@ int main(int argc, char **argv)
   std::cout << "Node 'euroc_imu' started\n";
   rclcpp::init(argc, argv);
 
+  /*
+
+  @see: https://gitee.com/kaiserkatze/ros2-euroc2bag
+
+  euroc2bag 提供的话题列表：
+
+  /cam0/image_raw [sensor_msgs/msg/Image]
+  /cam1/image_raw [sensor_msgs/msg/Image]
+  /events/read_split [rosbag2_interfaces/msg/ReadSplitEvent]
+  /events/write_split [rosbag2_interfaces/msg/WriteSplitEvent]
+  /groundtruth/pose [geometry_msgs/msg/PoseStamped]
+  /imu0 [sensor_msgs/msg/Imu]
+  /vicon0/pose [geometry_msgs/msg/PoseStamped]
+
+  */
+
+  // sensor_msgs/msg/Imu
   const char *input_imu_topic{"/imu0"};
-  const char *input_groundtruth_topic{"/vicon/firefly_sbx/firefly_sbx"};
+  // geometry_msgs/msg/PoseStamped
+  const char *input_groundtruth_topic{"/groundtruth/pose"};
   const char *output_imu_topic{"/path_imu"};
   const char *output_groundtruth_topic{"/path_groundtruth"};
 

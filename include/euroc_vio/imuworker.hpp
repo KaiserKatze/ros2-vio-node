@@ -25,11 +25,18 @@
 #include "euroc_vio/zupt.hpp"
 
 using MsgImu         = sensor_msgs::msg::Imu;
-using MsgGroundTruth = geometry_msgs::msg::TransformStamped;
+using MsgGroundTruth = geometry_msgs::msg::PoseStamped;
 using MsgPose        = geometry_msgs::msg::PoseStamped;
 using MsgPath        = nav_msgs::msg::Path;
 using Vec3           = Eigen::Vector3d;
 using Vec4           = Eigen::Vector4d;
+static_assert(!std::is_same_v<geometry_msgs::msg::TransformStamped,
+                              geometry_msgs::msg::PoseStamped>,
+              "MsgGroundTruth cannot be both TransformStamped and PoseStamped");
+static_assert(
+    std::is_same_v<MsgGroundTruth, geometry_msgs::msg::TransformStamped>
+        || std::is_same_v<MsgGroundTruth, geometry_msgs::msg::PoseStamped>,
+    "MsgGroundTruth must be either PoseStamped or TransformStamped");
 
 static constexpr double g_norm{9.81}; // 重力加速度常数
 
