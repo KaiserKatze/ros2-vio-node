@@ -7,6 +7,8 @@
 #define CORNER_USE_SHITOMASI 0
 #define CORNER_USE_FAST 1
 
+#define USE_ZUPT 0
+
 #define CORNER_DETECTION_ALGORITHM CORNER_USE_FAST
 
 static constexpr char DEFAULT_FRAME_ID[]{"map"};

@@ -136,8 +136,11 @@ private:
 
   MsgPose pose_msg_;
 
+#if USE_ZUPT
   ZUPT<> zupt_{};
+#endif
 
+#if USE_ZUPT
   void EstimateOrientation()
   {
     try
@@ -155,6 +158,7 @@ private:
                   "Failed to estimate orientation: %s", e.what());
     }
   }
+#endif
 
   void ComposePoseMessage(MsgPose &msg)
   {
@@ -170,6 +174,7 @@ private:
     msg.pose.orientation.z = state_.GetQuaternionZ();
   }
 
+#if USE_ZUPT
   void ZeroVelocityUpdate(const Vec3 &accel, const Vec3 &gyro)
   {
     Vector6d data;
@@ -213,6 +218,7 @@ private:
     expected_g *= g_norm;
     accel_bias_ = (1 - alpha) * accel_bias_ + alpha * (accel - expected_g);
   }
+#endif
 
 public:
   ImuWorker(EstimatorType estimator = EstimatorType::RK4)
@@ -306,7 +312,9 @@ public:
     Vec3 gyro{imu_msg->angular_velocity.x, imu_msg->angular_velocity.y,
               imu_msg->angular_velocity.z};
 
+#if USE_ZUPT
     ZeroVelocityUpdate(accel, gyro);
+#endif
 
     // 如果是第一帧，只记录初始状态，不进行积分计算
     if (is_first_frame_)
