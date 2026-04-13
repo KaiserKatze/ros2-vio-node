@@ -175,12 +175,18 @@ private:
     data << gyro, accel;
 
     const bool is_static{zupt_.Update(data)};
+    static bool is_prev_static{true};
 
     if (!is_static)
     {
-      RCLCPP_WARN(rclcpp::get_logger(NODE_NAME), "MAV is not static.");
+      if (is_prev_static)
+      {
+        RCLCPP_WARN(rclcpp::get_logger(NODE_NAME), "MAV is not static.");
+      }
+      is_prev_static = is_static;
       return;
     }
+    is_prev_static = is_static;
 
     RCLCPP_WARN(rclcpp::get_logger(NODE_NAME), "MAV is static.");
 
