@@ -7,6 +7,7 @@
 #include <array>
 #include <iomanip>
 #include <sstream>
+#include <stdexcept>
 
 /**
  * @brief 可遍历的无锁环形缓冲区（固定容量）
@@ -234,11 +235,25 @@ public:
          << "). Cannot estimate orientation reliably.";
       throw std::runtime_error{ss.str()};
     }
-    const Eigen::Vector3d gravity_direction{-acc_mean.normalized()};
+    const Eigen::Vector3d gravity_sensor{-acc_mean.normalized()};
+    const Eigen::Vector3d gravity_world{Eigen::Vector3d::UnitX()};
+
+    // https://runebook.dev/en/docs/eigen3/classeigen_1_1quaternion/acdb1eb44eb733b24749bc7892badde64
+    const double dot_product{gravity_world.dot(gravity_sensor)};
+    // 约等于 cos(1°)，用于数值稳定性判断
+    static constexpr double threshold{0.9999};
+    if (dot_product > threshold) // 同向
+    {
+      return Eigen::Quaterniond(1.0, 0.0, 0.0, 0.0);
+    }
+    else if (dot_product < -threshold) // 反向
+    {
+      return Eigen::Quaterniond(0.0, 0.0, 1.0, 0.0);
+    }
+
     // 构造一个旋转，使得机体坐标系的 x 轴（前向）与重力方向对齐
     // 注意：这只是一个近似的估计，实际应用中可能需要更复杂的处理
-    return Eigen::Quaterniond::FromTwoVectors(Eigen::Vector3d::UnitX(),
-                                              gravity_direction);
+    return Eigen::Quaterniond::FromTwoVectors(gravity_world, gravity_sensor);
   }
 
   /**
