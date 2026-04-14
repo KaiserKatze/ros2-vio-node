@@ -91,20 +91,6 @@ function(add_ros2_executable node_name source_path)
     $<INSTALL_INTERFACE:include>
   )
 
-  # 设置编译特性
-  if (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 14)
-    if(DETECTED_CXX_STD GREATER_EQUAL 26)
-      target_compile_features(${node_name} PUBLIC cxx_std_26)
-    elseif(DETECTED_CXX_STD GREATER_EQUAL 23)
-      target_compile_features(${node_name} PUBLIC cxx_std_23)
-    else()
-      target_compile_features(${node_name} PUBLIC cxx_std_20)
-    endif()
-  else()
-    message(WARNING "Old GCC detected, falling back to C++20")
-    target_compile_features(${node_name} PUBLIC cxx_std_20)
-  endif()
-
   # # 链接类型支持库 (Jazzy 推荐做法)
   # rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
   # target_link_libraries(${node_name} ${cpp_typesupport_target})
@@ -179,6 +165,26 @@ install(DIRECTORY urdf/
 install(DIRECTORY launch/
   DESTINATION share/${PROJECT_NAME}/launch
 )
+
+# --- 离线评估工具 ---
+add_executable(euroc_rk4_eval src/euroc_rk4_eval.cpp)
+ament_target_dependencies(euroc_rk4_eval
+  rclcpp
+  std_msgs
+  sensor_msgs
+  geometry_msgs
+  nav_msgs
+)
+target_include_directories(euroc_rk4_eval PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(euroc_rk4_eval
+  Eigen3::Eigen
+  Boost::boost
+  ${OpenCV_LIBS}
+)
+install(TARGETS euroc_rk4_eval DESTINATION lib/${PROJECT_NAME})
 
 # --- 单元测试 ---
 if(BUILD_TESTING)

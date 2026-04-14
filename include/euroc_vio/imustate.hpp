@@ -214,6 +214,7 @@ struct ImuState : public std::array<double, 10>
   }
 };
 
+// 状态量定义: [vx, vy, vz, ax, ay, az, qw', qx', qy', qz'] (大小为 10)
 struct ImuDerivative : public std::array<double, 10>
 {
   ImuDerivative()
