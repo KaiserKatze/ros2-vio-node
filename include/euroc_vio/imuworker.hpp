@@ -112,9 +112,8 @@ struct ImuKinematicsODE
 
     // 姿态导数
     // 基于纯运动学的陀螺仪积分 q_dot = 0.5 * q \otimes w
-    Eigen::Quaterniond omega{0.0, w.x(), w.y(), w.z()};
-    Eigen::Quaterniond attDerivative{q * omega};
-    attDerivative.coeffs() *= 0.5;
+    Eigen::Quaterniond half_omega{0.0, 0.5 * w.x(), 0.5 * w.y(), 0.5 * w.z()};
+    Eigen::Quaterniond attDerivative{half_omega * q};
     dxdt.SetQuaternionDerivative(attDerivative);
   }
 };
