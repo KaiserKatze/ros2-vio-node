@@ -17,9 +17,10 @@
 
 #include <boost/numeric/odeint.hpp>
 
+#include "euroc_vio/abstractpublisher.hpp"
 #include "euroc_vio/imuworker.hpp"
 
-class GroundTruthPublisher
+class GroundTruthPublisher : public AbstractPublisher
 {
 public:
   GroundTruthPublisher(rclcpp::Node *node_ptr,
@@ -45,6 +46,7 @@ void GroundTruthPublisher::SubscriberCallback<geometry_msgs::msg::PoseStamped>(
   msg_path_.header.stamp = msg->header.stamp;
   msg_path_.poses.push_back(*msg);
   publisher_->publish(msg_path_);
+  UpdateBoundary(*msg);
 }
 
 // 特化情况 : 处理 TransformStamped
@@ -67,6 +69,7 @@ void GroundTruthPublisher::SubscriberCallback<
 
   msg_path_.poses.push_back(msg_pose_);
   publisher_->publish(msg_path_);
+  UpdateBoundary(msg_pose_);
 }
 
 GroundTruthPublisher::GroundTruthPublisher(rclcpp::Node *node_ptr,

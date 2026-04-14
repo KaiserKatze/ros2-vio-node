@@ -20,9 +20,10 @@
 
 #include <boost/numeric/odeint.hpp>
 
+#include "euroc_vio/abstractpublisher.hpp"
 #include "euroc_vio/imuworker.hpp"
 
-class ImuPathPublisher
+class ImuPathPublisher : public AbstractPublisher
 {
 public:
   ImuPathPublisher(rclcpp::Node *node_ptr, const char *input_imu_topic,
@@ -44,6 +45,7 @@ public:
     this->msg_path_.header.stamp = msg.header.stamp;
     this->msg_path_.poses.push_back(msg);
     this->publisher_->publish(this->msg_path_);
+    UpdateBoundary(msg);
   }
 
 private:
