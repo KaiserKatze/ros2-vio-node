@@ -43,51 +43,72 @@ static constexpr double g_norm{9.81}; // 重力加速度常数
 /*****************************
  * IMU 运动学 ODE (常微分方程) 系统
  *****************************/
-struct ImuKinematicsODE
+struct ImuKinematicsParameters
 {
+  // 已知量
+  // 1. 传感器参考系下测得的加速度和角速度
   Vec3 a0, a1;   // 上一帧和当前帧的【已扣除零偏】加速度 (机体坐标系)
   Vec3 w0, w1;   // 上一帧和当前帧的【已扣除零偏】角速度 (机体坐标系)
   double t0, t1; // 对应的时间戳
+  // 2. 在惯性参考系下的重力加速度向量
+  //
+  // EuRoC MAV 数据集中前几个 IMU 数据：
+  // a_RS_S_x [m s^-2],a_RS_S_y [m s^-2],a_RS_S_z [m s^-2]
+  // 9.1283567083333317,0.10623870833333333,-2.6069344583333329
+  // 9.422556208333333,1.1604535833333331,-2.623278875
+  //
+  // 可以看出 X 轴的加速度约为 9.8 m/s^2，Y 轴和 Z 轴的加速度较小，说明重力主要作用在 X 轴上
+  // X 轴的加速度值是正数，而 IMU 测量的是比力，恰好验证了数据说明书所说的“IMU 的 X 轴朝上”
+  // 数据说明书还说 Z 轴是朝着 MAV 正前方（即双目相机的视线方向），Y 轴则是朝向 MAV 的右侧（右手坐标系）
+  // 由于重力向量指向 X 轴负方向，所以真正的重力加速度大约是 [-9.81, 0, 0]
+  Vec3 g_i;
+  // 3. 从载具参考系到传感器参考系的旋转矩阵 = 单位矩阵
+  // Eigen::Quaterniond C_sv;
+  // 4. 传感器参考系的原点在载具参考系下的平移向量 = 零向量
+  // Vec3 r_sv_v;
 
-  ImuKinematicsODE(const Vec3 &accel0, const Vec3 &accel1, const Vec3 &gyro0,
-                   const Vec3 &gyro1, double time0, double time1)
-      : a0{accel0}, a1{accel1}, w0{gyro0}, w1{gyro1}, t0{time0}, t1{time1}
+  ImuKinematicsParameters(const Vec3 &accel0, const Vec3 &accel1,
+                          const Vec3 &gyro0, const Vec3 &gyro1, double time0,
+                          double time1,
+                          const Vec3 &gravity = Vec3{-g_norm, 0.0, 0.0})
+      : a0{accel0}, a1{accel1}, w0{gyro0}, w1{gyro1}, t0{time0}, t1{time1},
+        g_i{gravity}
   {
   }
+};
+
+struct ImuKinematicsODE
+{
+  ImuKinematicsParameters params_;
+
+  ImuKinematicsODE(const ImuKinematicsParameters &params) : params_{params} {}
+  ImuKinematicsODE(ImuKinematicsParameters &&params) : params_{params} {}
 
   void operator()(const ImuState &x, ImuDerivative &dxdt, const double t) const
   {
     // 采用一阶线性插值作为保持器
-    double alpha{(t1 > t0) ? std::clamp((t - t0) / (t1 - t0), 0.0, 1.0) : 0.0};
+    const double alpha{
+        (params_.t1 > params_.t0)
+            ? std::clamp((t - params_.t0) / (params_.t1 - params_.t0), 0.0, 1.0)
+            : 0.0};
 
-    const Vec3 a{a0 + (a1 - a0) * alpha};
-    const Vec3 w{w0 + (w1 - w0) * alpha};
-
-    // 提取当前姿态四元数
-    Eigen::Quaterniond q{x.GetQuaternion()};
-
-    // 四元数转旋转矩阵 R_wv (载体系到世界系的变换)
-    Eigen::Matrix3d R{q.toRotationMatrix()};
+    const Vec3 a{params_.a0 + (params_.a1 - params_.a0) * alpha};
+    const Vec3 w{params_.w0 + (params_.w1 - params_.w0) * alpha};
 
     // 位置导数 = 速度
     dxdt.SetVelocity(x.GetVelocity());
 
-    // EuRoC MAV 数据集中前几个 IMU 数据：
-    // a_RS_S_x [m s^-2],a_RS_S_y [m s^-2],a_RS_S_z [m s^-2]
-    // 9.1283567083333317,0.10623870833333333,-2.6069344583333329
-    // 9.422556208333333,1.1604535833333331,-2.623278875
-
-    // 可以看出 X 轴的加速度约为 9.8 m/s^2，Y 轴和 Z 轴的加速度较小，说明重力主要作用在 X 轴上
-    // X 轴的加速度值是正数，而 IMU 测量的是比力，恰好验证了数据说明书所说的“IMU 的 X 轴朝上”
-    // 数据说明书还说 Z 轴是朝着 MAV 正前方（即双目相机的视线方向），Y 轴则是朝向 MAV 的右侧（右手坐标系）
-
+    // 提取当前姿态四元数 (载体参考系到惯性参考系的旋转 C_is)
+    Eigen::Quaterniond q{x.GetQuaternion()};
     // 速度导数 = 加速度
-    // 对应公式推导：accInWorldFrame = R_wv * a_body + g_world
-    // 由于重力向量指向 X 轴负方向，所以真正的重力加速度是 [-9.81, 0, 0]。
-    // 加上重力相当于对 X 轴减去 g_norm
-    Vec3 accInWorldFrame{R * a};
-    accInWorldFrame.x() -= g_norm;
-    dxdt.SetAcceleration(accInWorldFrame);
+    //    EuRoC MAV 数据集中 IMU 传感器参考系与载体参考系重合
+    //    即 C_sv = 1, C_si = C_vi，r_sv_v = 0
+    //    因此加速度转换公式简化为：
+    //       accMeasured = C_si * (accInInertialFrame - gravityInInertialFrame)
+    //       accInInertialFrame = C_is * accMeasured + gravityInInertialFrame
+    Vec3 accInInertialFrame{q * a};
+    accInInertialFrame += params_.g_i;
+    dxdt.SetAcceleration(accInInertialFrame);
 
     // 姿态导数
     // 基于纯运动学的陀螺仪积分 q_dot = 0.5 * q \otimes w
@@ -255,7 +276,7 @@ public:
                  const Vec3 &gyro1, double time0, double time1)
   {
     const double dt{time1 - time0};
-    ImuKinematicsODE ode{accel0, accel1, gyro0, gyro1, time0, time1};
+    ImuKinematicsODE ode{{accel0, accel1, gyro0, gyro1, time0, time1}};
     rk4_.do_step(ode, state_, ode_time_, dt);
     ode_time_ += dt;
   }
