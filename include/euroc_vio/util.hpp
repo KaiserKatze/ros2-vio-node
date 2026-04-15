@@ -33,6 +33,14 @@ struct Util
     Eigen::AngleAxisd angleAxis(R);
     return angleAxis.angle() * angleAxis.axis();
   }
+
+  static Eigen::Matrix3d SkewSymmetric(const Eigen::Vector3d &v)
+  {
+    Eigen::Matrix3d skew;
+    double x{v.x()}, y{v.y()}, z{v.z()};
+    skew << 0, -z, y, z, 0, -x, -y, x, 0;
+    return skew;
+  }
 };
 
 #endif /* UTIL_HPP */

@@ -92,11 +92,15 @@ struct ImuKinematicsODE
             ? std::clamp((t - params_.t0) / (params_.t1 - params_.t0), 0.0, 1.0)
             : 0.0};
 
+    // 传感器参考系下的加速度
     const Vec3 a{params_.a0 + (params_.a1 - params_.a0) * alpha};
+    // 传感器参考系下的角速度
     const Vec3 w{params_.w0 + (params_.w1 - params_.w0) * alpha};
 
+    // 惯性参考系下的线速度
+    const Vec3 vecInInertialFrame{x.GetVelocity()};
     // 位置导数 = 速度
-    dxdt.SetVelocity(x.GetVelocity());
+    dxdt.SetVelocity(vecInInertialFrame);
 
     // 提取当前姿态四元数 (载体参考系到惯性参考系的旋转 C_is)
     Eigen::Quaterniond q{x.GetQuaternion()};
