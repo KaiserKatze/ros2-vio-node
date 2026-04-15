@@ -34,6 +34,11 @@ struct GroundTruthData
   double gyro_bias[3];
 };
 
+void split(std::stringstream &ss, std::string &item)
+{
+  std::getline(ss, item, ',');
+}
+
 // 简单 CSV 解析函数
 std::vector<GroundTruthData> read_groundtruth_csv(const std::string &filename)
 {
@@ -47,31 +52,31 @@ std::vector<GroundTruthData> read_groundtruth_csv(const std::string &filename)
     std::stringstream ss(line);
     std::string item;
     GroundTruthData gt;
-    std::getline(ss, item, ',');
+    split(ss, item);
     gt.timestamp = std::stod(item);
     for (int i = 0; i < 3; ++i)
     {
-      std::getline(ss, item, ',');
+      split(ss, item);
       gt.position[i] = std::stod(item);
     }
     for (int i = 0; i < 4; ++i)
     {
-      std::getline(ss, item, ',');
+      split(ss, item);
       gt.orientation[i] = std::stod(item);
     }
     for (int i = 0; i < 3; ++i)
     {
-      std::getline(ss, item, ',');
+      split(ss, item);
       gt.velocity[i] = std::stod(item);
     }
     for (int i = 0; i < 3; ++i)
     {
-      std::getline(ss, item, ',');
+      split(ss, item);
       gt.acc_bias[i] = std::stod(item);
     }
     for (int i = 0; i < 3; ++i)
     {
-      std::getline(ss, item, ',');
+      split(ss, item);
       gt.gyro_bias[i] = std::stod(item);
     }
     data.push_back(gt);
@@ -92,16 +97,16 @@ std::vector<ImuData> read_imu_csv(const std::string &filename)
     std::stringstream ss(line);
     std::string item;
     ImuData imu;
-    std::getline(ss, item, ',');
+    split(ss, item);
     imu.timestamp = std::stod(item); // 单位: ns
     for (int i = 0; i < 3; ++i)
     {
-      std::getline(ss, item, ',');
+      split(ss, item);
       imu.gyro[i] = std::stod(item); // rad/s
     }
     for (int i = 0; i < 3; ++i)
     {
-      std::getline(ss, item, ',');
+      split(ss, item);
       imu.acc[i] = std::stod(item); // m/s^2
     }
     data.push_back(imu);
