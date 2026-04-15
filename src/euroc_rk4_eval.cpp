@@ -276,7 +276,6 @@ int main(int argc, char **argv)
       double t_0 = imu0.timestamp, t_1 = imu1.timestamp;
       double dt = t_1 - t_0;
       ImuKinematicsODE ode({acc0, acc1, gyro0, gyro1, t_0, t_1});
-      ImuDerivative dxdt;
       // RK4 单步
       boost::numeric::odeint::runge_kutta4<ImuState, double, ImuDerivative> rk4;
       rk4.do_step(ode, state, ode_time, dt);

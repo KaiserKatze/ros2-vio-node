@@ -278,6 +278,7 @@ public:
     ImuKinematicsODE ode{{accel0, accel1, gyro0, gyro1, time0, time1}};
     rk4_.do_step(ode, state_, ode_time_, dt);
     ode_time_ += dt;
+    this->state_.NormalizeQuaternion();
   }
 
   /**
