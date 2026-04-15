@@ -70,9 +70,9 @@ struct ImuKinematicsParameters
   ImuKinematicsParameters(const Vec3 &accel0, const Vec3 &accel1,
                           const Vec3 &gyro0, const Vec3 &gyro1, double time0,
                           double time1,
-                          const Vec3 &gravity = Vec3{-g_norm, 0.0, 0.0})
-      : a0{accel0}, a1{accel1}, w0{gyro0}, w1{gyro1}, t0{time0}, t1{time1},
-        g_i{gravity}
+                          const Vec3 &gravity = Vec3{-g_norm, 0.0, 0.0}) :
+    a0{accel0}, a1{accel1}, w0{gyro0}, w1{gyro1}, t0{time0}, t1{time1},
+    g_i{gravity}
   {
   }
 };
@@ -245,8 +245,8 @@ private:
 #endif
 
 public:
-  ImuWorker(EstimatorType estimator = EstimatorType::RK4)
-      : estimator_type_(estimator)
+  ImuWorker(EstimatorType estimator = EstimatorType::RK4) :
+    estimator_type_(estimator)
   {
     double init_px{0.0};
     double init_py{0.0};
@@ -347,6 +347,7 @@ public:
       acc_prev_       = accel;
       gyro_prev_      = gyro;
       last_time_      = current_time;
+      ode_time_       = current_time;
       is_first_frame_ = false;
       return;
     }
