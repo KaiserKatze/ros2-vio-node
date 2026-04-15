@@ -1,10 +1,28 @@
+# https://clang.llvm.org/docs/ClangFormatStyleOptions.html
+
 # 基础样式，基于 LLVM 代码风格
 BasedOnStyle: LLVM
+Language: Cpp
 
 # 缩进宽度为 2 个空格
 IndentWidth: 2
 # 不使用制表符，仅使用空格
 UseTab: Never
+
+# C++11花括号列表风格
+Cpp11BracedListStyle: true
+
+# 构造函数初始化列表换行
+BreakConstructorInitializers: AfterColon
+ConstructorInitializerIndentWidth: 2
+
+# 禁用自动推导，确保下面的 PointerAlignment 规则生效
+DerivePointerAlignment: false
+# 指针/引用符号的位置
+PointerAlignment: Right
+
+# 行尾注释前添加的空格数目
+SpacesBeforeTrailingComments: 1
 
 # 列数限制为 80 字符，超过则换行
 ColumnLimit: 80
