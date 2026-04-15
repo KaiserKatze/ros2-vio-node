@@ -45,6 +45,7 @@ double get_item(std::stringstream &ss)
 std::vector<GroundTruthData> read_groundtruth_csv(const std::string &filename)
 {
   std::vector<GroundTruthData> data;
+  data.reserve(32767);
   std::ifstream file(filename);
   std::string line;
   // 跳过表头
@@ -83,6 +84,7 @@ std::vector<GroundTruthData> read_groundtruth_csv(const std::string &filename)
 std::vector<ImuData> read_imu_csv(const std::string &filename)
 {
   std::vector<ImuData> data;
+  data.reserve(32767);
   std::ifstream file(filename);
   std::string line;
   // 跳过表头
