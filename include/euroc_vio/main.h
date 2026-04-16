@@ -9,6 +9,9 @@
 
 #define USE_ZUPT 0
 
+#define LOG_TO_FILE 1
+#define LOG_FILE_PATH "imu_path.txt"
+
 #define CORNER_DETECTION_ALGORITHM CORNER_USE_FAST
 
 static constexpr char DEFAULT_FRAME_ID[]{"map"};

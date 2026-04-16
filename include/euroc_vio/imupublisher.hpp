@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <functional>
 #include <string>
 #include <utility>
@@ -22,13 +23,14 @@
 
 #include "euroc_vio/abstractpublisher.hpp"
 #include "euroc_vio/imuworker.hpp"
+#include "euroc_vio/main.h"
 
 class ImuPathPublisher : public AbstractPublisher
 {
 public:
   ImuPathPublisher(rclcpp::Node *node_ptr, const char *input_imu_topic,
-                   const char *output_imu_topic, ImuWorker &&worker)
-      : node_ptr_{node_ptr}, imu_worker_{std::move(worker)}
+                   const char *output_imu_topic, ImuWorker &&worker) :
+    node_ptr_{node_ptr}, imu_worker_{std::move(worker)}
   {
     using std::placeholders::_1;
     const rclcpp::QoS qos(10);
@@ -46,6 +48,16 @@ public:
     this->msg_path_.poses.push_back(msg);
     this->publisher_->publish(this->msg_path_);
     UpdateBoundary(msg);
+
+#if LOG_TO_FILE
+    const auto msg_timestamp{
+        static_cast<rclcpp::Time>(msg.header.stamp).nanoseconds()};
+    const auto p{msg.pose.position};
+    const auto q{msg.pose.orientation};
+    fs_ << std::setprecision(6) << msg_timestamp << " " << std::setprecision(9)
+        << p.x << " " << p.y << " " << p.z << " " << q.x << " " << q.y
+        << " " << q.z << " " << q.w << std::endl;
+#endif
   }
 
 private:
@@ -84,6 +96,9 @@ private:
   rclcpp::Publisher<MsgPath>::SharedPtr publisher_;
   MsgPath msg_path_;
   ImuWorker imu_worker_;
+#if LOG_TO_FILE
+  std::ofstream fs_{LOG_FILE_PATH, std::ios::out | std::ios::trunc};
+#endif
 };
 
 #endif /* IMUPUBLISHER_HPP */
