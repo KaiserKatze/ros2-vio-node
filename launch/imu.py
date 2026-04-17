@@ -4,13 +4,8 @@ from launch.actions import (
     DeclareLaunchArgument,
     ExecuteProcess,
     OpaqueFunction,
-    RegisterEventHandler,
-    EmitEvent,
-    LogInfo,
 )
-from launch.event_handlers import OnProcessIO
 from launch.substitutions import LaunchConfiguration
-from launch.events import Shutdown
 from launch_ros.actions import Node
 from launch.logging import get_logger
 
@@ -67,33 +62,11 @@ def setup_launch_entities(context, *args, **kwargs):
         arguments=["-d", str(rviz_config_path)],
     )
 
-    # 状态锁
-    trigger_state = {"is_started": False}
-
-    # 启动回调：监听 "Ready to play"
-    def check_play_started(info):
-        if trigger_state["is_started"]:
-            return None
-        text = info.text.decode("utf-8", errors="replace")
-        if "Playback until timestamp" in text:
-            trigger_state["is_started"] = True
-            return [
-                LogInfo(msg="====== Bag 播放器已就绪，启动算法和 RViz ======"),
-                imu_node,
-                rviz_node,
-            ]
-        return None
-
-    # 注册事件处理器
-    start_pub_node_on_replay = RegisterEventHandler(
-        OnProcessIO(
-            target_action=bag_play,
-            on_stdout=check_play_started,
-            on_stderr=check_play_started,
-        )
-    )
-
-    return [bag_play, start_pub_node_on_replay]
+    return [
+        imu_node,
+        rviz_node,
+        bag_play,
+    ]
 
 
 def generate_launch_description():
