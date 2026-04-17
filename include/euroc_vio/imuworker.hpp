@@ -149,7 +149,6 @@ private:
 
   // 状态向量初始化 (初始原点, 速度为 0, 姿态为单位四元数)
   ImuState state_;
-  double ode_time_{0.0};
 
   boost::numeric::odeint::runge_kutta4<ImuState, double, ImuDerivative> rk4_;
   std::shared_ptr<AbstractAHRS<double>> ahrs_;
@@ -280,8 +279,7 @@ public:
   {
     const double dt{time1 - time0};
     ImuKinematicsODE ode{{accel0, accel1, gyro0, gyro1, time0, time1}};
-    rk4_.do_step(ode, state_, ode_time_, dt);
-    ode_time_ += dt;
+    rk4_.do_step(ode, state_, time0, dt);
     this->state_.NormalizeQuaternion();
   }
 
@@ -347,7 +345,6 @@ public:
       acc_prev_       = accel;
       gyro_prev_      = gyro;
       last_time_      = current_time;
-      ode_time_       = current_time;
       is_first_frame_ = false;
       return;
     }
