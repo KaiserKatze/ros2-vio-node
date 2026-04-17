@@ -166,26 +166,6 @@ install(DIRECTORY launch/
   DESTINATION share/${PROJECT_NAME}/launch
 )
 
-# --- 离线评估工具 ---
-add_executable(euroc_rk4_eval src/euroc_rk4_eval.cpp)
-ament_target_dependencies(euroc_rk4_eval
-  rclcpp
-  std_msgs
-  sensor_msgs
-  geometry_msgs
-  nav_msgs
-)
-target_include_directories(euroc_rk4_eval PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
-target_link_libraries(euroc_rk4_eval
-  Eigen3::Eigen
-  Boost::boost
-  ${OpenCV_LIBS}
-)
-install(TARGETS euroc_rk4_eval DESTINATION lib/${PROJECT_NAME})
-
 # --- 单元测试 ---
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

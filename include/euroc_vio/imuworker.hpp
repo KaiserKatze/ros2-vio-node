@@ -40,88 +40,6 @@ static_assert(
 
 static constexpr double g_norm{9.81}; // 重力加速度常数
 
-/*****************************
- * IMU 运动学 ODE (常微分方程) 系统
- *****************************/
-struct ImuKinematicsParameters
-{
-  // 已知量
-  // 1. 传感器参考系下测得的加速度和角速度
-  Vec3 a0, a1;   // 上一帧和当前帧的【已扣除零偏】加速度 (机体坐标系)
-  Vec3 w0, w1;   // 上一帧和当前帧的【已扣除零偏】角速度 (机体坐标系)
-  double t0, t1; // 对应的时间戳
-  // 2. 在惯性参考系下的重力加速度向量
-  //
-  // EuRoC MAV 数据集中前几个 IMU 数据：
-  // a_RS_S_x [m s^-2],a_RS_S_y [m s^-2],a_RS_S_z [m s^-2]
-  // 9.1283567083333317,0.10623870833333333,-2.6069344583333329
-  // 9.422556208333333,1.1604535833333331,-2.623278875
-  //
-  // 可以看出 X 轴的加速度约为 9.8 m/s^2，Y 轴和 Z 轴的加速度较小，说明重力主要作用在 X 轴上
-  // X 轴的加速度值是正数，而 IMU 测量的是比力，恰好验证了数据说明书所说的“IMU 的 X 轴朝上”
-  // 数据说明书还说 Z 轴是朝着 MAV 正前方（即双目相机的视线方向），Y 轴则是朝向 MAV 的右侧（右手坐标系）
-  // 由于重力向量指向 X 轴负方向，所以真正的重力加速度大约是 [-9.81, 0, 0]
-  Vec3 g_i;
-  // 3. 从载具参考系到传感器参考系的旋转矩阵 = 单位矩阵
-  // Eigen::Quaterniond C_sv;
-  // 4. 传感器参考系的原点在载具参考系下的平移向量 = 零向量
-  // Vec3 r_sv_v;
-
-  ImuKinematicsParameters(const Vec3 &accel0, const Vec3 &accel1,
-                          const Vec3 &gyro0, const Vec3 &gyro1, double time0,
-                          double time1,
-                          const Vec3 &gravity = Vec3{-g_norm, 0.0, 0.0}) :
-    a0{accel0}, a1{accel1}, w0{gyro0}, w1{gyro1}, t0{time0}, t1{time1},
-    g_i{gravity}
-  {
-  }
-};
-
-struct ImuKinematicsODE
-{
-  ImuKinematicsParameters params_;
-
-  ImuKinematicsODE(const ImuKinematicsParameters &params) : params_{params} {}
-  ImuKinematicsODE(ImuKinematicsParameters &&params) : params_{params} {}
-
-  void operator()(const ImuState &x, ImuDerivative &dxdt, const double t) const
-  {
-    // 采用一阶线性插值作为保持器
-    const double alpha{
-        (params_.t1 > params_.t0)
-            ? std::clamp((t - params_.t0) / (params_.t1 - params_.t0), 0.0, 1.0)
-            : 0.0};
-
-    // 传感器参考系下的加速度
-    const Vec3 a{params_.a0 + (params_.a1 - params_.a0) * alpha};
-    // 传感器参考系下的角速度
-    const Vec3 w{params_.w0 + (params_.w1 - params_.w0) * alpha};
-
-    // 惯性参考系下的线速度
-    const Vec3 vecInInertialFrame{x.GetVelocity()};
-    // 位置导数 = 速度
-    dxdt.SetVelocity(vecInInertialFrame);
-
-    // 提取当前姿态四元数 (载体参考系到惯性参考系的旋转 C_is)
-    Eigen::Quaterniond q{x.GetQuaternion()};
-    // 速度导数 = 加速度
-    //    EuRoC MAV 数据集中 IMU 传感器参考系与载体参考系重合
-    //    即 C_sv = 1, C_si = C_vi，r_sv_v = 0
-    //    因此加速度转换公式简化为：
-    //       accMeasured = C_si * (accInInertialFrame - gravityInInertialFrame)
-    //       accInInertialFrame = C_is * accMeasured + gravityInInertialFrame
-    Vec3 accInInertialFrame{q * a};
-    accInInertialFrame += params_.g_i;
-    dxdt.SetAcceleration(accInInertialFrame);
-
-    // 姿态导数
-    // 基于纯运动学的陀螺仪积分 q_dot = 0.5 * q \otimes w
-    Eigen::Quaterniond half_omega{0.0, 0.5 * w.x(), 0.5 * w.y(), 0.5 * w.z()};
-    Eigen::Quaterniond attDerivative{half_omega * q};
-    dxdt.SetQuaternionDerivative(attDerivative);
-  }
-};
-
 enum class EstimatorType
 {
   RK4,
@@ -274,12 +192,71 @@ public:
     pose_msg_.header.frame_id = DEFAULT_FRAME_ID;
   }
 
+
+  // 已知量
+  // 1. 传感器参考系下测得的加速度和角速度
+  // 上一帧和当前帧的【已扣除零偏】加速度 (机体坐标系)
+  // 上一帧和当前帧的【已扣除零偏】角速度 (机体坐标系)
+  // 上一帧和当前帧对应的时间戳
+  // 2. 在惯性参考系下的重力加速度向量
+  //      EuRoC MAV 数据集中前几个 IMU 数据：
+  //        a_RS_S_x [m s^-2],a_RS_S_y [m s^-2],a_RS_S_z [m s^-2]
+  //        9.1283567083333317,0.10623870833333333,-2.6069344583333329
+  //        9.422556208333333,1.1604535833333331,-2.623278875
+  //      可以看出 X 轴的加速度约为 9.8 m/s^2，Y 轴和 Z 轴的加速度较小，说明重力主要作用在 X 轴上
+  //      X 轴的加速度值是正数，而 IMU 测量的是比力，恰好验证了数据说明书所说的“IMU 的 X 轴朝上”
+  //      数据说明书还说 Z 轴是朝着 MAV 正前方（即双目相机的视线方向），Y 轴则是朝向 MAV 的右侧（右手坐标系）
+  //      由于重力向量指向 X 轴负方向，所以真正的重力加速度大约是 [-9.81, 0, 0]
+  // 3. 从载具参考系到传感器参考系的旋转矩阵 = 单位矩阵
+  // Eigen::Quaterniond C_sv;
+  // 4. 传感器参考系的原点在载具参考系下的平移向量 = 零向量
+  // Vec3 r_sv_v;
   void RK4Update(const Vec3 &accel0, const Vec3 &accel1, const Vec3 &gyro0,
                  const Vec3 &gyro1, double time0, double time1)
   {
     const double dt{time1 - time0};
-    ImuKinematicsODE ode{{accel0, accel1, gyro0, gyro1, time0, time1}};
-    rk4_.do_step(ode, state_, time0, dt);
+    static const Eigen::Vector3d gravity_world{-g_norm, 0.0, 0.0};
+
+    // 更新速度和位置
+
+    // 传感器参考系下的平均线加速度
+    Eigen::Vector3d acc_avg = (accel0 + accel1) * 0.5;
+    // 提取当前姿态四元数 (载体参考系到惯性参考系的旋转 C_is)
+    Eigen::Quaterniond q{this->state_.GetQuaternion()};
+    // 世界参考系下的平均线加速度
+    //    EuRoC MAV 数据集中 IMU 传感器参考系与载体参考系重合
+    //    即 C_sv = 1, C_si = C_vi，r_sv_v = 0
+    //    因此加速度转换公式简化为：
+    //       accMeasured = C_si * (accInInertialFrame - gravityInInertialFrame)
+    //       accInInertialFrame = C_is * accMeasured + gravityInInertialFrame
+    Eigen::Vector3d acc_world = q * acc_avg + gravity_world;
+    // \delta s = \overline{v} \cdot \delta t
+    // \delta v = \overline{a} \cdot \delta t
+    // v(t + \delta t) = v(t) + \overline{a} \cdot \delta t
+    // s(t + \delta t) = s(t) + \overline{v} \cdot \delta t
+    // \overline{v} = 0.5 \cdot (v(t) + v(t + \delta t))
+    // s(t + \delta t) = s(t) + v(t) \cdot \delta t + \frac12 \cdot \overline{a} \cdot (\delta t)^2
+    Eigen::Vector3d velocity{this->state_.GetVelocity()};
+    velocity += acc_world * dt;
+    this->state_.SetVelocity(velocity);
+
+    Eigen::Vector3d position{this->state_.GetPosition()};
+    position += velocity * dt + 0.5 * acc_world * dt * dt;
+    this->state_.SetPosition(position);
+
+    // 更新姿态
+
+    // 载具参考系下的平均角速度 = 传感器参考系下的平均角速度
+    Eigen::Vector3d gyro_avg = (gyro0 + gyro1) * 0.5;
+    // q(t + \delta t) = q(t) + q(t) * (0, \frac12 \cdot \overline{\omega} \cdot \delta t)
+    // 传感器参考系下的角位移的一半
+    gyro_avg = 0.5 * gyro_avg * dt;
+    // 陀螺仪积分 \dot{q} = 0.5 * w * q
+    // q(t + \delta t) = q(t) + \dot{q} * \delta t
+    //                 = q(t) + 0.5 * w * q * \delta t
+    //                 = (1.0, 0.5 * w * \delta t) * q(t)
+    q = Eigen::Quaterniond(1.0, gyro_avg.x(), gyro_avg.y(), gyro_avg.z()) * q;
+    this->state_.SetQuaternion(q);
     this->state_.NormalizeQuaternion();
   }
 
@@ -327,7 +304,7 @@ public:
   void Work(const MsgImu::ConstSharedPtr &imu_msg, PoseHandler auto *node_ptr)
   {
     const rclcpp::Time msg_stamp{imu_msg->header.stamp};
-    const double current_time{msg_stamp.seconds()};
+    const double current_time{msg_stamp.nanoseconds() * 1e-9};
 
     Vec3 accel{imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y,
                imu_msg->linear_acceleration.z};
