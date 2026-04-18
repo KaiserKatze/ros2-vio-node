@@ -103,8 +103,6 @@ private:
 
   void ComposePoseMessage(MsgPose &msg)
   {
-    // 积分后必须对四元数进行归一化，因为 RK4 不保证单位模长约束
-    state_.NormalizeQuaternion();
     msg.pose.position.x = state_.GetPositionX();
     msg.pose.position.y = state_.GetPositionY();
     msg.pose.position.z = state_.GetPositionZ();
@@ -145,16 +143,16 @@ private:
     gyro_bias_ = (1 - alpha) * gyro_bias_ + alpha * gyro;
 
     // 加速度计的零偏不能固定减去 [0,0,-9.81]。
-    // 我们需要将期望的静止比力(世界系的 [9.81, 0, 0]) 投影到当前的机体坐标系下，
+    // 我们需要将期望的静止比力(世界系的 [9.81, 0, 0]) 投影到当前的载具参考系下，
     // 再与测量值作差来计算偏差。
 
     // 提取当前姿态四元数
     Eigen::Quaterniond q{state_.GetQuaternion()};
 
-    // 四元数转旋转矩阵 R_wv (载体系到世界系的变换)
+    // 四元数转旋转矩阵 R_wv (载具系到世界系的变换)
     Eigen::Matrix3d R{q.toRotationMatrix()};
 
-    // 矩阵 R_wv 的转置，即世界系到机体系的旋转 R_vw 第一列
+    // 矩阵 R_wv 的转置，即世界系到载具参考系的旋转 R_vw 第一列
     Vec3 expected_g{R.col(0)};
     expected_g *= g_norm;
     accel_bias_ = (1 - alpha) * accel_bias_ + alpha * (accel - expected_g);
@@ -192,11 +190,10 @@ public:
     pose_msg_.header.frame_id = DEFAULT_FRAME_ID;
   }
 
-
   // 已知量
   // 1. 传感器参考系下测得的加速度和角速度
-  // 上一帧和当前帧的【已扣除零偏】加速度 (机体坐标系)
-  // 上一帧和当前帧的【已扣除零偏】角速度 (机体坐标系)
+  // 上一帧和当前帧的【已扣除零偏】加速度 (载具参考系)
+  // 上一帧和当前帧的【已扣除零偏】角速度 (载具参考系)
   // 上一帧和当前帧对应的时间戳
   // 2. 在惯性参考系下的重力加速度向量
   //      EuRoC MAV 数据集中前几个 IMU 数据：
@@ -219,17 +216,20 @@ public:
 
     // 更新速度和位置
 
-    // 传感器参考系下的平均线加速度
-    Eigen::Vector3d acc_avg = (accel0 + accel1) * 0.5;
-    // 提取当前姿态四元数 (载体参考系到惯性参考系的旋转 C_is)
+    // 提取当前姿态四元数 (载具参考系到惯性参考系的旋转 C_iv = C_is)
+    // 无人机的朝向 = 惯性参考系到载具参考系的旋转 C_vi 的逆 = 载具参考系到惯性参考系的旋转 C_iv
     Eigen::Quaterniond q{this->state_.GetQuaternion()};
-    // 世界参考系下的平均线加速度
-    //    EuRoC MAV 数据集中 IMU 传感器参考系与载体参考系重合
+    // 传感器参考系下的平均线加速度
+    Eigen::Vector3d acc_sensor = (accel0 + accel1) * 0.5;
+    // 惯性参考系下的平均线加速度
+    //    EuRoC MAV 数据集中 IMU 传感器参考系与载具参考系重合
     //    即 C_sv = 1, C_si = C_vi，r_sv_v = 0
     //    因此加速度转换公式简化为：
-    //       accMeasured = C_si * (accInInertialFrame - gravityInInertialFrame)
-    //       accInInertialFrame = C_is * accMeasured + gravityInInertialFrame
-    Eigen::Vector3d acc_world = q * acc_avg + gravity_world;
+    //       acc_sensor = C_si * (acc_world - gravity_world)
+    //       C_si_inverse * acc_sensor = acc_world - gravity_world
+    //       acc_world = C_si_inverse * acc_sensor + gravity_world
+    //       acc_world = C_is * acc_sensor + gravity_world
+    Eigen::Vector3d acc_world = q * acc_sensor + gravity_world;
     // \delta s = \overline{v} \cdot \delta t
     // \delta v = \overline{a} \cdot \delta t
     // v(t + \delta t) = v(t) + \overline{a} \cdot \delta t
@@ -237,12 +237,12 @@ public:
     // \overline{v} = 0.5 \cdot (v(t) + v(t + \delta t))
     // s(t + \delta t) = s(t) + v(t) \cdot \delta t + \frac12 \cdot \overline{a} \cdot (\delta t)^2
     Eigen::Vector3d velocity{this->state_.GetVelocity()};
-    velocity += acc_world * dt;
-    this->state_.SetVelocity(velocity);
-
     Eigen::Vector3d position{this->state_.GetPosition()};
-    position += velocity * dt + 0.5 * acc_world * dt * dt;
+    Eigen::Vector3d delta_velocity{acc_world * dt};
+    position += velocity * dt + 0.5 * delta_velocity * dt;
     this->state_.SetPosition(position);
+    velocity += delta_velocity;
+    this->state_.SetVelocity(velocity);
 
     // 更新姿态
 
@@ -251,12 +251,14 @@ public:
     // q(t + \delta t) = q(t) + q(t) * (0, \frac12 \cdot \overline{\omega} \cdot \delta t)
     // 传感器参考系下的角位移的一半
     gyro_avg = 0.5 * gyro_avg * dt;
-    // 陀螺仪积分 \dot{q} = 0.5 * w * q
-    // q(t + \delta t) = q(t) + \dot{q} * \delta t
-    //                 = q(t) + 0.5 * w * q * \delta t
-    //                 = (1.0, 0.5 * w * \delta t) * q(t)
-    q = Eigen::Quaterniond(1.0, gyro_avg.x(), gyro_avg.y(), gyro_avg.z()) * q;
+    // 陀螺仪积分 \dot{q} = 0.5 * q * w
+    // q(t + \delta t) = q(t) + \dot{q}(t) * \delta t
+    //                 = q(t) + 0.5 * q(t) * w * \delta t
+    //                 = q(t) * 1 + q(t) * (0.5 * w * \delta t)
+    //                 = q(t) * (1.0, 0.5 * w * \delta t)
+    q = q * Eigen::Quaterniond(1.0, gyro_avg.x(), gyro_avg.y(), gyro_avg.z());
     this->state_.SetQuaternion(q);
+    // 积分后必须对四元数进行归一化，因为 RK4 不保证单位模长约束
     this->state_.NormalizeQuaternion();
   }
 
