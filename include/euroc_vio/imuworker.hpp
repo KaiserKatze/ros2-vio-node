@@ -239,6 +239,14 @@ public:
     Eigen::Vector3d velocity{this->state_.GetVelocity()};
     Eigen::Vector3d position{this->state_.GetPosition()};
     Eigen::Vector3d delta_velocity{acc_world * dt};
+
+    RCLCPP_INFO(rclcpp::get_logger("ImuWorker"),
+                "\n\tPrevious Attitude: [w: %.3f, x: %.3f, y: %.3f, z: %.3f]; "
+                "\n\tPrevious Velocity: [x: %.3f, y: %.3f, y: %.3f]; "
+                "\n\tPrevious Position: [x: %.3f, y: %.3f, y: %.3f]",
+                q.w(), q.x(), q.y(), q.z(), velocity.x(), velocity.y(),
+                velocity.z(), position.x(), position.y(), position.z());
+
     position += velocity * dt + 0.5 * delta_velocity * dt;
     this->state_.SetPosition(position);
     velocity += delta_velocity;
@@ -260,6 +268,23 @@ public:
     this->state_.SetQuaternion(q);
     // 积分后必须对四元数进行归一化，因为 RK4 不保证单位模长约束
     this->state_.NormalizeQuaternion();
+
+    RCLCPP_INFO(rclcpp::get_logger("ImuWorker"),
+                "\n\tAverage Accel: [x: %.3f, y: %.3f, z: %.3f]; "
+                "\n\tRotated Accel: [x: %.3f, y: %.3f, z: %.3f]; "
+                "\n\tAverage Gyro: [x: %.3f, y: %.3f, z: %.3f]; "
+                "\n\tδ Velocity: [x: %.3f, y: %.3f, z: %.3f]",
+                acc_sensor.x(), acc_sensor.y(), acc_sensor.z(), acc_world.x(),
+                acc_world.y(), acc_world.z(), gyro_avg.x(), gyro_avg.y(),
+                gyro_avg.z(), delta_velocity.x(), delta_velocity.y(),
+                delta_velocity.z());
+
+    RCLCPP_INFO(rclcpp::get_logger("ImuWorker"),
+                "\n\tCurrent Attitude: [w: %.3f, x: %.3f, y: %.3f, z: %.3f]; "
+                "\n\tCurrent Velocity: [x: %.3f, y: %.3f, y: %.3f]; "
+                "\n\tCurrent Position: [x: %.3f, y: %.3f, y: %.3f]",
+                q.w(), q.x(), q.y(), q.z(), velocity.x(), velocity.y(),
+                velocity.z(), position.x(), position.y(), position.z());
   }
 
   /**
