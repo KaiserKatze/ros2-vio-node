@@ -212,7 +212,7 @@ public:
                  const Vec3 &gyro1, double time0, double time1)
   {
     const double dt{time1 - time0};
-    static const Eigen::Vector3d gravity_world{-g_norm, 0.0, 0.0};
+    const Eigen::Vector3d gravity_world{0.0, 0.0, -g_norm};
 
     // 更新速度和位置
 
@@ -221,6 +221,8 @@ public:
     Eigen::Quaterniond q{this->state_.GetQuaternion()};
     // 传感器参考系下的平均线加速度
     Eigen::Vector3d acc_sensor = (accel0 + accel1) * 0.5;
+    acc_sensor
+        = Eigen::Vector3d{acc_sensor.z(), -acc_sensor.y(), acc_sensor.x()};
     // 惯性参考系下的平均线加速度
     //    EuRoC MAV 数据集中 IMU 传感器参考系与载具参考系重合
     //    即 C_sv = 1, C_si = C_vi，r_sv_v = 0
@@ -230,6 +232,9 @@ public:
     //       acc_world = C_si_inverse * acc_sensor + gravity_world
     //       acc_world = C_is * acc_sensor + gravity_world
     Eigen::Vector3d acc_world = q * acc_sensor + gravity_world;
+    // 将 IMU 参考系的 X 轴映射为 Z 轴
+    // 将 IMU 参考系的 Y 轴映射为 -Y 轴
+    // 将 IMU 参考系的 Z 轴映射为 X 轴
     // \delta s = \overline{v} \cdot \delta t
     // \delta v = \overline{a} \cdot \delta t
     // v(t + \delta t) = v(t) + \overline{a} \cdot \delta t
@@ -256,15 +261,28 @@ public:
 
     // 载具参考系下的平均角速度 = 传感器参考系下的平均角速度
     Eigen::Vector3d gyro_avg = (gyro0 + gyro1) * 0.5;
-    // q(t + \delta t) = q(t) + q(t) * (0, \frac12 \cdot \overline{\omega} \cdot \delta t)
-    // 传感器参考系下的角位移的一半
-    gyro_avg = 0.5 * gyro_avg * dt;
-    // 陀螺仪积分 \dot{q} = 0.5 * q * w
-    // q(t + \delta t) = q(t) + \dot{q}(t) * \delta t
-    //                 = q(t) + 0.5 * q(t) * w * \delta t
-    //                 = q(t) * 1 + q(t) * (0.5 * w * \delta t)
-    //                 = q(t) * (1.0, 0.5 * w * \delta t)
-    q = q * Eigen::Quaterniond(1.0, gyro_avg.x(), gyro_avg.y(), gyro_avg.z());
+    // 角增量
+    Eigen::Vector3d phi   = gyro_avg * dt;
+    const double phi_norm = phi.norm();
+    // 四元数增量
+    Eigen::Quaterniond delta_q;
+    if (phi_norm < 1e-6)
+    {
+      // 陀螺仪积分 \dot{q} = 0.5 * q * w
+      // q(t + \delta t) = q(t) + \dot{q}(t) * \delta t
+      //                 = q(t) + 0.5 * q(t) * w * \delta t
+      //                 = q(t) * 1 + q(t) * (0.5 * w * \delta t)
+      //                 = q(t) * (1.0, 0.5 * w * \delta t)
+      delta_q = Eigen::Quaterniond(1.0, 0.5 * phi.x(), 0.5 * phi.y(),
+                                   0.5 * phi.z());
+    }
+    else
+    {
+      delta_q
+          = Eigen::Quaterniond(Eigen::AngleAxisd(phi_norm, phi.normalized()));
+    }
+    q = q * delta_q;
+
     this->state_.SetQuaternion(q);
     // 积分后必须对四元数进行归一化，因为 RK4 不保证单位模长约束
     this->state_.NormalizeQuaternion();
