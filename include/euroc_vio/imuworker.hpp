@@ -281,7 +281,7 @@ public:
       delta_q
           = Eigen::Quaterniond(Eigen::AngleAxisd(phi_norm, phi.normalized()));
     }
-    q = q * delta_q;
+    q = delta_q * q;
 
     this->state_.SetQuaternion(q);
     // 积分后必须对四元数进行归一化，因为 RK4 不保证单位模长约束
