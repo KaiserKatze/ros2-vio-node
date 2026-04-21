@@ -2,20 +2,43 @@
 // 读取 EuRoC MAV 数据集 IMU 和 Ground Truth 数据，利用 message_filter 同步，进行 RK4 积分与误差输出
 // 参考 ros2-euroc2bag 及本地 imustate.hpp
 
+//=============================================================
+// TO COMPILE THIS TEST, YOU NEED TO MODIFY CMAKE FILE:
+//
+// add_executable(euroc_rk4_eval test/euroc_rk4_eval.cpp)
+// target_include_directories(euroc_rk4_eval PUBLIC
+//   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+//   $<INSTALL_INTERFACE:include>
+// )
+// target_compile_features(euroc_rk4_eval PUBLIC cxx_std_20)
+// install(TARGETS euroc_rk4_eval
+//   DESTINATION debug/euroc_rk4_eval
+// )
+// target_link_libraries(euroc_rk4_eval
+//   Eigen3::Eigen
+//   Boost::boost
+//   ${OpenCV_LIBS}
+// )
+
+//=============================================================
+// RUN THIS TEST:
+//
+// ./$(find build -iname euroc_rk4_eval)
+
 #include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include <Eigen/Dense>
+
 #include <boost/numeric/odeint.hpp>
 
+#include "euroc_vio/ImuKinematics.hpp"
 #include "euroc_vio/imustate.hpp"
-#include "euroc_vio/imuworker.hpp"
-#include "euroc_vio/util.hpp"
 
 struct ImuData
 {
@@ -141,8 +164,10 @@ interpolate_groundtruth(const std::vector<GroundTruthData> &gt_data,
   }
   const auto &gt0 = gt_data[left];
   const auto &gt1 = gt_data[right];
-  double t0 = gt0.timestamp, t1 = gt1.timestamp;
-  double alpha           = (timestamp - t0) / (t1 - t0);
+  const double t0 = gt0.timestamp;
+  const double t1 = gt1.timestamp;
+  const double alpha
+      = (t1 > t0) ? std::clamp((timestamp - t0) / (t1 - t0), 0.0, 1.0) : 0.0;
   GroundTruthData interp = gt0;
   for (int i = 0; i < 3; ++i)
   {
@@ -180,13 +205,24 @@ double position_error(const double *est, const double *gt)
   return std::sqrt(err);
 }
 
-// 计算四元数角度误差（弧度）
-double orientation_error(const double *est, const double *gt)
+double orientation_error_angle(const double *est, const double *gt)
 {
   Eigen::Quaterniond q_est(est[0], est[1], est[2], est[3]);
   Eigen::Quaterniond q_gt(gt[0], gt[1], gt[2], gt[3]);
+  // 计算四元数角度误差（弧度）
   double angle = q_est.angularDistance(q_gt);
   return angle;
+}
+
+double orientation_error_frobenius(const double *est, const double *gt)
+{
+  Eigen::Quaterniond q_est(est[0], est[1], est[2], est[3]);
+  Eigen::Quaterniond q_gt(gt[0], gt[1], gt[2], gt[3]);
+  // 计算四元数对应的矩阵之差的 Frobenius 范数
+  Eigen::Matrix3d R_est = q_est.toRotationMatrix();
+  Eigen::Matrix3d R_gt  = q_gt.toRotationMatrix();
+  double frob_norm      = (R_est - R_gt).norm();
+  return frob_norm;
 }
 
 // 计算速度误差
@@ -200,41 +236,21 @@ double velocity_error(const double *est, const double *gt)
   return std::sqrt(err);
 }
 
-int main(int argc, char **argv)
+void test_rk4_piece_by_piece(const std::vector<GroundTruthData> &gt_data,
+                             const std::vector<ImuData> &imu_data)
 {
-  if (argc < 3)
-  {
-    std::cerr << "用法: " << argv[0] << " <imu.csv> <groundtruth.csv>"
-              << std::endl;
-    return 1;
-  }
-  std::string imu_file = argv[1];
-  std::string gt_file  = argv[2];
-  auto gt_data         = read_groundtruth_csv(gt_file);
-  auto imu_data        = read_imu_csv(imu_file);
-  std::cout << "GroundTruth 数据量: " << gt_data.size() << std::endl;
-  std::cout << "IMU 数据量: " << imu_data.size() << std::endl;
-  // 单位换算: ns -> s
-  for (auto &imu : imu_data)
-  {
-    imu.timestamp *= 1e-9;
-  }
-  for (auto &gt : gt_data)
-  {
-    gt.timestamp *= 1e-9;
-  }
-
   // 主循环: 以每一帧 GroundTruth 为基准，寻找其间的 IMU 数据段，做一次积分
   for (size_t i = 0; i + 1 < gt_data.size(); ++i)
   {
     const auto &gt0 = gt_data[i];
     const auto &gt1 = gt_data[i + 1];
-    double t0 = gt0.timestamp, t1 = gt1.timestamp;
+    const double t0 = gt0.timestamp;
+    const double t1 = gt1.timestamp;
     // 找到区间内的 IMU 数据
     std::vector<ImuData> imu_segment;
     for (const auto &imu : imu_data)
     {
-      if (imu.timestamp >= t0 && imu.timestamp < t1)
+      if (t0 <= imu.timestamp && imu.timestamp < t1)
       {
         imu_segment.push_back(imu);
       }
@@ -250,46 +266,225 @@ int main(int argc, char **argv)
     state.SetVelocity(gt0.velocity[0], gt0.velocity[1], gt0.velocity[2]);
     state.SetQuaternion(gt0.orientation[0], gt0.orientation[1],
                         gt0.orientation[2], gt0.orientation[3]);
-    state.NormalizeQuaternion();
 
     // RK4 积分
     double ode_time = t0;
+    boost::numeric::odeint::runge_kutta4<ImuState, double, ImuDerivative> rk4;
+
+    std::cout << "time [s], "
+                 "position error [m], "
+                 "velocity error [m/s], "
+                 "orientation error (by angle; rad), "
+                 "orientation error (by Frobenius norm)\n";
+
     for (size_t k = 1; k < imu_segment.size(); ++k)
     {
       const auto &imu0 = imu_segment[k - 1];
       const auto &imu1 = imu_segment[k];
       // 对应时刻插值 GroundTruth Bias
-      auto gt_bias0 = interpolate_groundtruth(gt_data, imu0.timestamp);
-      auto gt_bias1 = interpolate_groundtruth(gt_data, imu1.timestamp);
-      Eigen::Vector3d acc0(imu0.acc[0] - gt_bias0.acc_bias[0],
-                           imu0.acc[1] - gt_bias0.acc_bias[1],
-                           imu0.acc[2] - gt_bias0.acc_bias[2]);
-      Eigen::Vector3d acc1(imu1.acc[0] - gt_bias1.acc_bias[0],
-                           imu1.acc[1] - gt_bias1.acc_bias[1],
-                           imu1.acc[2] - gt_bias1.acc_bias[2]);
-      Eigen::Vector3d gyro0(imu0.gyro[0] - gt_bias0.gyro_bias[0],
-                            imu0.gyro[1] - gt_bias0.gyro_bias[1],
-                            imu0.gyro[2] - gt_bias0.gyro_bias[2]);
-      Eigen::Vector3d gyro1(imu1.gyro[0] - gt_bias1.gyro_bias[0],
-                            imu1.gyro[1] - gt_bias1.gyro_bias[1],
-                            imu1.gyro[2] - gt_bias1.gyro_bias[2]);
-      double t_0 = imu0.timestamp, t_1 = imu1.timestamp;
-      double dt = t_1 - t_0;
+      const auto gt_bias0 = interpolate_groundtruth(gt_data, imu0.timestamp);
+      const auto gt_bias1 = interpolate_groundtruth(gt_data, imu1.timestamp);
+      const Eigen::Vector3d acc0{
+          imu0.acc[0] - gt_bias0.acc_bias[0],
+          imu0.acc[1] - gt_bias0.acc_bias[1],
+          imu0.acc[2] - gt_bias0.acc_bias[2],
+      };
+      const Eigen::Vector3d acc1{
+          imu1.acc[0] - gt_bias1.acc_bias[0],
+          imu1.acc[1] - gt_bias1.acc_bias[1],
+          imu1.acc[2] - gt_bias1.acc_bias[2],
+      };
+      const Eigen::Vector3d gyro0{
+          imu0.gyro[0] - gt_bias0.gyro_bias[0],
+          imu0.gyro[1] - gt_bias0.gyro_bias[1],
+          imu0.gyro[2] - gt_bias0.gyro_bias[2],
+      };
+      const Eigen::Vector3d gyro1{
+          imu1.gyro[0] - gt_bias1.gyro_bias[0],
+          imu1.gyro[1] - gt_bias1.gyro_bias[1],
+          imu1.gyro[2] - gt_bias1.gyro_bias[2],
+      };
+      const double t_0 = imu0.timestamp;
+      const double t_1 = imu1.timestamp;
+      const double dt  = t_1 - t_0;
       ImuKinematicsODE ode({acc0, acc1, gyro0, gyro1, t_0, t_1});
       // RK4 单步
-      boost::numeric::odeint::runge_kutta4<ImuState, double, ImuDerivative> rk4;
       rk4.do_step(ode, state, ode_time, dt);
       ode_time += dt;
       state.NormalizeQuaternion();
     }
 
     // 与下一帧 GroundTruth 对比
-    double pos_err = position_error(&state[0], gt1.position);
-    double ori_err = orientation_error(&state[6], gt1.orientation);
-    double vel_err = velocity_error(&state[3], gt1.velocity);
-    std::cout << std::fixed << std::setprecision(6) << "t_gt1=" << gt1.timestamp
-              << " pos_err=" << pos_err << " ori_err(rad)=" << ori_err
-              << " vel_err=" << vel_err << std::endl;
+    std::cout << std::fixed << std::setprecision(6) << gt1.timestamp << ", "
+              << position_error(&state[0], gt1.position) << ", "
+              << velocity_error(&state[3], gt1.velocity) << ", "
+              << orientation_error_angle(&state[6], gt1.orientation) << ", "
+              << orientation_error_frobenius(&state[6], gt1.orientation)
+              << "\n";
   }
+}
+
+// 只用真值提供的姿态、时间戳，不用真值位置、速度、零偏，不用 IMU 提供的角速度，目的是查看 EuRoC MAV 数据集的位置误差随 RK4 积分步数的变化幅度
+void test_rk4_position(const std::vector<GroundTruthData> &gt_data,
+                       const std::vector<ImuData> &imu_data)
+{
+  ImuState state;
+  const auto &gt_first = gt_data[0];
+  state.SetPosition(gt_first.position[0], gt_first.position[1],
+                    gt_first.position[2]);
+  state.SetVelocity(gt_first.velocity[0], gt_first.velocity[1],
+                    gt_first.velocity[2]);
+
+  double ode_time             = gt_first.timestamp;
+  const Eigen::Vector3d gyro0 = Eigen::Vector3d::Zero();
+  const Eigen::Vector3d gyro1 = Eigen::Vector3d::Zero();
+  boost::numeric::odeint::runge_kutta4<ImuState, double, ImuDerivative> rk4;
+
+  std::cout << "time [s], "
+               "position error [m], "
+               "velocity error [m/s]\n";
+
+  for (size_t i = 0; i + 1 < imu_data.size(); ++i)
+  {
+    const auto &imu0 = imu_data[i];
+
+    // 跳过早于第一个真值数据的所有 IMU 数据
+    if (imu0.timestamp < ode_time)
+    {
+      continue;
+    }
+
+    const auto &imu1 = imu_data[i + 1];
+    const double t_0 = imu0.timestamp;
+    const double t_1 = imu1.timestamp;
+    const double dt  = t_1 - t_0;
+
+    // 查找最接近 imu1.timestamp 的 GroundTruth 数据
+    const auto &gt1 = interpolate_groundtruth(gt_data, imu1.timestamp);
+    state.SetQuaternion(gt1.orientation[0], gt1.orientation[1],
+                        gt1.orientation[2], gt1.orientation[3]);
+
+    const Eigen::Vector3d acc0{
+        imu0.acc[0], // - gt0.acc_bias[0],
+        imu0.acc[1], // - gt0.acc_bias[1],
+        imu0.acc[2], // - gt0.acc_bias[2],
+    };
+    const Eigen::Vector3d acc1{
+        imu1.acc[0], // - gt1.acc_bias[0],
+        imu1.acc[1], // - gt1.acc_bias[1],
+        imu1.acc[2], // - gt1.acc_bias[2],
+    };
+    ImuKinematicsODE ode({acc0, acc1, gyro0, gyro1, t_0, t_1});
+    // RK4 单步
+    rk4.do_step(ode, state, ode_time, dt);
+    ode_time += dt;
+
+    // 与下一帧 GroundTruth 对比
+    std::cout << std::fixed << std::setprecision(6) << gt1.timestamp << ", "
+              << position_error(&state[0], gt1.position) << ", "
+              << velocity_error(&state[3], gt1.velocity) << "\n";
+  }
+}
+
+// 忽略位置积分，只对朝向导数进行积分，检查 RK4 积分的误差
+void test_rk4_orientation(const std::vector<GroundTruthData> &gt_data,
+                          const std::vector<ImuData> &imu_data)
+{
+  ImuState state;
+  const auto &gt_first = gt_data[0];
+  // state.SetPosition(gt_first.position[0], gt_first.position[1],
+  //                   gt_first.position[2]);
+  // state.SetVelocity(gt_first.velocity[0], gt_first.velocity[1],
+  //                   gt_first.velocity[2]);
+  state.SetQuaternion(gt_first.orientation[0], gt_first.orientation[1],
+                      gt_first.orientation[2], gt_first.orientation[3]);
+
+  double ode_time            = gt_first.timestamp;
+  const Eigen::Vector3d acc0 = Eigen::Vector3d::Zero();
+  const Eigen::Vector3d acc1 = Eigen::Vector3d::Zero();
+  boost::numeric::odeint::runge_kutta4<ImuState, double, ImuDerivative> rk4;
+
+  std::cout << "time [s], "
+               "orientation error (by angle; rad), "
+               "orientation error (by Frobenius norm)\n";
+
+  for (size_t i = 0; i + 1 < imu_data.size(); ++i)
+  {
+    const auto &imu0 = imu_data[i];
+
+    // 跳过早于第一个真值数据的所有 IMU 数据
+    if (imu0.timestamp < ode_time)
+    {
+      continue;
+    }
+
+    const auto &imu1 = imu_data[i + 1];
+    const double t_0 = imu0.timestamp;
+    const double t_1 = imu1.timestamp;
+    const double dt  = t_1 - t_0;
+    // 查找最接近 imu1.timestamp 的 GroundTruth 数据
+    const auto &gt1 = interpolate_groundtruth(gt_data, imu1.timestamp);
+    const Eigen::Vector3d gyro0{
+        imu0.gyro[2],  // - gt0.gyro_bias[0],
+        -imu0.gyro[1], // - gt0.gyro_bias[1],
+        imu0.gyro[0],  // - gt0.gyro_bias[2],
+    };
+    const Eigen::Vector3d gyro1{
+        imu1.gyro[2],  // - gt1.gyro_bias[0],
+        -imu1.gyro[1], // - gt1.gyro_bias[1],
+        imu1.gyro[0],  // - gt1.gyro_bias[2],
+    };
+    ImuKinematicsODE ode({acc0, acc1, gyro0, gyro1, t_0, t_1});
+    // RK4 单步
+    rk4.do_step(ode, state, ode_time, dt);
+    ode_time += dt;
+    state.NormalizeQuaternion();
+
+    // 与下一帧 GroundTruth 对比
+    std::cout << std::fixed << std::setprecision(6) << gt1.timestamp << ", "
+              << orientation_error_angle(&state[6], gt1.orientation) << ", "
+              << orientation_error_frobenius(&state[6], gt1.orientation)
+              << "\n";
+  }
+}
+
+int main(int argc, char **argv)
+{
+  if (argc < 3)
+  {
+    std::cerr << "用法: " << argv[0] << " <imu.csv> <groundtruth.csv>"
+              << "\n";
+    return 1;
+  }
+  std::string imu_file = argv[1];
+  std::string gt_file  = argv[2];
+  auto gt_data         = read_groundtruth_csv(gt_file);
+  auto imu_data        = read_imu_csv(imu_file);
+  // std::cout << "GroundTruth 数据量: " << gt_data.size() << "\n"
+  //           << "IMU 数据量: " << imu_data.size() << "\n";
+  // 单位换算: ns -> s
+  for (auto &imu : imu_data)
+  {
+    imu.timestamp *= 1e-9;
+    double ax   = imu.acc[0];
+    double ay   = imu.acc[1];
+    double az   = imu.acc[2];
+    imu.acc[0]  = az;
+    imu.acc[1]  = -ay;
+    imu.acc[2]  = ax;
+    double gx   = imu.gyro[0];
+    double gy   = imu.gyro[1];
+    double gz   = imu.gyro[2];
+    imu.gyro[0] = gz;
+    imu.gyro[1] = -gy;
+    imu.gyro[2] = gx;
+  }
+  for (auto &gt : gt_data)
+  {
+    gt.timestamp *= 1e-9;
+  }
+
+  test_rk4_position(gt_data, imu_data);
+
   return 0;
 }

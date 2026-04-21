@@ -166,6 +166,38 @@ install(DIRECTORY launch/
   DESTINATION share/${PROJECT_NAME}/launch
 )
 
+# ===== 目标： 误差分析 CSV 生产 =====
+add_executable(euroc_rk4_eval src/euroc_rk4_eval.cpp)
+target_include_directories(euroc_rk4_eval PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_compile_features(euroc_rk4_eval PUBLIC cxx_std_20)
+install(TARGETS euroc_rk4_eval
+  DESTINATION debug/euroc_rk4_eval
+)
+target_link_libraries(euroc_rk4_eval
+  Eigen3::Eigen
+  Boost::boost
+  ${OpenCV_LIBS}
+)
+
+# ===== 目标： CSV 拟合与绘图 =====
+add_executable(csv_polyfit_plot src/csv_polyfit_plot.cpp)
+
+target_include_directories(csv_polyfit_plot PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_compile_features(csv_polyfit_plot PUBLIC cxx_std_20)
+install(TARGETS csv_polyfit_plot
+  DESTINATION lib/${PROJECT_NAME}
+)
+target_link_libraries(csv_polyfit_plot
+  Eigen3::Eigen
+  ${OpenCV_LIBS}
+)
+
 # --- 单元测试 ---
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

@@ -39,6 +39,7 @@ static_assert(
     "MsgGroundTruth must be either PoseStamped or TransformStamped");
 
 static constexpr double g_norm{9.81}; // 重力加速度常数
+static const Eigen::Vector3d gravity_world{0.0, 0.0, -g_norm};
 
 enum class EstimatorType
 {
@@ -114,7 +115,7 @@ private:
   }
 
 #if USE_ZUPT
-  void ZeroVelocityUpdate(const Vec3 &accel, const Vec3 &gyro)
+  bool ZeroVelocityUpdate(const Vec3 &accel, const Vec3 &gyro)
   {
     Vector6d data;
     data << gyro, accel;
@@ -128,34 +129,43 @@ private:
       {
         RCLCPP_WARN(rclcpp::get_logger(NODE_NAME), "MAV is not static.");
       }
-      is_prev_static = is_static;
-      return;
     }
+    else
+    {
+      RCLCPP_WARN(rclcpp::get_logger(NODE_NAME), "MAV is static.");
+
+      this->state_.SetVelocity(0.0, 0.0, 0.0);
+      this->EstimateOrientation();
+
+      static constexpr double alpha{0.01};
+
+      gyro_bias_ = (1 - alpha) * gyro_bias_ + alpha * gyro;
+
+      // 加速度计的零偏不能固定减去 gravity_world
+      // 我们需要将期望的静止比力 (gravity_world) 投影到当前的载具参考系下
+      // 再与测量值作差来计算偏差
+
+      // 提取当前姿态四元数 (载具参考系到惯性参考系的旋转 C_iv = C_is)
+      Eigen::Quaterniond q{state_.GetQuaternion()};
+      // 因为现在 MAV 处于静止状态
+      // 所以 acc_sensor 理应等于 -gravity_sensor
+      // 即 acc_world 理应等于零
+      // 又因为
+      //       acc_sensor = C_si * (acc_world - gravity_world)
+      //                  = - C_si * gravity_world
+      //                  = - C_is^{-1} * gravity_world
+      //                  = - gravity_sensor
+      Vec3 gravity_sensor{q.conjugate() * gravity_world};
+      // 考虑到 acc_sensor_measured = acc_sensor_theory + bias_acc
+      // 那么零偏为
+      //       bias_acc = acc_sensor_measured - acc_sensor_theory
+      //                = acc_sensor - (- gravity_sensor)
+      accel_bias_
+          = (1 - alpha) * accel_bias_ + alpha * (accel + gravity_sensor);
+    }
+
     is_prev_static = is_static;
-
-    RCLCPP_WARN(rclcpp::get_logger(NODE_NAME), "MAV is static.");
-
-    this->state_.SetVelocity(0.0, 0.0, 0.0);
-    this->EstimateOrientation();
-
-    static constexpr double alpha{0.01};
-
-    gyro_bias_ = (1 - alpha) * gyro_bias_ + alpha * gyro;
-
-    // 加速度计的零偏不能固定减去 [0,0,-9.81]。
-    // 我们需要将期望的静止比力(世界系的 [9.81, 0, 0]) 投影到当前的载具参考系下，
-    // 再与测量值作差来计算偏差。
-
-    // 提取当前姿态四元数
-    Eigen::Quaterniond q{state_.GetQuaternion()};
-
-    // 四元数转旋转矩阵 R_wv (载具系到世界系的变换)
-    Eigen::Matrix3d R{q.toRotationMatrix()};
-
-    // 矩阵 R_wv 的转置，即世界系到载具参考系的旋转 R_vw 第一列
-    Vec3 expected_g{R.col(0)};
-    expected_g *= g_norm;
-    accel_bias_ = (1 - alpha) * accel_bias_ + alpha * (accel - expected_g);
+    return is_static;
   }
 #endif
 
@@ -208,11 +218,11 @@ public:
   // Eigen::Quaterniond C_sv;
   // 4. 传感器参考系的原点在载具参考系下的平移向量 = 零向量
   // Vec3 r_sv_v;
+  template <bool update_attitude>
   void RK4Update(const Vec3 &accel0, const Vec3 &accel1, const Vec3 &gyro0,
                  const Vec3 &gyro1, double time0, double time1)
   {
     const double dt{time1 - time0};
-    const Eigen::Vector3d gravity_world{0.0, 0.0, -g_norm};
 
     // 更新速度和位置
 
@@ -220,18 +230,16 @@ public:
     // 无人机的朝向 = 惯性参考系到载具参考系的旋转 C_vi 的逆 = 载具参考系到惯性参考系的旋转 C_iv
     Eigen::Quaterniond q{this->state_.GetQuaternion()};
     // 传感器参考系下的平均线加速度
-    Eigen::Vector3d acc_sensor = (accel0 + accel1) * 0.5;
-    acc_sensor
-        = Eigen::Vector3d{acc_sensor.z(), -acc_sensor.y(), acc_sensor.x()};
+    Eigen::Vector3d acc_avg = (accel0 + accel1) * 0.5;
     // 惯性参考系下的平均线加速度
     //    EuRoC MAV 数据集中 IMU 传感器参考系与载具参考系重合
     //    即 C_sv = 1, C_si = C_vi，r_sv_v = 0
     //    因此加速度转换公式简化为：
-    //       acc_sensor = C_si * (acc_world - gravity_world)
-    //       C_si_inverse * acc_sensor = acc_world - gravity_world
-    //       acc_world = C_si_inverse * acc_sensor + gravity_world
-    //       acc_world = C_is * acc_sensor + gravity_world
-    Eigen::Vector3d acc_world = q * acc_sensor + gravity_world;
+    //       acc_avg = C_si * (acc_world - gravity_world)
+    //       C_si_inverse * acc_avg = acc_world - gravity_world
+    //       acc_world = C_si_inverse * acc_avg + gravity_world
+    //       acc_world = C_is * acc_avg + gravity_world
+    Eigen::Vector3d acc_world = q * acc_avg + gravity_world;
     // 将 IMU 参考系的 X 轴映射为 Z 轴
     // 将 IMU 参考系的 Y 轴映射为 -Y 轴
     // 将 IMU 参考系的 Z 轴映射为 X 轴
@@ -248,54 +256,60 @@ public:
     RCLCPP_INFO(rclcpp::get_logger("ImuWorker"),
                 "\n\tPrevious Attitude: [w: %.3f, x: %.3f, y: %.3f, z: %.3f]; "
                 "\n\tPrevious Velocity: [x: %.3f, y: %.3f, y: %.3f]; "
-                "\n\tPrevious Position: [x: %.3f, y: %.3f, y: %.3f]",
+                "\n\tPrevious Position: [x: %.3f, y: %.3f, y: %.3f]; "
+                "\n\tBias of Accel: [x: %.3f, y: %.3f, y: %.3f]; "
+                "\n\tBias of Gyro : [x: %.3f, y: %.3f, y: %.3f]; ",
                 q.w(), q.x(), q.y(), q.z(), velocity.x(), velocity.y(),
-                velocity.z(), position.x(), position.y(), position.z());
+                velocity.z(), position.x(), position.y(), position.z(),
+                accel_bias_.x(), accel_bias_.y(), accel_bias_.z(),
+                gyro_bias_.x(), gyro_bias_.y(), gyro_bias_.z());
 
     position += velocity * dt + 0.5 * delta_velocity * dt;
     this->state_.SetPosition(position);
     velocity += delta_velocity;
     this->state_.SetVelocity(velocity);
 
-    // 更新姿态
-
-    // 载具参考系下的平均角速度 = 传感器参考系下的平均角速度
-    Eigen::Vector3d gyro_avg = (gyro0 + gyro1) * 0.5;
-    // 角增量
-    Eigen::Vector3d phi   = gyro_avg * dt;
-    const double phi_norm = phi.norm();
-    // 四元数增量
-    Eigen::Quaterniond delta_q;
-    if (phi_norm < 1e-6)
-    {
-      // 陀螺仪积分 \dot{q} = 0.5 * q * w
-      // q(t + \delta t) = q(t) + \dot{q}(t) * \delta t
-      //                 = q(t) + 0.5 * q(t) * w * \delta t
-      //                 = q(t) * 1 + q(t) * (0.5 * w * \delta t)
-      //                 = q(t) * (1.0, 0.5 * w * \delta t)
-      delta_q = Eigen::Quaterniond(1.0, 0.5 * phi.x(), 0.5 * phi.y(),
-                                   0.5 * phi.z());
-    }
-    else
-    {
-      delta_q
-          = Eigen::Quaterniond(Eigen::AngleAxisd(phi_norm, phi.normalized()));
-    }
-    q = delta_q * q;
-
-    this->state_.SetQuaternion(q);
-    // 积分后必须对四元数进行归一化，因为 RK4 不保证单位模长约束
-    this->state_.NormalizeQuaternion();
-
     RCLCPP_INFO(rclcpp::get_logger("ImuWorker"),
                 "\n\tAverage Accel: [x: %.3f, y: %.3f, z: %.3f]; "
-                "\n\tRotated Accel: [x: %.3f, y: %.3f, z: %.3f]; "
-                "\n\tAverage Gyro: [x: %.3f, y: %.3f, z: %.3f]; "
-                "\n\tδ Velocity: [x: %.3f, y: %.3f, z: %.3f]",
-                acc_sensor.x(), acc_sensor.y(), acc_sensor.z(), acc_world.x(),
-                acc_world.y(), acc_world.z(), gyro_avg.x(), gyro_avg.y(),
-                gyro_avg.z(), delta_velocity.x(), delta_velocity.y(),
-                delta_velocity.z());
+                "\n\tRotated Accel: [x: %.3f, y: %.3f, z: %.3f]; ",
+                acc_avg.x(), acc_avg.y(), acc_avg.z(), acc_world.x(),
+                acc_world.y(), acc_world.z());
+
+    // 更新姿态
+    if constexpr (update_attitude)
+    {
+      // 载具参考系下的平均角速度 = 传感器参考系下的平均角速度
+      Eigen::Vector3d gyro_avg = (gyro0 + gyro1) * 0.5;
+      // 角增量
+      Eigen::Vector3d phi   = gyro_avg * dt;
+      const double phi_norm = phi.norm();
+      // 四元数增量
+      Eigen::Quaterniond delta_q;
+      if (phi_norm < 1e-6)
+      {
+        // 陀螺仪积分 \dot{q} = 0.5 * q * w
+        // q(t + \delta t) = q(t) + \dot{q}(t) * \delta t
+        //                 = q(t) + 0.5 * q(t) * w * \delta t
+        //                 = q(t) * 1 + q(t) * (0.5 * w * \delta t)
+        //                 = q(t) * (1.0, 0.5 * w * \delta t)
+        delta_q = Eigen::Quaterniond(1.0, 0.5 * phi.x(), 0.5 * phi.y(),
+                                     0.5 * phi.z());
+      }
+      else
+      {
+        delta_q
+            = Eigen::Quaterniond(Eigen::AngleAxisd(phi_norm, phi.normalized()));
+      }
+      q = q * delta_q;
+
+      this->state_.SetQuaternion(q);
+
+      RCLCPP_INFO(rclcpp::get_logger("ImuWorker"),
+                  "\n\tAverage Gyro: [x: %.3f, y: %.3f, z: %.3f]; "
+                  "\n\tδ Velocity: [x: %.3f, y: %.3f, z: %.3f]",
+                  gyro_avg.x(), gyro_avg.y(), gyro_avg.z(), delta_velocity.x(),
+                  delta_velocity.y(), delta_velocity.z());
+    }
 
     RCLCPP_INFO(rclcpp::get_logger("ImuWorker"),
                 "\n\tCurrent Attitude: [w: %.3f, x: %.3f, y: %.3f, z: %.3f]; "
@@ -323,7 +337,7 @@ public:
     // 正确的做法是：利用现有的姿态去推算速度和位置（RK4），推算完成后，抛弃纯运动学算出的漂移姿态，用 Mahony 的姿态覆盖它。
 
     // 正常运行 RK4 计算速度和位置 (RK4 内部会自己处理自己的四元数状态)
-    this->RK4Update(accel0, accel1, gyro0, gyro1, time0, time1);
+    this->RK4Update<false>(accel0, accel1, gyro0, gyro1, time0, time1);
 
     // 将 RK4 推算出的纯积分姿态替换为由 Mahony 滤波器校准过的姿态
     this->state_.SetQuaternion(this->ahrs_->GetQuaternion());
@@ -335,7 +349,7 @@ public:
     switch (estimator_type_)
     {
     case EstimatorType::RK4:
-      RK4Update(accel0, accel1, gyro0, gyro1, time0, time1);
+      RK4Update<true>(accel0, accel1, gyro0, gyro1, time0, time1);
       break;
     case EstimatorType::MAHONY:
     case EstimatorType::MADGWICK:
@@ -351,19 +365,30 @@ public:
     const rclcpp::Time msg_stamp{imu_msg->header.stamp};
     const double current_time{msg_stamp.nanoseconds() * 1e-9};
 
-    Vec3 accel{imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y,
-               imu_msg->linear_acceleration.z};
+    Vec3 accel{imu_msg->linear_acceleration.z, -imu_msg->linear_acceleration.y,
+               imu_msg->linear_acceleration.x};
 
-    Vec3 gyro{imu_msg->angular_velocity.x, imu_msg->angular_velocity.y,
-              imu_msg->angular_velocity.z};
+    Vec3 gyro{imu_msg->angular_velocity.z, -imu_msg->angular_velocity.y,
+              imu_msg->angular_velocity.x};
 
 #if USE_ZUPT
-    ZeroVelocityUpdate(accel, gyro);
+    // 这里用尚未纠偏的加速度、角速度进行 ZUPT 检测
+    if (ZeroVelocityUpdate(accel, gyro))
+    {
+      return;
+    }
 #endif
+
+    // 消除零偏
+    //    acc_sensor_theory = acc_sensor_measured - bias_acc
+    //    gyro_sensor_theory = gyro_sensor_measured - bias_gyro
+    accel -= accel_bias_;
+    gyro -= gyro_bias_;
 
     // 如果是第一帧，只记录初始状态，不进行积分计算
     if (is_first_frame_)
     {
+      // 缓存的加速度、角速度数据都是已经去除零偏了的
       acc_prev_       = accel;
       gyro_prev_      = gyro;
       last_time_      = current_time;
@@ -371,15 +396,14 @@ public:
       return;
     }
 
-    Integrate(acc_prev_ - accel_bias_, accel - accel_bias_,
-              gyro_prev_ - gyro_bias_, gyro - gyro_bias_, last_time_,
-              current_time);
+    Integrate(acc_prev_, accel, gyro_prev_, gyro, last_time_, current_time);
 
     pose_msg_.header.stamp = msg_stamp;
     ComposePoseMessage(pose_msg_);
     node_ptr->HandlePose(pose_msg_);
 
     // 缓存上一条 IMU 消息
+    // 缓存的加速度、角速度数据都是已经去除零偏了的
     acc_prev_  = accel;
     gyro_prev_ = gyro;
     last_time_ = current_time;
