@@ -29,6 +29,8 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -425,14 +427,14 @@ void test_rk4_orientation(const std::vector<GroundTruthData> &gt_data,
     // 查找最接近 imu1.timestamp 的 GroundTruth 数据
     const auto &gt1 = interpolate_groundtruth(gt_data, imu1.timestamp);
     const Eigen::Vector3d gyro0{
-        imu0.gyro[2],  // - gt0.gyro_bias[0],
-        -imu0.gyro[1], // - gt0.gyro_bias[1],
-        imu0.gyro[0],  // - gt0.gyro_bias[2],
+        imu0.gyro[0], // - gt0.gyro_bias[0],
+        imu0.gyro[1], // - gt0.gyro_bias[1],
+        imu0.gyro[2], // - gt0.gyro_bias[2],
     };
     const Eigen::Vector3d gyro1{
-        imu1.gyro[2],  // - gt1.gyro_bias[0],
-        -imu1.gyro[1], // - gt1.gyro_bias[1],
-        imu1.gyro[0],  // - gt1.gyro_bias[2],
+        imu1.gyro[0], // - gt1.gyro_bias[0],
+        imu1.gyro[1], // - gt1.gyro_bias[1],
+        imu1.gyro[2], // - gt1.gyro_bias[2],
     };
     ImuKinematicsODE ode({acc0, acc1, gyro0, gyro1, t_0, t_1});
     // RK4 单步
@@ -448,6 +450,54 @@ void test_rk4_orientation(const std::vector<GroundTruthData> &gt_data,
   }
 }
 
+// 忽略位置积分，将 IMU 提供的三轴角速度按照每一个分量分别积分，得到一个三维向量
+void test_rk4_motionless_gyro_error_caused_by_bias(
+    const std::vector<ImuData> &imu_data)
+{
+  if (imu_data.empty())
+  {
+    return;
+  }
+  Eigen::Vector3d state = Eigen::Vector3d::Zero();
+  auto itr              = imu_data.cbegin();
+  if (itr == imu_data.cend())
+  {
+    return;
+  }
+  const double time_start = itr->timestamp;
+  double time_prev        = time_start;
+
+  std::cout << "time [s], x, y, z\n";
+
+  for (; itr != imu_data.cend(); ++itr)
+  {
+    const ImuData &imu        = *itr;
+    const double time_now     = imu.timestamp;
+    const double time_elapsed = time_now - time_start;
+    // 这里之所以取 2.5 秒，是因为根据 EuRoC MAV 数据集中相机拍摄的图像
+    // 在第50个图像帧以后，无人机才开始运动，之前一直处于静止状态
+    if (time_elapsed > 2.5)
+    {
+      std::cerr << "在 [t=" << time_elapsed << "] 时截断输出. "
+                << "最终输出样本个数: " << std::distance(imu_data.cbegin(), itr)
+                << "\n";
+      break;
+    }
+    double time_delta = time_now - time_prev;
+    time_prev         = time_now;
+    Eigen::Vector3d gyro{
+        imu.gyro[0],
+        imu.gyro[1],
+        imu.gyro[2],
+    };
+    gyro *= time_delta;
+    state += gyro;
+
+    std::cout << std::fixed << std::setprecision(6) << time_now << ", "
+              << state(0) << ", " << state(1) << ", " << state(2) << "\n";
+  }
+}
+
 int main(int argc, char **argv)
 {
   if (argc < 3)
@@ -460,12 +510,18 @@ int main(int argc, char **argv)
   std::string gt_file  = argv[2];
   auto gt_data         = read_groundtruth_csv(gt_file);
   auto imu_data        = read_imu_csv(imu_file);
-  // std::cout << "GroundTruth 数据量: " << gt_data.size() << "\n"
-  //           << "IMU 数据量: " << imu_data.size() << "\n";
+  std::cerr << "GroundTruth 数据量: " << gt_data.size() << "\n"
+            << "IMU 数据量: " << imu_data.size() << "\n";
   // 单位换算: ns -> s
+  double imu_timestamp_min = std::numeric_limits<double>::max();
+  double imu_timestamp_max = std::numeric_limits<double>::min();
   for (auto &imu : imu_data)
   {
     imu.timestamp *= 1e-9;
+
+    imu_timestamp_min = std::min(imu_timestamp_min, imu.timestamp);
+    imu_timestamp_max = std::max(imu_timestamp_max, imu.timestamp);
+
     double ax   = imu.acc[0];
     double ay   = imu.acc[1];
     double az   = imu.acc[2];
@@ -484,7 +540,22 @@ int main(int argc, char **argv)
     gt.timestamp *= 1e-9;
   }
 
-  test_rk4_position(gt_data, imu_data);
+  std::cerr << std::fixed << std::setprecision(6)
+            << "IMU.TimeStamp[min]=" << imu_timestamp_min
+            << " seconds since Unix epoch\n"
+            << "IMU.TimeStamp[max]=" << imu_timestamp_max
+            << " seconds since Unix epoch\n"
+            << "IMU.TimeInterval=" << (imu_timestamp_max - imu_timestamp_min)
+            << " seconds\n"
+            << std::setprecision(2) << "IMU.AverageFrequency="
+            << (static_cast<double>(imu_data.size())
+                / (imu_timestamp_max - imu_timestamp_min))
+            << " Hz\n"
+            << "\n";
+
+  // test_rk4_position(gt_data, imu_data);
+  // test_rk4_orientation(gt_data, imu_data);
+  test_rk4_motionless_gyro_error_caused_by_bias(imu_data);
 
   return 0;
 }

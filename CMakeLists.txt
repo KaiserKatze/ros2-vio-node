@@ -21,7 +21,7 @@ endif()
 add_compile_options(-Werror)
 add_compile_options(-Wshadow)
 add_compile_options(-Wuninitialized)
-add_compile_options(-O3)
+add_compile_options(-O0)
 add_compile_options(-march=native)
 
 # 自动检测 C++ 标准（支持草案和正式标准）
