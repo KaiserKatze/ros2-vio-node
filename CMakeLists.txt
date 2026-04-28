@@ -198,6 +198,18 @@ target_link_libraries(csv_polyfit_plot
   ${OpenCV_LIBS}
 )
 
+# ===== 目标： 纯视觉 SLAM =====
+add_executable(StereoSlam src/VisualSlam.cpp)
+target_include_directories(StereoSlam PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(StereoSlam
+  Eigen3::Eigen
+  armadillo
+  ${OpenCV_LIBS}
+)
+
 # --- 单元测试 ---
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

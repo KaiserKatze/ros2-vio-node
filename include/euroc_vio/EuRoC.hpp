@@ -1,13 +1,15 @@
 #ifndef EUROC_HPP
 #define EUROC_HPP
 
+#include <utility>
+
 #include <Eigen/Dense>
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
+#include <opencv2/core/eigen.hpp>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/core/types.hpp>
-#include <opencv2/core/eigen.hpp>
 #include <opencv2/features2d.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
@@ -37,13 +39,15 @@ struct EuRoC
   static constexpr double k12{0.07451284};
   static constexpr double p11{-0.00010473};
   static constexpr double p12{-3.55590700e-05};
+  static constexpr int image_width{752};
+  static constexpr int image_height{480};
 
   // https://libeigen.gitlab.io/eigen/docs-3.1/TopicStructHavingEigenMembers.html
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
   Eigen::Matrix3d rectifiedCameraMatrix0;
   Eigen::Matrix3d rectifiedCameraMatrix1;
-  cv::Mat T_C1C0;
+  Eigen::Matrix4d T_C1C0;
   cv::Size imageSize{752, 480};
   cv::Mat map0x;
   cv::Mat map0y;
@@ -60,27 +64,33 @@ struct EuRoC
                              cv1, 0.0, 0.0, 1.0);
     cv::Mat distCoeffs1   = (cv::Mat_<double>(4, 1) << k11, k12, p11, p12);
 
-    cv::Mat T_BC0
-        = (cv::Mat_<double>(4, 4) << 0.0148655429818, -0.999880929698,
-           0.00414029679422, -0.0216401454975, 0.999557249008, 0.0149672133247,
-           0.025715529948, -0.064676986768, -0.0257744366974, 0.00375618835797,
-           0.999660727178, 0.00981073058949, 0.0, 0.0, 0.0, 1.0);
+    Eigen::Matrix4d T_BC0;
+    T_BC0 << 0.0148655429818, -0.999880929698, 0.00414029679422,
+        -0.0216401454975, 0.999557249008, 0.0149672133247, 0.025715529948,
+        -0.064676986768, -0.0257744366974, 0.00375618835797, 0.999660727178,
+        0.00981073058949, 0.0, 0.0, 0.0, 1.0;
 
-    cv::Mat T_BC1
-        = (cv::Mat_<double>(4, 4) << 0.0125552670891, -0.999755099723,
-           0.0182237714554, -0.0198435579556, 0.999598781151, 0.0130119051815,
-           0.0251588363115, 0.0453689425024, -0.0253898008918, 0.0179005838253,
-           0.999517347078, 0.00786212447038, 0.0, 0.0, 0.0, 1.0);
+    Eigen::Matrix4d T_BC1;
+    T_BC1 << 0.0125552670891, -0.999755099723, 0.0182237714554,
+        -0.0198435579556, 0.999598781151, 0.0130119051815, 0.0251588363115,
+        0.0453689425024, -0.0253898008918, 0.0179005838253, 0.999517347078,
+        0.00786212447038, 0.0, 0.0, 0.0, 1.0;
 
     T_C1C0 = T_BC1.inverse() * T_BC0;
 
     // 2. 使用更安全的方法提取 R 和 T
+
     // 提取左上角 3x3 矩阵作为旋转矩阵
     // Rotation matrix from the coordinate system of the first camera to the second camera
-    cv::Mat stereoR = T_C1C0(cv::Range(0, 3), cv::Range(0, 3)).clone();
+    cv::Mat stereoR(3, 3, CV_64FC1);
+    cv::eigen2cv(Eigen::Matrix3d{T_C1C0(Eigen::seq(0, 2), Eigen::seq(0, 2))},
+                 stereoR);
+
     // 提取第 4 列的前 3 行作为平移向量
     // Translation vector from the coordinate system of the first camera to the second camera
-    cv::Mat stereoT = T_C1C0(cv::Range(0, 3), cv::Range(3, 4)).clone();
+    cv::Mat stereoT(3, 1, CV_64FC1);
+    cv::eigen2cv(Eigen::Vector3d{T_C1C0(Eigen::seq(0, 2), Eigen::seq(3, 3))},
+                 stereoT);
 
     // 3. 打印一下确认矩阵是否为空 (调试用)
     if (stereoR.empty())
