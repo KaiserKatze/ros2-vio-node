@@ -24,6 +24,10 @@ add_compile_options(-Wuninitialized)
 add_compile_options(-O0)
 add_compile_options(-march=native)
 
+if(MSVC)
+  add_compile_options(/utf-8)
+endif()
+
 # 自动检测 C++ 标准（支持草案和正式标准）
 include(CheckCXXCompilerFlag)
 check_cxx_compiler_flag("-std=c++2c" HAS_CXX26_DRAFT)
