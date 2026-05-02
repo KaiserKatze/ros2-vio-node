@@ -548,6 +548,254 @@ public:
 
     return true;
   }
+
+  bool FindCorners(const cv::Mat &gray_prev_left,
+                   const cv::Mat &gray_prev_right,
+                   const cv::Mat &gray_next_left,
+                   const cv::Mat &gray_next_right,
+                   std::vector<PointType> &corners_prev_left,
+                   std::vector<PointType> &corners_prev_right,
+                   std::vector<PointType> &corners_next_left,
+                   std::vector<PointType> &corners_next_right) const
+  {
+    //===================================
+    // 从上一帧左目到上一帧右目
+    if (corners_prev_left.empty() || corners_prev_right.empty())
+    {
+      // 缺少先验信息，需要初始化角点数据
+
+      cv::goodFeaturesToTrack(gray_prev_left, corners_prev_left, maxCorners,
+                              qualityLevel, minDistance, cv::noArray(),
+                              blockSize, useHarrisDetector,
+                              freeParamHarisDetector);
+
+      if (corners_prev_left.size() < minCorners)
+      {
+        return false;
+      }
+
+      std::vector<unsigned char> features_found_pl_pr;
+      // https://docs.opencv.org/3.4/dc/d6b/group__video__track.html#ga473e4b886d0bcc6b65831eb88ed93323
+      cv::calcOpticalFlowPyrLK(gray_prev_left, gray_prev_right,
+                               corners_prev_left, corners_prev_right,
+                               features_found_pl_pr, cv::noArray(), winSize,
+                               maxLevel, criteria_);
+
+      // 压缩数据
+      std::cerr << "\t筛选前，角点个数 = " << corners_prev_left.size() << "\n";
+
+      auto zipped_view
+          = std::views::zip(corners_prev_left, corners_prev_right,
+                            features_found_pl_pr)
+            | std::views::filter(
+                [atol = atol_parallax](const auto &tuple)
+                {
+                  const auto &[p_prev_left, p_prev_right, found] = tuple;
+                  // 1. 必须是追踪成功的点
+                  // 2. 视差过滤：保证正视差 (即左目图像中的点的横坐标必须大于右目图像中的点的横坐标)
+                  // 3. 极线过滤：纵坐标之差必须小于阈值
+                  return found && (p_prev_left.x > p_prev_right.x)
+                         && (std::abs(p_prev_left.y - p_prev_right.y) < atol);
+                });
+
+      // 因为 view 是延迟计算的，所以必须先创建副本，绝对不能使用 std::vector::assign 方法进行赋值
+      std::vector<PointType> new_corners_prev_left
+          = zipped_view
+            | std::views::transform([](const auto &tuple)
+                                    { return std::get<0>(tuple); })
+            | std::ranges::to<std::vector>();
+      std::vector<PointType> new_corners_prev_right
+          = zipped_view
+            | std::views::transform([](const auto &tuple)
+                                    { return std::get<1>(tuple); })
+            | std::ranges::to<std::vector>();
+
+      corners_prev_left  = std::move(new_corners_prev_left);
+      corners_prev_right = std::move(new_corners_prev_right);
+
+      std::cerr << "\t筛选后，角点个数 = " << corners_prev_left.size() << "\n";
+
+      if (corners_prev_left.size() < minCorners)
+      {
+        return false;
+      }
+    }
+
+    //===================================
+    // 从上一帧右目到下一帧右目
+    {
+      std::vector<unsigned char> features_found_pr_nr;
+      cv::calcOpticalFlowPyrLK(gray_prev_right, gray_next_right,
+                               corners_prev_right, corners_next_right,
+                               features_found_pr_nr, cv::noArray(), winSize,
+                               maxLevel, criteria_);
+
+      // 压缩数据
+      std::cerr << "\t筛选前，角点个数 = " << corners_prev_left.size() << "\n";
+
+      auto zipped_view
+          = std::views::zip(corners_prev_left, corners_prev_right,
+                            corners_next_right, features_found_pr_nr)
+            | std::views::filter(
+                [](const auto &tuple)
+                {
+                  // 1. 必须是追踪成功的点
+                  return std::get<3>(tuple);
+                });
+
+      // 因为 view 是延迟计算的，所以必须先创建副本，绝对不能使用 std::vector::assign 方法进行赋值
+      std::vector<PointType> new_corners_prev_left
+          = zipped_view
+            | std::views::transform([](const auto &tuple)
+                                    { return std::get<0>(tuple); })
+            | std::ranges::to<std::vector>();
+      std::vector<PointType> new_corners_prev_right
+          = zipped_view
+            | std::views::transform([](const auto &tuple)
+                                    { return std::get<1>(tuple); })
+            | std::ranges::to<std::vector>();
+      std::vector<PointType> new_corners_next_right
+          = zipped_view
+            | std::views::transform([](const auto &tuple)
+                                    { return std::get<2>(tuple); })
+            | std::ranges::to<std::vector>();
+
+      corners_prev_left  = std::move(new_corners_prev_left);
+      corners_prev_right = std::move(new_corners_prev_right);
+      corners_next_right = std::move(new_corners_next_right);
+
+      std::cerr << "\t筛选后，角点个数 = " << corners_prev_left.size() << "\n";
+
+      if (corners_prev_left.size() < minCorners)
+      {
+        return false;
+      }
+    }
+
+    //===================================
+    // 从下一帧右目到下一帧左目
+    {
+      std::vector<unsigned char> features_found_nr_nl;
+      cv::calcOpticalFlowPyrLK(gray_next_right, gray_next_left,
+                               corners_next_right, corners_next_left,
+                               features_found_nr_nl, cv::noArray(), winSize,
+                               maxLevel, criteria_);
+
+      // 压缩数据
+      std::cerr << "\t筛选前，角点个数 = " << corners_prev_left.size() << "\n";
+
+      auto zipped_view
+          = std::views::zip(corners_prev_left, corners_prev_right,
+                            corners_next_left, corners_next_right,
+                            features_found_nr_nl)
+            | std::views::filter(
+                [atol = atol_parallax](const auto &tuple)
+                {
+                  const auto &[p_prev_left, p_prev_right, p_next_left,
+                               p_next_right, found] = tuple;
+                  // 1. 必须是追踪成功的点
+                  // 2. 视差过滤：保证正视差 (即左目图像中的点的横坐标必须大于右目图像中的点的横坐标)
+                  // 3. 极线过滤：纵坐标之差必须小于阈值
+                  return found && (p_next_left.x > p_next_right.x)
+                         && (std::abs(p_next_left.y - p_next_right.y) < atol);
+                });
+
+      std::vector<PointType> new_corners_prev_left
+          = zipped_view
+            | std::views::transform([](const auto &tuple)
+                                    { return std::get<0>(tuple); })
+            | std::ranges::to<std::vector>();
+      std::vector<PointType> new_corners_prev_right
+          = zipped_view
+            | std::views::transform([](const auto &tuple)
+                                    { return std::get<1>(tuple); })
+            | std::ranges::to<std::vector>();
+      std::vector<PointType> new_corners_next_left
+          = zipped_view
+            | std::views::transform([](const auto &tuple)
+                                    { return std::get<2>(tuple); })
+            | std::ranges::to<std::vector>();
+      std::vector<PointType> new_corners_next_right
+          = zipped_view
+            | std::views::transform([](const auto &tuple)
+                                    { return std::get<3>(tuple); })
+            | std::ranges::to<std::vector>();
+
+      corners_prev_left  = std::move(new_corners_prev_left);
+      corners_prev_right = std::move(new_corners_prev_right);
+      corners_next_left  = std::move(new_corners_next_left);
+      corners_next_right = std::move(new_corners_next_right);
+
+      std::cerr << "\t筛选后，角点个数 = " << corners_prev_left.size() << "\n";
+
+      if (corners_prev_left.size() < minCorners)
+      {
+        return false;
+      }
+    }
+
+    //===================================
+    // 从下一帧左目到上一帧左目
+    {
+      std::vector<PointType> corners_prev_left_loopback;
+      std::vector<unsigned char> features_found_nl_pl;
+      cv::calcOpticalFlowPyrLK(gray_next_left, gray_prev_left,
+                               corners_next_left, corners_prev_left_loopback,
+                               features_found_nl_pl, cv::noArray(), winSize,
+                               maxLevel, criteria_);
+      // 压缩数据
+      std::cerr << "\t筛选前，角点个数 = " << corners_prev_left.size() << "\n";
+
+      auto zipped_view
+          = std::views::zip(corners_prev_left, corners_prev_right,
+                            corners_next_left, corners_next_right,
+                            corners_prev_left_loopback, features_found_nl_pl)
+            | std::views::filter(
+                [atol = atol_coincidence](const auto &tuple)
+                {
+                  const auto &[p_prev_left, p_prev_right, p_next_left,
+                               p_next_right, p_loop_back, found] = tuple;
+                  // 1. 必须是追踪成功的点
+                  // 2. 重合过滤：横、纵坐标之差必须小于阈值
+                  return found
+                         && (std::abs(p_prev_left.x - p_loop_back.x) < atol)
+                         && (std::abs(p_prev_left.y - p_loop_back.y) < atol);
+                });
+
+      std::vector<PointType> new_corners_prev_left
+          = zipped_view
+            | std::views::transform([](const auto &tuple)
+                                    { return std::get<0>(tuple); })
+            | std::ranges::to<std::vector>();
+      std::vector<PointType> new_corners_prev_right
+          = zipped_view
+            | std::views::transform([](const auto &tuple)
+                                    { return std::get<1>(tuple); })
+            | std::ranges::to<std::vector>();
+      std::vector<PointType> new_corners_next_left
+          = zipped_view
+            | std::views::transform([](const auto &tuple)
+                                    { return std::get<2>(tuple); })
+            | std::ranges::to<std::vector>();
+      std::vector<PointType> new_corners_next_right
+          = zipped_view
+            | std::views::transform([](const auto &tuple)
+                                    { return std::get<3>(tuple); })
+            | std::ranges::to<std::vector>();
+
+      corners_prev_left  = std::move(new_corners_prev_left);
+      corners_prev_right = std::move(new_corners_prev_right);
+      corners_next_left  = std::move(new_corners_next_left);
+      corners_next_right = std::move(new_corners_next_right);
+
+      std::cerr << "\t筛选后，角点个数 = " << corners_prev_left.size() << "\n";
+
+      if (corners_prev_left.size() < minCorners)
+      {
+        return false;
+      }
+    }
+  }
 };
 
 } // namespace CornerDetection
@@ -969,6 +1217,53 @@ public:
   ~StereoSlam()
   {
     cv::destroyAllWindows();
+  }
+
+  void StartOdometer()
+  {
+    bool init{false};
+    StereoFrame<cv::Mat> prev_frame;
+
+    while (loader_)
+    {
+      StereoFrame<cv::Mat> frame{loader_()};
+
+      std::cerr << "[INFO] 正在处理第 " << frame_index_ << " 张图片 ...\n";
+
+      if (!init)
+      {
+        prev_frame = frame;
+        continue;
+      }
+      init = true;
+
+      auto [image_prev_left_rectified, image_prev_right_rectified]
+          = euroc_.remap(frame.image_left_, frame.image_right_);
+      auto [image_prev_left_grayscale, image_prev_right_grayscale]
+          = euroc_.grayscale(image_prev_left_rectified,
+                             image_prev_right_rectified);
+
+      auto [image_next_left_rectified, image_next_right_rectified]
+          = euroc_.remap(frame.image_left_, frame.image_right_);
+      auto [image_next_left_grayscale, image_next_right_grayscale]
+          = euroc_.grayscale(image_next_left_rectified,
+                             image_next_right_rectified);
+
+      std::vector<cv::Point2f> corners_prev_left;
+      std::vector<cv::Point2f> corners_prev_right;
+      std::vector<cv::Point2f> corners_next_left;
+      std::vector<cv::Point2f> corners_next_right;
+      detector_.FindCorners(
+          image_prev_left_grayscale, image_prev_right_grayscale,
+          image_next_left_grayscale, image_next_right_grayscale,
+          corners_prev_left, corners_prev_right, corners_next_left,
+          corners_next_right);
+
+      std::cerr << "\t最终检测到 " << corners_prev_left.size()
+                << " 个角点 ...\n";
+
+      ++loader_;
+    }
   }
 
   void StartVisualization()
