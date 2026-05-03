@@ -267,7 +267,14 @@ public:
 
 int main()
 {
-  StereoSlam slam{};
-  slam.StartOdometer();
+  try
+  {
+    StereoSlam slam{};
+    slam.StartOdometer();
+  }
+  catch (const std::exception &e)
+  {
+    std::cerr << e.what() << "\n";
+  }
   return 0;
 }
