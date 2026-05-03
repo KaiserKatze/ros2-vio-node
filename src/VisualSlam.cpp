@@ -1,5 +1,4 @@
 #include <algorithm>
-#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
@@ -147,15 +146,26 @@ struct EuRoC
 
     // Rotation matrix from the coordinate system of the first camera to the second camera
     cv::Mat stereoR(3, 3, CV_64FC1);
-    cv::eigen2cv(
-        // 提取左上角 3x3 矩阵作为旋转矩阵
-        Eigen::Matrix3d{T_C1C0(Eigen::seq(0, 2), Eigen::seq(0, 2))}, stereoR);
+    {
+      const Eigen::Matrix3d eigenMatR{
+          T_C1C0(Eigen::seq(0, 2), Eigen::seq(0, 2))};
+      // 提取左上角 3x3 矩阵作为旋转矩阵
+      cv::eigen2cv(eigenMatR, stereoR);
+      const Eigen::AngleAxisd rot_vec{eigenMatR};
+      const double stereoRnorm{rot_vec.angle()};
+      std::cerr << "变换 T_C1C0 对应的旋转向量角度 = " << stereoRnorm << "\n";
+    }
 
     // Translation vector from the coordinate system of the first camera to the second camera
     cv::Mat stereoT(3, 1, CV_64FC1);
-    cv::eigen2cv(
-        // 提取第 4 列的前 3 行作为平移向量
-        Eigen::Vector3d{T_C1C0(Eigen::seq(0, 2), Eigen::seq(3, 3))}, stereoT);
+    {
+      const Eigen::Vector3d eigenVecT{
+          T_C1C0(Eigen::seq(0, 2), Eigen::seq(3, 3))};
+      // 提取第 4 列的前 3 行作为平移向量
+      cv::eigen2cv(eigenVecT, stereoT);
+      const double stereoTnorm{eigenVecT.norm()};
+      std::cerr << "变换 T_C1C0 对应的平移向量范数 = " << stereoTnorm << "\n";
+    }
 
     // 3. 调用立体校正
 
@@ -458,11 +468,18 @@ namespace CornerDetection
 struct AbstractDetector
 {
   static constexpr size_t minCorners{10};
-  static constexpr int maxCorners{100};
+  static constexpr int maxCorners{200};
   // Quality level (percent of maximum)
   static constexpr double qualityLevel{0.01};
   // Min distance between corners
-  static constexpr double minDistance{5.0};
+  static constexpr double minDistance{
+      // 由于 EuRoC MAV 数据集的 V2_01_easy 子集中
+      // 房间的进深、开间大约是 5 米
+      // 所以最远处（例如墙上的）路标点的视差约为 10 个像素
+      // 而距离更近的路标点的视差更大
+      // 所以这里取值应该是 10.0
+      10.0,
+  };
   // Maximum pyramid level to construct
   static constexpr double blockSize{3.0};
   // true: Harris, false: Shi-Tomasi
@@ -560,32 +577,33 @@ public:
   {
     //===================================
     // 从上一帧左目到上一帧右目
-    if (corners_prev_left.empty() || corners_prev_right.empty())
     {
-      // 缺少先验信息，需要初始化角点数据
+      std::vector<PointType> corners_prev_left_ext, corners_prev_right_ext;
 
-      cv::goodFeaturesToTrack(gray_prev_left, corners_prev_left, maxCorners,
+      cv::goodFeaturesToTrack(gray_prev_left, corners_prev_left_ext, maxCorners,
                               qualityLevel, minDistance, cv::noArray(),
                               blockSize, useHarrisDetector,
                               freeParamHarisDetector);
 
-      if (corners_prev_left.size() < minCorners)
+      if (corners_prev_left.size() + corners_prev_left_ext.size() < minCorners)
       {
+        std::cerr << "\t未通过第 0 轮筛选!\n";
         return false;
       }
 
       std::vector<unsigned char> features_found_pl_pr;
       // https://docs.opencv.org/3.4/dc/d6b/group__video__track.html#ga473e4b886d0bcc6b65831eb88ed93323
       cv::calcOpticalFlowPyrLK(gray_prev_left, gray_prev_right,
-                               corners_prev_left, corners_prev_right,
+                               corners_prev_left_ext, corners_prev_right_ext,
                                features_found_pl_pr, cv::noArray(), winSize,
                                maxLevel, criteria_);
 
       // 压缩数据
-      std::cerr << "\t筛选前，角点个数 = " << corners_prev_left.size() << "\n";
+      std::cerr << "\t筛选前，角点个数 = " << corners_prev_left_ext.size()
+                << "\n";
 
       auto zipped_view
-          = std::views::zip(corners_prev_left, corners_prev_right,
+          = std::views::zip(corners_prev_left_ext, corners_prev_right_ext,
                             features_found_pl_pr)
             | std::views::filter(
                 [atol = atol_parallax](const auto &tuple)
@@ -599,25 +617,52 @@ public:
                 });
 
       // 因为 view 是延迟计算的，所以必须先创建副本，绝对不能使用 std::vector::assign 方法进行赋值
-      std::vector<PointType> new_corners_prev_left
+      std::vector<PointType> new_corners_prev_left_ext
           = zipped_view
             | std::views::transform([](const auto &tuple)
                                     { return std::get<0>(tuple); })
             | std::ranges::to<std::vector>();
-      std::vector<PointType> new_corners_prev_right
+      std::vector<PointType> new_corners_prev_right_ext
           = zipped_view
             | std::views::transform([](const auto &tuple)
                                     { return std::get<1>(tuple); })
             | std::ranges::to<std::vector>();
 
-      corners_prev_left  = std::move(new_corners_prev_left);
-      corners_prev_right = std::move(new_corners_prev_right);
+      corners_prev_left_ext  = std::move(new_corners_prev_left_ext);
+      corners_prev_right_ext = std::move(new_corners_prev_right_ext);
 
-      std::cerr << "\t筛选后，角点个数 = " << corners_prev_left.size() << "\n";
+      std::cerr << "\t筛选后，角点个数 = " << corners_prev_left_ext.size()
+                << "\n";
 
-      if (corners_prev_left.size() < minCorners)
+      if (corners_prev_left.size() + corners_prev_left_ext.size() < minCorners)
       {
+        std::cerr << "\t未通过第 1 轮筛选!\n";
         return false;
+      }
+
+      if (corners_prev_left.empty() || corners_prev_right.empty())
+      {
+        // 缺少先验信息，需要初始化角点数据
+        corners_prev_left  = std::move(corners_prev_left_ext);
+        corners_prev_right = std::move(corners_prev_right_ext);
+      }
+      else
+      {
+        // 已有先验信息
+        corners_prev_left.reserve(
+            std::max(corners_prev_left.capacity(),
+                     corners_prev_left.size() + corners_prev_left_ext.size()));
+        corners_prev_right.reserve(std::max(
+            corners_prev_right.capacity(),
+            corners_prev_right.size() + corners_prev_right_ext.size()));
+        corners_prev_left.insert(
+            corners_prev_left.end(),
+            std::make_move_iterator(corners_prev_left_ext.begin()),
+            std::make_move_iterator(corners_prev_left_ext.end()));
+        corners_prev_right.insert(
+            corners_prev_right.end(),
+            std::make_move_iterator(corners_prev_right_ext.begin()),
+            std::make_move_iterator(corners_prev_right_ext.end()));
       }
     }
 
@@ -668,6 +713,7 @@ public:
 
       if (corners_prev_left.size() < minCorners)
       {
+        std::cerr << "\t未通过第 2 轮筛选!\n";
         return false;
       }
     }
@@ -730,6 +776,7 @@ public:
 
       if (corners_prev_left.size() < minCorners)
       {
+        std::cerr << "\t未通过第 3 轮筛选!\n";
         return false;
       }
     }
@@ -792,9 +839,13 @@ public:
 
       if (corners_prev_left.size() < minCorners)
       {
+        std::cerr << "\t未通过第 4 轮筛选!\n";
         return false;
       }
     }
+
+    std::cerr << "\t通过所有筛选!\n";
+    return true;
   }
 };
 
@@ -1219,53 +1270,6 @@ public:
     cv::destroyAllWindows();
   }
 
-  void StartOdometer()
-  {
-    bool init{false};
-    StereoFrame<cv::Mat> prev_frame;
-
-    while (loader_)
-    {
-      StereoFrame<cv::Mat> frame{loader_()};
-
-      std::cerr << "[INFO] 正在处理第 " << frame_index_ << " 张图片 ...\n";
-
-      if (!init)
-      {
-        prev_frame = frame;
-        continue;
-      }
-      init = true;
-
-      auto [image_prev_left_rectified, image_prev_right_rectified]
-          = euroc_.remap(frame.image_left_, frame.image_right_);
-      auto [image_prev_left_grayscale, image_prev_right_grayscale]
-          = euroc_.grayscale(image_prev_left_rectified,
-                             image_prev_right_rectified);
-
-      auto [image_next_left_rectified, image_next_right_rectified]
-          = euroc_.remap(frame.image_left_, frame.image_right_);
-      auto [image_next_left_grayscale, image_next_right_grayscale]
-          = euroc_.grayscale(image_next_left_rectified,
-                             image_next_right_rectified);
-
-      std::vector<cv::Point2f> corners_prev_left;
-      std::vector<cv::Point2f> corners_prev_right;
-      std::vector<cv::Point2f> corners_next_left;
-      std::vector<cv::Point2f> corners_next_right;
-      detector_.FindCorners(
-          image_prev_left_grayscale, image_prev_right_grayscale,
-          image_next_left_grayscale, image_next_right_grayscale,
-          corners_prev_left, corners_prev_right, corners_next_left,
-          corners_next_right);
-
-      std::cerr << "\t最终检测到 " << corners_prev_left.size()
-                << " 个角点 ...\n";
-
-      ++loader_;
-    }
-  }
-
   void StartVisualization()
   {
     while (true)
@@ -1301,14 +1305,18 @@ private:
     NOOP
   };
 
-  KeyEvent InterpretKeyEvent()
+  /**
+   * @brief 处理键盘事件
+   * @param delay 延时 (单位：毫秒)
+   */
+  KeyEvent InterpretKeyEvent(int delay = 10)
   {
     size_t digit{0};
 
     while (true)
     {
       // https://docs.opencv.org/4.x/d7/dfc/group__highgui.html#gafa15c0501e0ddd90918f17aa071d3dd0
-      const auto key{cv::waitKey(0) & 0xFF};
+      const auto key{cv::waitKey(delay) & 0xFF};
       if ('0' <= key && key <= '9')
       {
         digit = 10 * digit + (key - '0');
@@ -1442,7 +1450,7 @@ private:
       cv::setWindowTitle(window_name_, ss_window_title.str());
     }
 
-    return InterpretKeyEvent();
+    return InterpretKeyEvent(0); // 持续等待
   }
 
   void SaveStereoFrame(const StereoFrame<cv::Mat> &frame) const
@@ -1456,11 +1464,115 @@ private:
     cv::imwrite(file_name + "_left.png", frame.image_left_);
     cv::imwrite(file_name + "_right.png", frame.image_right_);
   }
+
+public:
+  void StartOdometer(bool visualize = true)
+  {
+    bool init{false};
+    StereoFrame<cv::Mat> prev_frame;
+    std::vector<cv::Point2f> corners_prev_left;
+    std::vector<cv::Point2f> corners_prev_right;
+    std::vector<cv::Point2f> corners_next_left;
+    std::vector<cv::Point2f> corners_next_right;
+
+    while (loader_)
+    {
+      StereoFrame<cv::Mat> frame{loader_()};
+
+      std::cerr << "[INFO] 正在处理第 " << frame_index_++ << " 张图片 ...\n";
+
+      if (!init)
+      {
+        init       = true;
+        prev_frame = std::move(frame);
+        ++loader_;
+        continue;
+      }
+
+      auto [image_prev_left_rectified, image_prev_right_rectified]
+          = euroc_.remap(prev_frame.image_left_, prev_frame.image_right_);
+      auto [image_prev_left_grayscale, image_prev_right_grayscale]
+          = euroc_.grayscale(image_prev_left_rectified,
+                             image_prev_right_rectified);
+
+      auto [image_next_left_rectified, image_next_right_rectified]
+          = euroc_.remap(frame.image_left_, frame.image_right_);
+      auto [image_next_left_grayscale, image_next_right_grayscale]
+          = euroc_.grayscale(image_next_left_rectified,
+                             image_next_right_rectified);
+
+      const bool found_corners{detector_.FindCorners(
+          image_prev_left_grayscale, image_prev_right_grayscale,
+          image_next_left_grayscale, image_next_right_grayscale,
+          corners_prev_left, corners_prev_right, corners_next_left,
+          corners_next_right)};
+      if (found_corners)
+      {
+        // TODO 找到足够角点用于解算姿态
+      }
+
+      std::cerr << "\t最终检测到 " << corners_prev_left.size()
+                << " 个角点 ...\n";
+
+      // 可视化
+      if (visualize)
+      {
+        cv::Mat vis_top, vis_bottom, vis;
+
+        // https://docs.opencv.org/3.4/d2/de8/group__core__array.html#gaab5ceee39e0580f879df645a872c6bf7
+        cv::hconcat(image_prev_left_rectified, image_prev_right_rectified,
+                    vis_top);
+        cv::hconcat(image_next_left_rectified, image_next_right_rectified,
+                    vis_bottom);
+        cv::vconcat(vis_top, vis_bottom, vis);
+
+        // 绘制角点连线
+        if (found_corners)
+        {
+          const cv::Size maskSize{vis.size()};
+          cv::Mat mask{
+              cv::Mat::zeros(maskSize, image_prev_left_rectified.type())};
+          const cv::Size imageSize{image_prev_left_rectified.size()};
+          PlotFlow(mask, corners_prev_left, corners_prev_right, cv::Size{0, 0},
+                   cv::Size{imageSize.width, 0});
+          PlotFlow(mask, corners_prev_right, corners_next_right,
+                   cv::Size{imageSize.width, 0}, imageSize);
+          PlotFlow(mask, corners_next_right, corners_next_left, imageSize,
+                   cv::Size{0, imageSize.height});
+          PlotFlow(mask, corners_next_left, corners_prev_left,
+                   cv::Size{0, imageSize.height}, cv::Size{0, 0});
+          cv::add(mask, vis, vis);
+        }
+
+        cv::imshow(window_name_, vis);
+
+        {
+          std::stringstream ss_window_title;
+          ss_window_title << "Image Frame [#" << std::setw(4)
+                          << std::setfill('0') << frame_index_ << "]";
+          cv::setWindowTitle(window_name_, ss_window_title.str());
+        }
+
+        switch (InterpretKeyEvent(0))
+        {
+        case KeyEvent::EXIT:
+          return;
+        default:
+          break;
+        }
+      }
+
+      prev_frame = std::move(frame);
+      ++loader_;
+      corners_prev_left  = std::move(corners_next_left);
+      corners_prev_right = std::move(corners_next_right);
+    }
+  }
 };
 
 int main()
 {
   StereoSlam slam{};
-  slam.StartVisualization();
+  slam.StartOdometer();
   return 0;
 }
