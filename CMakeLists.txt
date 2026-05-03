@@ -203,7 +203,7 @@ target_link_libraries(csv_polyfit_plot
 )
 
 # ===== 目标： 纯视觉 SLAM =====
-add_executable(StereoSlam src/VisualSlam.cpp)
+add_executable(StereoSlam src/VisualSlam/VisualSlam.cpp)
 target_include_directories(StereoSlam PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
