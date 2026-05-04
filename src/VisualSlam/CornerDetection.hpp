@@ -1,13 +1,7 @@
 #pragma once
 
-#include <algorithm>
-#include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <iostream>
-#include <ranges>
-#include <utility>
-#include <vector>
 
 #include <Eigen/Dense>
 
