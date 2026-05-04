@@ -33,7 +33,8 @@
 struct StereoSlam
 {
 public:
-  const std::string window_name_{"VisualSlam"};
+  const std::string loopback_window_name_{"VisualSlam"};
+  const std::string disparity_window_name_{"Disparity"};
   const EuRoC::EuRoC euroc_{};
 
 private:
@@ -44,9 +45,8 @@ private:
 public:
   StereoSlam()
   {
-    cv::namedWindow(window_name_, cv::WINDOW_NORMAL);
-    // cv::setWindowProperty(window_name_, cv::WND_PROP_FULLSCREEN,
-    //                       cv::WINDOW_FULLSCREEN);
+    cv::namedWindow(loopback_window_name_, cv::WINDOW_NORMAL);
+    cv::namedWindow(disparity_window_name_, cv::WINDOW_NORMAL);
   }
 
   ~StereoSlam()
@@ -239,13 +239,24 @@ public:
           cv::add(mask, vis, vis);
         }
 
-        cv::imshow(window_name_, vis);
+        cv::imshow(loopback_window_name_, vis);
 
         {
           std::stringstream ss_window_title;
           ss_window_title << "Image Frame [#" << std::setw(4)
                           << std::setfill('0') << frame_index_ << "]";
-          cv::setWindowTitle(window_name_, ss_window_title.str());
+          cv::setWindowTitle(loopback_window_name_, ss_window_title.str());
+        }
+
+        // 绘制视差图
+        {
+          cv::Ptr<cv::StereoSGBM> sgbm{cv::StereoSGBM::create(
+              0, 96, 9, 8 * 9 * 9, 32 * 9 * 9, 1, 63, 10, 100, 32)};
+          cv::Mat disparity_sgbm, disparity;
+          sgbm->compute(image_next_left_grayscale, image_next_right_grayscale,
+                        disparity_sgbm);
+          disparity_sgbm.convertTo(disparity, CV_32F, 1.0 / 16.0);
+          cv::imshow(disparity_window_name_, disparity / 96.0);
         }
 
         switch (InterpretKeyEvent(0))
