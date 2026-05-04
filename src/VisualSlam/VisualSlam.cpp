@@ -26,21 +26,25 @@
 #include <opencv2/videoio.hpp>
 #include <opencv2/viz/vizcore.hpp>
 
+// #include "EKF.hpp"
 #include "EuRoC.hpp"
 #include "FastDetector.hpp"
 #include "ImageDataLoader.hpp"
 
-struct StereoSlam
+template <typename PointType = cv::Point2f> struct StereoSlam
 {
 public:
   const std::string loopback_window_name_{"VisualSlam"};
   const std::string disparity_window_name_{"Disparity"};
   const EuRoC::EuRoC euroc_{};
 
+  using Landmark = Eigen::Vector<typename PointType::value_type, 4>;
+
 private:
   ImageDataLoader loader_{};
   CornerDetection::FastDetector<> detector_{};
   size_t frame_index_{};
+  // EKF<> ekf_{};
 
 public:
   StereoSlam()
@@ -129,7 +133,6 @@ private:
   const size_t count_colors_{255};
   const std::vector<cv::Scalar> colors_{GenerateRandomColors(count_colors_)};
 
-  template <typename PointType = cv::Point2f>
   void PlotFlow(cv::Mat &flow, std::vector<PointType> const &pts0,
                 std::vector<PointType> const &pts1, cv::Size offset0,
                 cv::Size offset1) const
@@ -203,7 +206,13 @@ public:
           corners_next_right)};
       if (found_corners)
       {
-        // TODO 找到足够角点用于解算姿态
+        // 路标点在世界坐标系中的齐次坐标 ( 变量类型实际上是 `std::vector<Eigen::Vector4d>` )
+        std::vector<Landmark> landmarks;
+        landmarks.reserve(corners_prev_left.size());
+        // 利用 EKF 解算姿态
+        // ekf_.Update(corners_prev_left, corners_prev_right, corners_next_left,
+        //             corners_next_right, landmarks);
+        // TODO 将计算得到的路标点，与之前记录的路标点进行比较，检测回环（即是否回到起点或其附近位置）
       }
 
       std::cerr << "\t最终检测到 " << corners_prev_left.size()
