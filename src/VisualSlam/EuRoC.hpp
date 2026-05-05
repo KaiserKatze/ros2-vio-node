@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include <cstdio>
 #include <iostream>
 #include <utility>
@@ -52,10 +53,39 @@ struct EuRoC
   // Eigen::Matrix3d rectifiedCameraMatrix1;
   Eigen::Matrix4d T_C1C0;
   cv::Size imageSize{752, 480};
+
+  // Output 3x3 rectification transform (rotation matrix) for the first camera.
+  // This matrix brings points given in the unrectified first camera's
+  // coordinate system to points in the rectified first camera's coordinate
+  // system. In more technical terms, it performs a change of basis from the
+  // unrectified first camera's coordinate system to the rectified first
+  // camera's coordinate system
+  cv::Mat R0;
+  // Output 3x3 rectification transform (rotation matrix) for the second camera.
+  // This matrix brings points given in the unrectified second camera's
+  // coordinate system to points in the rectified second camera's coordinate
+  // system. In more technical terms, it performs a change of basis from the
+  // unrectified second camera's coordinate system to the rectified second
+  // camera's coordinate system
+  cv::Mat R1;
+  // Output 3x4 projection matrix in the new (rectified) coordinate systems for
+  // the first camera, i.e. it projects points given in the rectified first
+  // camera coordinate system into the rectified first camera's image
+  cv::Mat P0;
+  // Output 3x4 projection matrix in the new (rectified) coordinate systems for
+  // the second camera, i.e. it projects points given in the rectified first
+  // camera coordinate system into the rectified second camera's image
+  cv::Mat P1;
+  // Output 4×4 disparity-to-depth mapping matrix
+  cv::Mat Q;
+
   cv::Mat map0x;
   cv::Mat map0y;
   cv::Mat map1x;
   cv::Mat map1y;
+
+  double focal_length_rectified_{NAN};
+  double baseline_length_{NAN};
 
   EuRoC()
   {
@@ -130,7 +160,8 @@ struct EuRoC
       cv::eigen2cv(eigenMatR, stereoR);
       const Eigen::AngleAxisd rot_vec{eigenMatR};
       const double stereoRnorm{rot_vec.angle()};
-      std::cerr << "变换 T_C1C0 对应的旋转向量角度 = " << stereoRnorm << "\n";
+      std::cerr << "变换 T_C1C0 对应的旋转向量 = " << eigenMatR << "\n"
+                << "\t角度 = " << stereoRnorm << "\n";
     }
 
     // Translation vector from the coordinate system of the first camera to the second camera
@@ -141,40 +172,29 @@ struct EuRoC
       // 提取第 4 列的前 3 行作为平移向量
       cv::eigen2cv(eigenVecT, stereoT);
       const double stereoTnorm{eigenVecT.norm()};
-      std::cerr << "变换 T_C1C0 对应的平移向量范数 = " << stereoTnorm << "\n";
+      std::cerr << "变换 T_C1C0 对应的平移向量 = " << eigenVecT
+                << "\n"
+                   "\t范数 = "
+                << stereoTnorm << "\n";
+      baseline_length_ = stereoTnorm;
     }
 
     // 3. 调用立体校正
-
-    // Output 3x3 rectification transform (rotation matrix) for the first camera.
-    // This matrix brings points given in the unrectified first camera's
-    // coordinate system to points in the rectified first camera's coordinate
-    // system. In more technical terms, it performs a change of basis from the
-    // unrectified first camera's coordinate system to the rectified first
-    // camera's coordinate system
-    cv::Mat R0;
-    // Output 3x3 rectification transform (rotation matrix) for the second camera.
-    // This matrix brings points given in the unrectified second camera's
-    // coordinate system to points in the rectified second camera's coordinate
-    // system. In more technical terms, it performs a change of basis from the
-    // unrectified second camera's coordinate system to the rectified second
-    // camera's coordinate system
-    cv::Mat R1;
-    // Output 3x4 projection matrix in the new (rectified) coordinate systems for
-    // the first camera, i.e. it projects points given in the rectified first
-    // camera coordinate system into the rectified first camera's image
-    cv::Mat P0;
-    // Output 3x4 projection matrix in the new (rectified) coordinate systems for
-    // the second camera, i.e. it projects points given in the rectified first
-    // camera coordinate system into the rectified second camera's image
-    cv::Mat P1;
-    // Output 4×4 disparity-to-depth mapping matrix
-    cv::Mat Q;
 
     // https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#ga617b1685d4059c6040827800e72ad2b6
     cv::stereoRectify(cameraMatrix0, distCoeffs0, cameraMatrix1, distCoeffs1,
                       imageSize, stereoR, stereoT, R0, R1, P0, P1, Q,
                       cv::CALIB_ZERO_DISPARITY, 0);
+    focal_length_rectified_ = P0.at<double>(0, 0);
+
+    std::cerr << "R0 = " << R0 << "\n"
+              << "R1 = " << R1 << "\n"
+              << "P0 = " << P0 << "\n"
+              << "P1 = " << P1 << "\n"
+              << "Q = " << Q << "\n";
+
+    std::cerr << "focal_length_rectified_ = " << focal_length_rectified_ << "\n"
+              << "baseline_length_ = " << baseline_length_ << "\n";
 
     // 4. 初始化映射表
 
