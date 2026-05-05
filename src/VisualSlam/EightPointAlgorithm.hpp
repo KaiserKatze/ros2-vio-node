@@ -212,12 +212,31 @@ struct EightPointAlgorithm
                         const Eigen::Matrix3d &rotation,
                         const Eigen::Vector3d &translation,
                         const Eigen::Matrix3Xd &pixel_left,
-                        const Eigen::Matrix3Xd &pixel_right) :
+                        const Eigen::Matrix3Xd &pixel_right,
+                        const Eigen::Matrix3d &T_left,
+                        const Eigen::Matrix3d &T_right) :
       mat_cam_left_{mat_cam_left}, mat_cam_right_{mat_cam_right},
       rotation_{rotation}, translation_{translation}, pixel_left_{pixel_left},
-      pixel_right_{pixel_right},
-      T_left_{IsotropicScalingNormalize(pixel_left_)},
-      T_right_{IsotropicScalingNormalize(pixel_right_)}
+      pixel_right_{pixel_right}, T_left_{T_left}, T_right_{T_right}
+    {
+    }
+
+    TriangulationConfig(const Eigen::Matrix3d &mat_cam_left,
+                        const Eigen::Matrix3d &mat_cam_right,
+                        const Eigen::Matrix3d &rotation,
+                        const Eigen::Vector3d &translation,
+                        const Eigen::Matrix3Xd &pixel_left,
+                        const Eigen::Matrix3Xd &pixel_right) :
+      TriangulationConfig{
+          mat_cam_left,
+          mat_cam_right,
+          rotation,
+          translation,
+          pixel_left,
+          pixel_right,
+          IsotropicScalingNormalize(pixel_left_),
+          IsotropicScalingNormalize(pixel_right_),
+      }
     {
     }
 
