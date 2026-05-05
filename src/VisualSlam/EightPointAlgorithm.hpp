@@ -265,13 +265,19 @@ struct EightPointAlgorithm
       return mat_cam_right_.transpose().inverse() * rotation_
              * mat_cam_left_.transpose() * epipole_left_antisym;
     }
+
+    Eigen::Matrix3d
+    ComputeEssentialMatrix(const Eigen::Matrix3d &fundamental_matrix) const
+    {
+      return mat_cam_right_.transpose() * fundamental_matrix * mat_cam_left_;
+    }
   };
 
   /**
  * @brief 三角化
  * @return 路标点的齐次坐标
  */
-  static Eigen::Matrix4Xd Triangulate(const TriangulationConfig &&config)
+  static Eigen::Matrix4Xd Triangulate(const TriangulationConfig &config)
   {
     if (config.pixel_left_.cols() != config.pixel_right_.cols())
     {
@@ -332,7 +338,7 @@ struct EightPointAlgorithm
  * @return 基础矩阵
  */
   static Eigen::Matrix3d
-  EstimateFundamentalMatrix(const TriangulationConfig &&config)
+  EstimateFundamentalMatrix(const TriangulationConfig &config)
   {
     auto nCols{config.pixel_left_.cols()};
     Eigen::MatrixX9d matW(nCols, 9);
@@ -424,7 +430,7 @@ struct EightPointAlgorithm
   }
 
   static auto
-  DecompositeEssentialMatrix(const Eigen::Matrix3d &essential_matrix)
+  DecomposeEssentialMatrix(const Eigen::Matrix3d &essential_matrix)
   {
     const Eigen::Matrix3d matW{
         {0.0, -1.0, 0.0},

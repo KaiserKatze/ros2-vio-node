@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <iomanip>
 #include <ios>
 #include <iostream>
@@ -27,9 +28,11 @@
 #include <opencv2/viz/vizcore.hpp>
 
 // #include "EKF.hpp"
+#include "EightPointAlgorithm.hpp"
 #include "EuRoC.hpp"
 #include "FastDetector.hpp"
 #include "ImageDataLoader.hpp"
+#include "Util.hpp"
 
 template <typename PointType = cv::Point2f> struct StereoSlam
 {
@@ -42,6 +45,7 @@ public:
   using Landmark = Eigen::Vector<typename PointType::value_type, 4>;
 
 private:
+  std::ofstream data_output_{"StereoSlam.csv", std::ios::out | std::ios::trunc};
   ImageDataLoader loader_{};
   CornerDetection::FastDetector<> detector_{};
   size_t frame_index_{};
@@ -215,6 +219,109 @@ public:
         // 3. 分解本质矩阵 E = T_antisym * R
         // 4. 三角化
 
+        Eigen::Matrix3Xd pixel_left{
+            Util::ConvertToMatrix3Xd_EigenMap(corners_prev_right),
+        };
+        Eigen::Matrix3Xd pixel_right{
+            Util::ConvertToMatrix3Xd_EigenMap(corners_next_right),
+        };
+
+        EightPointAlgorithm::TriangulationConfig tri_config{
+            euroc_.mat_cam_intrinsic_rectified_,
+            euroc_.mat_cam_intrinsic_rectified_,
+            Eigen::Matrix3d::Identity(),
+            Eigen::Vector3d::Zero(),
+            pixel_left,
+            pixel_right,
+        };
+        Eigen::Matrix3d fundamental_matrix{
+            EightPointAlgorithm::EstimateFundamentalMatrix(tri_config),
+        };
+        Eigen::Matrix3d essential_matrix{
+            tri_config.ComputeEssentialMatrix(fundamental_matrix),
+        };
+        auto &&[matR1, matR2, vecT]
+            = EightPointAlgorithm::DecomposeEssentialMatrix(essential_matrix);
+        // 第 1 种组合方式 (matR1 + vecT)
+        tri_config.rotation_    = matR1;
+        tri_config.translation_ = vecT;
+        Eigen::Matrix4Xd model_points1{
+            EightPointAlgorithm::Triangulate(tri_config),
+        };
+        auto model_points1_count_positive_z{
+            (model_points1.row(2).array() > 0.0).count(),
+        };
+        // 第 2 种组合方式 (matR1 + -vecT)
+        tri_config.translation_ = -vecT;
+        Eigen::Matrix4Xd model_points2{
+            EightPointAlgorithm::Triangulate(tri_config),
+        };
+        auto model_points2_count_positive_z{
+            (model_points2.row(2).array() > 0.0).count(),
+        };
+        // 第 3 种组合方式 (matR2 + -vecT)
+        tri_config.rotation_ = matR2;
+        Eigen::Matrix4Xd model_points3{
+            EightPointAlgorithm::Triangulate(tri_config),
+        };
+        auto model_points3_count_positive_z{
+            (model_points3.row(2).array() > 0.0).count(),
+        };
+        // 第 4 种组合方式 (matR2 + vecT)
+        tri_config.translation_ = vecT;
+        Eigen::Matrix4Xd model_points4{
+            EightPointAlgorithm::Triangulate(tri_config),
+        };
+        auto model_points4_count_positive_z{
+            (model_points4.row(2).array() > 0.0).count(),
+        };
+
+        // 找出 Z 分量大于零的列向量个数最多的组合方式
+        Eigen::Matrix3d best_matR;
+        Eigen::Vector3d best_vecT;
+        Eigen::Matrix4Xd best_model_points;
+        decltype(model_points4_count_positive_z) max_positive_z_count{0};
+
+        if (model_points1_count_positive_z > max_positive_z_count)
+        {
+          max_positive_z_count = model_points1_count_positive_z;
+          best_matR            = matR1;
+          best_vecT            = vecT;
+          best_model_points    = std::move(model_points1);
+        }
+        if (model_points2_count_positive_z > max_positive_z_count)
+        {
+          max_positive_z_count = model_points2_count_positive_z;
+          best_matR            = matR1;
+          best_vecT            = -vecT;
+          best_model_points    = std::move(model_points2);
+        }
+        if (model_points3_count_positive_z > max_positive_z_count)
+        {
+          max_positive_z_count = model_points3_count_positive_z;
+          best_matR            = matR2;
+          best_vecT            = -vecT;
+          best_model_points    = std::move(model_points3);
+        }
+        if (model_points4_count_positive_z > max_positive_z_count)
+        {
+          max_positive_z_count = model_points4_count_positive_z;
+          best_matR            = matR2;
+          best_vecT            = vecT;
+          best_model_points    = std::move(model_points4);
+        }
+
+        Eigen::Quaterniond quad_rotation{best_matR};
+
+        data_output_ << frame.timestamp_ << ", "  //
+                     << quad_rotation.w() << ", " //
+                     << quad_rotation.x() << ", " //
+                     << quad_rotation.y() << ", " //
+                     << quad_rotation.z() << ", " //
+                     << best_vecT.x() << ", "     //
+                     << best_vecT.y() << ", "     //
+                     << best_vecT.z() << "\n";
+
         // 路标点在世界坐标系中的齐次坐标 ( 变量类型实际上是 `std::vector<Eigen::Vector4d>` )
         // std::vector<Landmark> landmarks;
         // landmarks.reserve(corners_prev_left.size());
@@ -356,7 +463,7 @@ int main()
   try
   {
     StereoSlam slam{};
-    slam.StartOdometer();
+    slam.StartOdometer(false);
   }
   catch (const std::exception &e)
   {

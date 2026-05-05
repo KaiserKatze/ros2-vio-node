@@ -49,33 +49,12 @@ struct EuRoC
   // https://libeigen.gitlab.io/eigen/docs-3.1/TopicStructHavingEigenMembers.html
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-  // Eigen::Matrix3d rectifiedCameraMatrix0;
-  // Eigen::Matrix3d rectifiedCameraMatrix1;
+  Eigen::Matrix3d mat_cam_intrinsic_rectified_;
+  Eigen::Vector3d vec_cam_translation_rectified_;
+
   Eigen::Matrix4d T_C1C0;
   cv::Size imageSize{752, 480};
 
-  // Output 3x3 rectification transform (rotation matrix) for the first camera.
-  // This matrix brings points given in the unrectified first camera's
-  // coordinate system to points in the rectified first camera's coordinate
-  // system. In more technical terms, it performs a change of basis from the
-  // unrectified first camera's coordinate system to the rectified first
-  // camera's coordinate system
-  cv::Mat R0;
-  // Output 3x3 rectification transform (rotation matrix) for the second camera.
-  // This matrix brings points given in the unrectified second camera's
-  // coordinate system to points in the rectified second camera's coordinate
-  // system. In more technical terms, it performs a change of basis from the
-  // unrectified second camera's coordinate system to the rectified second
-  // camera's coordinate system
-  cv::Mat R1;
-  // Output 3x4 projection matrix in the new (rectified) coordinate systems for
-  // the first camera, i.e. it projects points given in the rectified first
-  // camera coordinate system into the rectified first camera's image
-  cv::Mat P0;
-  // Output 3x4 projection matrix in the new (rectified) coordinate systems for
-  // the second camera, i.e. it projects points given in the rectified first
-  // camera coordinate system into the rectified second camera's image
-  cv::Mat P1;
   // Output 4×4 disparity-to-depth mapping matrix
   cv::Mat Q;
 
@@ -181,11 +160,45 @@ struct EuRoC
 
     // 3. 调用立体校正
 
+    // Output 3x3 rectification transform (rotation matrix) for the first camera.
+    // This matrix brings points given in the unrectified first camera's
+    // coordinate system to points in the rectified first camera's coordinate
+    // system. In more technical terms, it performs a change of basis from the
+    // unrectified first camera's coordinate system to the rectified first
+    // camera's coordinate system
+    cv::Mat R0;
+    // Output 3x3 rectification transform (rotation matrix) for the second camera.
+    // This matrix brings points given in the unrectified second camera's
+    // coordinate system to points in the rectified second camera's coordinate
+    // system. In more technical terms, it performs a change of basis from the
+    // unrectified second camera's coordinate system to the rectified second
+    // camera's coordinate system
+    cv::Mat R1;
+    // Output 3x4 projection matrix in the new (rectified) coordinate systems for
+    // the first camera, i.e. it projects points given in the rectified first
+    // camera coordinate system into the rectified first camera's image
+    cv::Mat P0;
+    // Output 3x4 projection matrix in the new (rectified) coordinate systems for
+    // the second camera, i.e. it projects points given in the rectified first
+    // camera coordinate system into the rectified second camera's image
+    cv::Mat P1;
+
     // https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#ga617b1685d4059c6040827800e72ad2b6
     cv::stereoRectify(cameraMatrix0, distCoeffs0, cameraMatrix1, distCoeffs1,
                       imageSize, stereoR, stereoT, R0, R1, P0, P1, Q,
                       cv::CALIB_ZERO_DISPARITY, 0);
     focal_length_rectified_ = P0.at<double>(0, 0);
+
+    mat_cam_intrinsic_rectified_ = Eigen::Matrix3d{
+        {P1.at<double>(0, 0), P1.at<double>(0, 1), P1.at<double>(0, 2)},
+        {P1.at<double>(1, 0), P1.at<double>(1, 1), P1.at<double>(1, 2)},
+        {P1.at<double>(2, 0), P1.at<double>(2, 1), P1.at<double>(2, 2)},
+    };
+    vec_cam_translation_rectified_ = Eigen::Vector3d{
+        P1.at<double>(0, 3),
+        P1.at<double>(1, 3),
+        P1.at<double>(2, 3),
+    };
 
     std::cerr << "R0 = " << R0 << "\n"
               << "R1 = " << R1 << "\n"
