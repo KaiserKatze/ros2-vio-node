@@ -1,5 +1,6 @@
 #pragma once
 
+#include <iostream>
 #include <tuple>
 
 #include <Eigen/Dense>
@@ -161,10 +162,11 @@ struct EightPointAlgorithm
  */
   static Eigen::Matrix3d IsotropicScalingNormalize(Eigen::Matrix3Xd &points)
   {
-    if (points.rows() != 3)
+    if (points.rows() != 3 || points.cols() == 0)
     {
-      throw std::runtime_error(
-          "IsotropicScalingNormalize: points must be 3xN.");
+      throw std::runtime_error{
+          "IsotropicScalingNormalize: points must be 3xN.",
+      };
     }
     static const double tiny = 1e-8;
 
@@ -234,10 +236,12 @@ struct EightPointAlgorithm
           translation,
           pixel_left,
           pixel_right,
-          IsotropicScalingNormalize(pixel_left_),
-          IsotropicScalingNormalize(pixel_right_),
+          Eigen::Matrix3d::Identity(),
+          Eigen::Matrix3d::Identity(),
       }
     {
+      T_left_  = IsotropicScalingNormalize(pixel_left_);
+      T_right_ = IsotropicScalingNormalize(pixel_right_);
     }
 
     Eigen::Vector3d GetLeftEpipole() const
@@ -362,7 +366,7 @@ struct EightPointAlgorithm
     }
 
     // 进行第一次奇异值分解（给出最小二乘解）
-    Eigen::JacobiSVD<decltype(matW)> svd1{matW, Eigen::ComputeThinV};
+    Eigen::JacobiSVD<decltype(matW)> svd1{matW, Eigen::ComputeFullV};
     Eigen::VectorXd matW_svd_result{
         svd1.matrixV().col(svd1.matrixV().cols() - 1)};
 
@@ -429,8 +433,7 @@ struct EightPointAlgorithm
     return homography_matrix;
   }
 
-  static auto
-  DecomposeEssentialMatrix(const Eigen::Matrix3d &essential_matrix)
+  static auto DecomposeEssentialMatrix(const Eigen::Matrix3d &essential_matrix)
   {
     const Eigen::Matrix3d matW{
         {0.0, -1.0, 0.0},
@@ -466,7 +469,7 @@ struct EightPointAlgorithm
 
     Eigen::JacobiSVD<Eigen::Matrix3d> svd2{
         matU * matZ * matU.transpose(),
-        Eigen::ComputeThinV,
+        Eigen::ComputeFullV,
     };
     Eigen::Vector3d vecT{svd2.matrixV().col(svd2.matrixV().cols() - 1)};
 

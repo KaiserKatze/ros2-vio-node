@@ -173,6 +173,11 @@ public:
   void StartOdometer(bool visualize                = true,
                      bool plot_disparity_and_depth = false)
   {
+    if (!visualize)
+    {
+      cv::destroyAllWindows();
+    }
+
     bool init{false};
     StereoFrame<cv::Mat> prev_frame;
     std::vector<cv::Point2f> corners_prev_left;
@@ -313,7 +318,9 @@ public:
 
         Eigen::Quaterniond quad_rotation{best_matR};
 
-        data_output_ << frame.timestamp_ << ", "  //
+        data_output_ << std::fixed                //
+                     << std::setprecision(18)     //
+                     << frame.timestamp_ << ", "  //
                      << quad_rotation.w() << ", " //
                      << quad_rotation.x() << ", " //
                      << quad_rotation.y() << ", " //
