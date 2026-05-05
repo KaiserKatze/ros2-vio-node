@@ -209,6 +209,12 @@ public:
           corners_next_right)};
       if (found_corners)
       {
+        // 当视图之间的旋转、平移未知（例如从上一帧右目到下一帧右目，从上一帧左目到下一帧左目）时：
+        // 1. 八点法求解基础矩阵 F
+        // 2. 求解本质矩阵 E = K_right^T * F * K_left
+        // 3. 分解本质矩阵 E = T_antisym * R
+        // 4. 三角化
+
         // 路标点在世界坐标系中的齐次坐标 ( 变量类型实际上是 `std::vector<Eigen::Vector4d>` )
         // std::vector<Landmark> landmarks;
         // landmarks.reserve(corners_prev_left.size());
