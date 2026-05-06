@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.28.3)
 project(euroc_vio)
 
 # --- 编译选项设置 ---
@@ -21,7 +21,8 @@ endif()
 add_compile_options(-Werror)
 add_compile_options(-Wshadow)
 add_compile_options(-Wuninitialized)
-add_compile_options(-O0)
+add_compile_options(-Wno-maybe-uninitialized)
+add_compile_options(-O3)
 add_compile_options(-march=native)
 
 if(MSVC)
@@ -122,7 +123,6 @@ target_link_libraries(euroc_imu
   Boost::boost
   ${OpenCV_LIBS}
 )
-target_compile_options(euroc_imu PRIVATE -Wno-maybe-uninitialized)
 
 # add_ros2_executable(imu_sim src/sim.cpp)
 # ament_target_dependencies(imu_sim
@@ -176,7 +176,6 @@ target_include_directories(euroc_rk4_eval PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
-target_compile_features(euroc_rk4_eval PUBLIC cxx_std_20)
 install(TARGETS euroc_rk4_eval
   DESTINATION debug/euroc_rk4_eval
 )
@@ -193,7 +192,6 @@ target_include_directories(csv_polyfit_plot PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
-target_compile_features(csv_polyfit_plot PUBLIC cxx_std_20)
 install(TARGETS csv_polyfit_plot
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -203,14 +201,14 @@ target_link_libraries(csv_polyfit_plot
 )
 
 # ===== 目标： 纯视觉 SLAM =====
-add_executable(StereoSlam src/VisualSlam/VisualSlam.cpp)
-target_include_directories(StereoSlam PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
+add_ros2_executable(StereoSlam src/VisualSlam/VisualSlam.cpp)
+ament_target_dependencies(StereoSlam
+  rclcpp
+  geometry_msgs
+  nav_msgs
 )
 target_link_libraries(StereoSlam
   Eigen3::Eigen
-  armadillo
   ${OpenCV_LIBS}
 )
 

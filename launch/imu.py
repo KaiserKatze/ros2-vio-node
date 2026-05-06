@@ -53,6 +53,14 @@ def setup_launch_entities(context, *args, **kwargs):
         parameters=[{"estimator": estimator_val}],
     )
 
+    # 定义纯视觉 SLAM 节点
+    stereo_slam_node = Node(
+        package="euroc_vio",
+        executable="StereoSlam",
+        name="StereoSlam",
+        output="screen",
+    )
+
     # 4. 定义 RViz 节点
     rviz_node = Node(
         package="rviz2",
@@ -64,6 +72,7 @@ def setup_launch_entities(context, *args, **kwargs):
 
     return [
         imu_node,
+        stereo_slam_node,
         rviz_node,
         bag_play,
     ]

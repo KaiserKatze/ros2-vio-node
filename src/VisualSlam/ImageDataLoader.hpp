@@ -166,17 +166,24 @@ private:
 
   static std::vector<StereoFrame<>> Load()
   {
+    static const std::filesystem::path path_home{
+        std::getenv("HOME"),
+    };
+    static const std::filesystem::path path_mav0{
+        // R"(/mnt/e/Documents/mav0),
+        path_home / "EuRoC_MAV_Datasets" / "V2_01_easy" / "mav0",
+    };
     static const std::filesystem::path path_cam0_data{
-        R"(/mnt/e/Documents/mav0/cam0/data.csv)",
+        path_mav0 / "cam0" / "data.csv",
     };
     static const std::filesystem::path path_cam1_data{
-        R"(/mnt/e/Documents/mav0/cam1/data.csv)",
+        path_mav0 / "cam1" / "data.csv",
     };
     static const std::filesystem::path path_cam0_image_dir{
-        R"(/mnt/e/Documents/mav0/cam0/data)",
+        path_mav0 / "cam0" / "data",
     };
     static const std::filesystem::path path_cam1_image_dir{
-        R"(/mnt/e/Documents/mav0/cam1/data)",
+        path_mav0 / "cam1" / "data",
     };
 
     auto stereo_frames

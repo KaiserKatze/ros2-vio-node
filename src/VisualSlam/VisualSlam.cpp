@@ -10,6 +10,10 @@
 #include <utility>
 #include <vector>
 
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <nav_msgs/msg/path.hpp>
+#include <rclcpp/rclcpp.hpp>
+
 #include <Eigen/Dense>
 
 #include <opencv2/calib3d.hpp>
@@ -33,8 +37,49 @@
 #include "FastDetector.hpp"
 #include "ImageDataLoader.hpp"
 #include "Util.hpp"
+#include "euroc_vio/main.h"
 
-template <typename PointType = cv::Point2f> struct StereoSlam
+struct StereoSlamPublisher : public rclcpp::Node
+{
+private:
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_{
+      create_publisher<nav_msgs::msg::Path>("/path_stereo_slam", rclcpp::QoS{10}),
+  };
+  nav_msgs::msg::Path msg_path_;
+
+protected:
+  StereoSlamPublisher() : Node("StereoSlam")
+  {
+    msg_path_.header.frame_id = DEFAULT_FRAME_ID;
+  }
+
+  void Publish(const double timestamp, const Eigen::Quaterniond &attitude,
+               const Eigen::Vector3d &position)
+  {
+    geometry_msgs::msg::PoseStamped msg_pose;
+
+    rclcpp::Time pose_timestamp{
+        static_cast<std::int64_t>(timestamp * 1e9),
+    };
+    msg_path_.header.stamp = pose_timestamp;
+    msg_pose.header.stamp  = pose_timestamp;
+
+    msg_pose.pose.position.x = position.x();
+    msg_pose.pose.position.y = position.y();
+    msg_pose.pose.position.z = position.z();
+
+    msg_pose.pose.orientation.w = attitude.w();
+    msg_pose.pose.orientation.x = attitude.x();
+    msg_pose.pose.orientation.y = attitude.y();
+    msg_pose.pose.orientation.z = attitude.z();
+
+    msg_path_.poses.push_back(msg_pose);
+    publisher_->publish(msg_path_);
+  }
+};
+
+template <typename PointType = cv::Point2f>
+struct StereoSlam : public StereoSlamPublisher
 {
 public:
   const std::string loopback_window_name_{"VisualSlam"};
@@ -199,7 +244,8 @@ public:
     Eigen::Quaterniond attitude{Eigen::Quaterniond::Identity()};
     Eigen::Vector3d position{Eigen::Vector3d::Zero()};
 
-    while (loader_)
+    // 引入 rclcpp::ok() 以响应 ROS 2 节点的关闭信号 (如 Ctrl+C)
+    while (rclcpp::ok() && loader_)
     {
       StereoFrame<cv::Mat> frame{loader_()};
 
@@ -333,7 +379,7 @@ public:
         Eigen::Quaterniond quad_rotation{best_matR};
 
         // 更新状态
-        position = attitude * (position + best_vecT);
+        position = attitude * best_vecT + position;
         attitude = attitude * quad_rotation;
 
         data_output_ << std::fixed                //
@@ -354,6 +400,8 @@ public:
                      << position.y() << ", "      //
                      << position.z()              //
                      << "\n";
+
+        Publish(frame.timestamp_, attitude, position);
 
         // 路标点在世界坐标系中的齐次坐标 ( 变量类型实际上是 `std::vector<Eigen::Vector4d>` )
         // std::vector<Landmark> landmarks;
@@ -491,16 +539,28 @@ public:
   }
 };
 
-int main()
+int main(int argc, char *argv[])
 {
+  // 初始化 ROS 2
+  rclcpp::init(argc, argv);
+
   try
   {
-    StereoSlam slam{false};
-    slam.StartOdometer();
+    // 通过共享指针以符合 rclcpp 标准的方式实例化 Node
+    auto slam_node = std::make_shared<StereoSlam<>>(false);
+
+    // 注意：当前实现完全基于数据集驱动并且没有用到其他 Subscription。
+    // 使用阻塞式调用 StartOdometer() 不会影响消息发布机制。
+    // 如果后续你需要加入 callback(例如接收真正的相机传感器 topic)，
+    // 你需要将 StartOdometer 放到 std::thread 中并在 main 线程调用 rclcpp::spin(slam_node);
+    slam_node->StartOdometer();
   }
   catch (const std::exception &e)
   {
-    std::cerr << e.what() << "\n";
+    std::cerr << "ROS 2 Node Error: " << e.what() << "\n";
   }
+
+  // 关闭 ROS 2 实例
+  rclcpp::shutdown();
   return 0;
 }
