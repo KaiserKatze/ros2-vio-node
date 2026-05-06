@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -43,7 +44,8 @@ struct StereoSlamPublisher : public rclcpp::Node
 {
 private:
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_{
-      create_publisher<nav_msgs::msg::Path>("/path_stereo_slam", rclcpp::QoS{10}),
+      create_publisher<nav_msgs::msg::Path>("/path_stereo_slam",
+                                            rclcpp::QoS{10}),
   };
   nav_msgs::msg::Path msg_path_;
 
@@ -53,8 +55,10 @@ protected:
     msg_path_.header.frame_id = DEFAULT_FRAME_ID;
   }
 
-  void Publish(const double timestamp, const Eigen::Quaterniond &attitude,
-               const Eigen::Vector3d &position)
+  template <typename value_type>
+  void Publish(const double timestamp,
+               const Eigen::Quaternion<value_type> &attitude,
+               const Eigen::Vector<value_type, 3> &position)
   {
     geometry_msgs::msg::PoseStamped msg_pose;
 
@@ -87,14 +91,16 @@ public:
   const std::string depth_window_name_{"Depth Map"};
   const EuRoC::EuRoC euroc_{};
 
-  using Landmark = Eigen::Vector<typename PointType::value_type, 4>;
+  using value_type = typename PointType::value_type;
+  using EPA        = EightPointAlgorithm<value_type>;
+  using Landmark   = Eigen::Vector<value_type, 4>;
 
 private:
   std::ofstream data_output_{"StereoSlam.csv", std::ios::out | std::ios::trunc};
   ImageDataLoader loader_{};
-  CornerDetection::FastDetector<> detector_{};
+  CornerDetection::FastDetector<PointType> detector_{};
   size_t frame_index_{};
-  // EKF<> ekf_{};
+  // EKF<PointType> ekf_{};
   bool visualize_{true};
   bool plot_disparity_and_depth_{false};
 
@@ -200,8 +206,8 @@ private:
   {
     for (size_t index = 0; index < pts0.size(); ++index)
     {
-      cv::Point2f pt0{pts0[index]};
-      cv::Point2f pt1{pts1[index]};
+      PointType pt0{pts0[index]};
+      PointType pt1{pts1[index]};
       pt0.x += offset0.width;
       pt0.y += offset0.height;
       pt1.x += offset1.width;
@@ -229,10 +235,10 @@ public:
   {
     bool init{false};
     StereoFrame<cv::Mat> prev_frame;
-    std::vector<cv::Point2f> corners_prev_left;
-    std::vector<cv::Point2f> corners_prev_right;
-    std::vector<cv::Point2f> corners_next_left;
-    std::vector<cv::Point2f> corners_next_right;
+    std::vector<PointType> corners_prev_left;
+    std::vector<PointType> corners_prev_right;
+    std::vector<PointType> corners_next_left;
+    std::vector<PointType> corners_next_right;
 
     data_output_ << "timestamp, "
                     "dqw, dqx, dqy, dqz, "
@@ -241,8 +247,9 @@ public:
                     "px, py, pz, "
                     "\n";
 
-    Eigen::Quaterniond attitude{Eigen::Quaterniond::Identity()};
-    Eigen::Vector3d position{Eigen::Vector3d::Zero()};
+    Eigen::Quaternion<value_type> attitude{
+        Eigen::Quaternion<value_type>::Identity()};
+    Eigen::Vector<value_type, 3> position{Eigen::Vector<value_type, 3>::Zero()};
 
     // 引入 rclcpp::ok() 以响应 ROS 2 节点的关闭信号 (如 Ctrl+C)
     while (rclcpp::ok() && loader_)
@@ -271,11 +278,13 @@ public:
           = euroc_.grayscale(image_next_left_rectified,
                              image_next_right_rectified);
 
-      const bool found_corners{detector_.FindCorners(
-          image_prev_left_grayscale, image_prev_right_grayscale,
-          image_next_left_grayscale, image_next_right_grayscale,
-          corners_prev_left, corners_prev_right, corners_next_left,
-          corners_next_right)};
+      const bool found_corners{
+          detector_.FindCorners(
+              image_prev_left_grayscale, image_prev_right_grayscale,
+              image_next_left_grayscale, image_next_right_grayscale,
+              corners_prev_left, corners_prev_right, corners_next_left,
+              corners_next_right),
+      };
       if (found_corners)
       {
         // 当视图之间的旋转、平移未知（例如从上一帧右目到下一帧右目，从上一帧左目到下一帧左目）时：
@@ -284,68 +293,157 @@ public:
         // 3. 分解本质矩阵 E = T_antisym * R
         // 4. 三角化
 
-        Eigen::Matrix3Xd pixel_left{
-            Util::ConvertToMatrix3Xd_EigenMap(corners_prev_right),
-        };
-        Eigen::Matrix3Xd pixel_right{
-            Util::ConvertToMatrix3Xd_EigenMap(corners_next_right),
+        const cv::Mat fundamental_matrix_cv{
+            cv::findFundamentalMat(corners_prev_left, corners_next_left),
         };
 
-        EightPointAlgorithm::TriangulationConfig tri_config{
-            euroc_.mat_cam_intrinsic_rectified_,
-            euroc_.mat_cam_intrinsic_rectified_,
-            Eigen::Matrix3d::Identity(),
-            Eigen::Vector3d::Zero(),
+        // double sampsonDistance_cv{NAN};
+        // try
+        // {
+        //   auto pt1 = [&]
+        //   {
+        //     cv::Mat pts;
+        //     cv::Mat(corners_prev_left)
+        //         .reshape(1, static_cast<int>(corners_prev_left.size()))
+        //         .convertTo(pts, CV_64F); // 转换为 double
+        //     return pts;
+        //   }();
+        //   auto pt2 = [&]
+        //   {
+        //     cv::Mat pts;
+        //     cv::Mat(corners_next_left)
+        //         .reshape(1, static_cast<int>(corners_next_left.size()))
+        //         .convertTo(pts, CV_64F); // 转换为 double
+        //     return pts;
+        //   }();
+        //   auto F = [&]
+        //   {
+        //     cv::Mat res;
+        //     fundamental_matrix_cv.convertTo(res, CV_64F);
+        //     return res;
+        //   }();
+        //   std::cerr << "pt1.type() -> " << pt1.type() << "\n" // CV_64FC2
+        //             << "pt2.type() -> " << pt2.type() << "\n" // CV_64FC2
+        //             << "F.type() -> " << F.type() << "\n";    // CV_64F
+        //   sampsonDistance_cv = cv::sampsonDistance(pt1, pt2, F);
+        // }
+        // catch (const std::exception &e)
+        // {
+        //   std::cerr << "Error @ `sampsonDistance_cv`: " << e.what() << "\n";
+        //   throw e;
+        // }
+
+        auto pixel_left{
+            Util::ConvertToMatrix3X_EigenMap(corners_prev_left),
+        };
+        auto pixel_right{
+            Util::ConvertToMatrix3X_EigenMap(corners_next_left),
+        };
+
+        typename EPA::TriangulationConfig tri_config{
+            euroc_.mat_cam_intrinsic_rectified_.template cast<value_type>(),
+            euroc_.mat_cam_intrinsic_rectified_.template cast<value_type>(),
+            Eigen::Matrix<value_type, 3, 3>::Identity(),
+            Eigen::Vector<value_type, 3>::Zero(),
             pixel_left,
             pixel_right,
         };
-        Eigen::Matrix3d fundamental_matrix{
-            EightPointAlgorithm::EstimateFundamentalMatrix(tri_config),
+        auto fundamental_matrix{
+            EPA::EstimateFundamentalMatrix(tri_config),
         };
-        Eigen::Matrix3d essential_matrix{
+
+        // double sampsonDistance_handmade{NAN};
+        // try
+        // {
+        //   auto pt1 = [&]
+        //   {
+        //     cv::Mat pts;
+        //     cv::Mat(corners_prev_left)
+        //         .reshape(1, static_cast<int>(corners_prev_left.size()))
+        //         .convertTo(pts, CV_64F); // 转换为 double
+        //     return pts;
+        //   }();
+        //   auto pt2 = [&]
+        //   {
+        //     cv::Mat pts;
+        //     cv::Mat(corners_next_left)
+        //         .reshape(1, static_cast<int>(corners_next_left.size()))
+        //         .convertTo(pts, CV_64F); // 转换为 double
+        //     return pts;
+        //   }();
+        //   auto F = [&]
+        //   {
+        //     cv::Mat matF_cv;
+        //     cv::eigen2cv(
+        //         Eigen::Matrix3d{fundamental_matrix.template cast<double>()},
+        //         matF_cv);
+        //     return matF_cv;
+        //   }();
+        //   std::cerr << "pt1.type() -> " << pt1.type() << "\n"
+        //             << "pt2.type() -> " << pt2.type() << "\n"
+        //             << "F.type() -> " << F.type() << "\n";
+        //   sampsonDistance_handmade = cv::sampsonDistance(pt1, pt2, F);
+        // }
+        // catch (const std::exception &e)
+        // {
+        //   std::cerr << "Error @ `sampsonDistance_handmade`: " << e.what()
+        //             << "\n";
+        //   throw e;
+        // }
+
+        // std::cerr << "\tFundamental Matrix (handmade) = " << fundamental_matrix
+        //           << "\n"
+        //           << "\t\tSampson Distance = " << sampsonDistance_handmade
+        //           << "\n"
+        //           << "\tFundamental Matrix (OpenCV 2) = "
+        //           << fundamental_matrix_cv << "\n"
+        //           << "\t\tSampson Distance = " << sampsonDistance_cv << "\n";
+        // 得出结论：OpenCV 算出的基础矩阵的误差比我的算法的误差要小很多
+
+        auto essential_matrix{
             tri_config.ComputeEssentialMatrix(fundamental_matrix),
         };
         auto &&[matR1, matR2, vecT]
-            = EightPointAlgorithm::DecomposeEssentialMatrix(essential_matrix);
+            = EPA::DecomposeEssentialMatrix(essential_matrix);
         // 第 1 种组合方式 (matR1 + vecT)
         tri_config.rotation_    = matR1;
         tri_config.translation_ = vecT;
-        Eigen::Matrix4Xd model_points1{
-            EightPointAlgorithm::Triangulate(tri_config),
+        auto model_points1{
+            EPA::Triangulate(tri_config),
         };
         auto model_points1_count_positive_z{
             (model_points1.row(2).array() > 0.0).count(),
         };
         // 第 2 种组合方式 (matR1 + -vecT)
         tri_config.translation_ = -vecT;
-        Eigen::Matrix4Xd model_points2{
-            EightPointAlgorithm::Triangulate(tri_config),
+        auto model_points2{
+            EPA::Triangulate(tri_config),
         };
         auto model_points2_count_positive_z{
             (model_points2.row(2).array() > 0.0).count(),
         };
         // 第 3 种组合方式 (matR2 + -vecT)
         tri_config.rotation_ = matR2;
-        Eigen::Matrix4Xd model_points3{
-            EightPointAlgorithm::Triangulate(tri_config),
+        auto model_points3{
+            EPA::Triangulate(tri_config),
         };
         auto model_points3_count_positive_z{
             (model_points3.row(2).array() > 0.0).count(),
         };
         // 第 4 种组合方式 (matR2 + vecT)
         tri_config.translation_ = vecT;
-        Eigen::Matrix4Xd model_points4{
-            EightPointAlgorithm::Triangulate(tri_config),
+        auto model_points4{
+            EPA::Triangulate(tri_config),
         };
         auto model_points4_count_positive_z{
             (model_points4.row(2).array() > 0.0).count(),
         };
 
         // 找出 Z 分量大于零的列向量个数最多的组合方式
-        Eigen::Matrix3d best_matR;
-        Eigen::Vector3d best_vecT;
-        Eigen::Matrix4Xd best_model_points;
-        decltype(model_points4_count_positive_z) max_positive_z_count{0};
+        decltype(matR1) best_matR;
+        decltype(vecT) best_vecT;
+        decltype(model_points1) best_model_points;
+        decltype(model_points1_count_positive_z) max_positive_z_count{0};
 
         if (model_points1_count_positive_z > max_positive_z_count)
         {
@@ -376,7 +474,7 @@ public:
           best_model_points    = std::move(model_points4);
         }
 
-        Eigen::Quaterniond quad_rotation{best_matR};
+        Eigen::Quaternion<value_type> quad_rotation{best_matR};
 
         // 更新状态
         position = attitude * best_vecT + position;
@@ -401,8 +499,6 @@ public:
                      << position.z()              //
                      << "\n";
 
-        Publish(frame.timestamp_, attitude, position);
-
         // 路标点在世界坐标系中的齐次坐标 ( 变量类型实际上是 `std::vector<Eigen::Vector4d>` )
         // std::vector<Landmark> landmarks;
         // landmarks.reserve(corners_prev_left.size());
@@ -410,6 +506,8 @@ public:
         // ekf_.Update(corners_prev_left, corners_prev_right, corners_next_left,
         //             corners_next_right, landmarks);
         // TODO 将计算得到的路标点，与之前记录的路标点进行比较，检测回环（即是否回到起点或其附近位置）
+
+        Publish(frame.timestamp_, attitude, position);
       }
 
       // std::cerr << "\t最终检测到 " << corners_prev_left.size()
@@ -480,9 +578,9 @@ public:
 
           // 绘制深度图 (手动计算)
 
-          // const float f{static_cast<float>(euroc_.focal_length_rectified_)};
-          // const float b{static_cast<float>(euroc_.baseline_length_)};
-          // const float fb{f * b};
+          // const value_type f{static_cast<value_type>(euroc_.focal_length_rectified_)};
+          // const value_type b{static_cast<value_type>(euroc_.baseline_length_)};
+          // const value_type fb{f * b};
           // cv::Mat depth = cv::Mat::zeros(disparity.size(), CV_32F);
           // // 避免除以零（视差为0表示无穷远或无效点）
           // cv::Mat mask = disparity > 0;
@@ -547,7 +645,7 @@ int main(int argc, char *argv[])
   try
   {
     // 通过共享指针以符合 rclcpp 标准的方式实例化 Node
-    auto slam_node = std::make_shared<StereoSlam<>>(false);
+    auto slam_node = std::make_shared<StereoSlam<cv::Point2f>>(false);
 
     // 注意：当前实现完全基于数据集驱动并且没有用到其他 Subscription。
     // 使用阻塞式调用 StartOdometer() 不会影响消息发布机制。

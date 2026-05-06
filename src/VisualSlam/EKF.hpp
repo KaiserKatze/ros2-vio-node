@@ -19,5 +19,11 @@ template <typename PointType = cv::Point2f> struct EKF
       std::vector<Eigen::Vector<typename PointType::value_type, 4>> &landmarks)
   {
     // TODO
+
+    (void) corners_prev_left;
+    (void) corners_prev_right;
+    (void) corners_next_left;
+    (void) corners_next_right;
+    (void) landmarks;
   }
 };

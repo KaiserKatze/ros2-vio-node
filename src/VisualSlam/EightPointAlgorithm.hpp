@@ -1,11 +1,8 @@
 #pragma once
 
-#include <iostream>
 #include <tuple>
 
 #include <Eigen/Dense>
-
-#include "Eigen.hpp"
 
 struct ProjectiveGeometry
 {
@@ -154,13 +151,14 @@ struct ProjectiveGeometry
   }
 };
 
-struct EightPointAlgorithm
+template <typename value_type = float> struct EightPointAlgorithm
 {
   /**
  * @brief 各向同性逆归一化
  * @return 各向同性归一化变换矩阵
  */
-  static Eigen::Matrix3d IsotropicScalingNormalize(Eigen::Matrix3Xd &points)
+  static Eigen::Matrix<value_type, 3, 3> IsotropicScalingNormalize(
+      Eigen::Matrix<value_type, 3, Eigen::Dynamic> &points)
   {
     if (points.rows() != 3 || points.cols() == 0)
     {
@@ -168,21 +166,23 @@ struct EightPointAlgorithm
           "IsotropicScalingNormalize: points must be 3xN.",
       };
     }
-    static const double tiny = 1e-8;
+    static const value_type tiny = 1e-8;
 
-    double centroidX = points.row(0).mean();
-    double centroidY = points.row(1).mean();
+    value_type centroidX = points.row(0).mean();
+    value_type centroidY = points.row(1).mean();
 
-    Eigen::Matrix2Xd centeredPoints = points.topRows(2);
+    Eigen::Matrix<value_type, 2, Eigen::Dynamic> centeredPoints
+        = points.topRows(2);
     centeredPoints.row(0).array() -= centroidX;
     centeredPoints.row(1).array() -= centroidY;
-    Eigen::VectorXd distances = centeredPoints.colwise().norm();
-    double meanDistance       = distances.mean();
+    Eigen::Vector<value_type, Eigen::Dynamic> distances
+        = centeredPoints.colwise().norm();
+    value_type meanDistance = distances.mean();
 
-    double scale
+    value_type scale
         = (meanDistance < tiny) ? 1.0 : (std::sqrt(2.0) / meanDistance);
 
-    Eigen::Matrix3d sMat;
+    Eigen::Matrix<value_type, 3, 3> sMat;
     sMat << scale, 0.0, -scale * centroidX, 0.0, scale, -scale * centroidY, 0.0,
         0.0, 1.0;
 
@@ -193,42 +193,44 @@ struct EightPointAlgorithm
   struct TriangulationConfig
   {
     // 左目相机内参矩阵
-    Eigen::Matrix3d mat_cam_left_;
+    Eigen::Matrix<value_type, 3, 3> mat_cam_left_;
     // 右目相机内参矩阵
-    Eigen::Matrix3d mat_cam_right_;
+    Eigen::Matrix<value_type, 3, 3> mat_cam_right_;
     // 从左目相机到右目相机的旋转
-    Eigen::Matrix3d rotation_;
+    Eigen::Matrix<value_type, 3, 3> rotation_;
     // 从左目相机到游牧相机的平移
-    Eigen::Vector3d translation_;
+    Eigen::Vector<value_type, 3> translation_;
     // 路标点在左目像平面上的投影点的齐次坐标
-    Eigen::Matrix3Xd pixel_left_;
+    Eigen::Matrix<value_type, 3, Eigen::Dynamic> pixel_left_;
     // 路标点在右目像平面上的投影点的齐次坐标
-    Eigen::Matrix3Xd pixel_right_;
+    Eigen::Matrix<value_type, 3, Eigen::Dynamic> pixel_right_;
     // 左目视图的各向同性归一化变换
-    Eigen::Matrix3d T_left_;
+    Eigen::Matrix<value_type, 3, 3> T_left_;
     // 右目视图的各向同性归一化变换
-    Eigen::Matrix3d T_right_;
+    Eigen::Matrix<value_type, 3, 3> T_right_;
 
-    TriangulationConfig(const Eigen::Matrix3d &mat_cam_left,
-                        const Eigen::Matrix3d &mat_cam_right,
-                        const Eigen::Matrix3d &rotation,
-                        const Eigen::Vector3d &translation,
-                        const Eigen::Matrix3Xd &pixel_left,
-                        const Eigen::Matrix3Xd &pixel_right,
-                        const Eigen::Matrix3d &T_left,
-                        const Eigen::Matrix3d &T_right) :
+    TriangulationConfig(
+        const Eigen::Matrix<value_type, 3, 3> &mat_cam_left,
+        const Eigen::Matrix<value_type, 3, 3> &mat_cam_right,
+        const Eigen::Matrix<value_type, 3, 3> &rotation,
+        const Eigen::Vector<value_type, 3> &translation,
+        const Eigen::Matrix<value_type, 3, Eigen::Dynamic> &pixel_left,
+        const Eigen::Matrix<value_type, 3, Eigen::Dynamic> &pixel_right,
+        const Eigen::Matrix<value_type, 3, 3> &T_left,
+        const Eigen::Matrix<value_type, 3, 3> &T_right) :
       mat_cam_left_{mat_cam_left}, mat_cam_right_{mat_cam_right},
       rotation_{rotation}, translation_{translation}, pixel_left_{pixel_left},
       pixel_right_{pixel_right}, T_left_{T_left}, T_right_{T_right}
     {
     }
 
-    TriangulationConfig(const Eigen::Matrix3d &mat_cam_left,
-                        const Eigen::Matrix3d &mat_cam_right,
-                        const Eigen::Matrix3d &rotation,
-                        const Eigen::Vector3d &translation,
-                        const Eigen::Matrix3Xd &pixel_left,
-                        const Eigen::Matrix3Xd &pixel_right) :
+    TriangulationConfig(
+        const Eigen::Matrix<value_type, 3, 3> &mat_cam_left,
+        const Eigen::Matrix<value_type, 3, 3> &mat_cam_right,
+        const Eigen::Matrix<value_type, 3, 3> &rotation,
+        const Eigen::Vector<value_type, 3> &translation,
+        const Eigen::Matrix<value_type, 3, Eigen::Dynamic> &pixel_left,
+        const Eigen::Matrix<value_type, 3, Eigen::Dynamic> &pixel_right) :
       TriangulationConfig{
           mat_cam_left,
           mat_cam_right,
@@ -236,20 +238,20 @@ struct EightPointAlgorithm
           translation,
           pixel_left,
           pixel_right,
-          Eigen::Matrix3d::Identity(),
-          Eigen::Matrix3d::Identity(),
+          Eigen::Matrix<value_type, 3, 3>::Identity(),
+          Eigen::Matrix<value_type, 3, 3>::Identity(),
       }
     {
       T_left_  = IsotropicScalingNormalize(pixel_left_);
       T_right_ = IsotropicScalingNormalize(pixel_right_);
     }
 
-    Eigen::Vector3d GetLeftEpipole() const
+    Eigen::Vector<value_type, 3> GetLeftEpipole() const
     {
       return mat_cam_left_ * rotation_.transpose() * translation_;
     }
 
-    Eigen::Vector3d GetRightEpipole() const
+    Eigen::Vector<value_type, 3> GetRightEpipole() const
     {
       return mat_cam_right_ * translation_;
     }
@@ -257,12 +259,12 @@ struct EightPointAlgorithm
     /**
    * @brief 利用两个相机内参矩阵、旋转矩阵、平移向量，计算基础矩阵
    */
-    Eigen::Matrix3d ComputeFundamentalMatrix() const
+    Eigen::Matrix<value_type, 3, 3> ComputeFundamentalMatrix() const
     {
       // 左目视图中极点的齐次坐标
-      const Eigen::Vector3d epipole_left{GetLeftEpipole()};
+      const Eigen::Vector<value_type, 3> epipole_left{GetLeftEpipole()};
       // 左极点齐次坐标的叉乘矩阵
-      Eigen::Matrix3d epipole_left_antisym;
+      Eigen::Matrix<value_type, 3, 3> epipole_left_antisym;
       epipole_left_antisym << 0.0, -epipole_left.z(), epipole_left.y(), //
           epipole_left.z(), 0.0, -epipole_left.x(),                     //
           -epipole_left.y(), epipole_left.x(), 0.0;
@@ -270,8 +272,8 @@ struct EightPointAlgorithm
              * mat_cam_left_.transpose() * epipole_left_antisym;
     }
 
-    Eigen::Matrix3d
-    ComputeEssentialMatrix(const Eigen::Matrix3d &fundamental_matrix) const
+    Eigen::Matrix<value_type, 3, 3> ComputeEssentialMatrix(
+        const Eigen::Matrix<value_type, 3, 3> &fundamental_matrix) const
     {
       return mat_cam_right_.transpose() * fundamental_matrix * mat_cam_left_;
     }
@@ -281,7 +283,8 @@ struct EightPointAlgorithm
  * @brief 三角化
  * @return 路标点的齐次坐标
  */
-  static Eigen::Matrix4Xd Triangulate(const TriangulationConfig &config)
+  static Eigen::Matrix<value_type, 4, Eigen::Dynamic>
+  Triangulate(const TriangulationConfig &config)
   {
     if (config.pixel_left_.cols() != config.pixel_right_.cols())
     {
@@ -289,14 +292,15 @@ struct EightPointAlgorithm
           "Triangulate: number of pixel points in two views must match.");
     }
 
-    Eigen::Matrix34d projectMatrix_left;
-    projectMatrix_left << config.mat_cam_left_, Eigen::Vector3d::Zero();
+    Eigen::Matrix<value_type, 3, 4> projectMatrix_left;
+    projectMatrix_left << config.mat_cam_left_,
+        Eigen::Vector<value_type, 3>::Zero();
 
     const auto m1_left{projectMatrix_left.row(0)};
     const auto m2_left{projectMatrix_left.row(1)};
     const auto m3_left{projectMatrix_left.row(2)};
 
-    Eigen::Matrix34d projectMatrix_right;
+    Eigen::Matrix<value_type, 3, 4> projectMatrix_right;
     projectMatrix_right << config.rotation_, config.translation_;
     projectMatrix_right = config.mat_cam_right_ * projectMatrix_right;
 
@@ -305,14 +309,14 @@ struct EightPointAlgorithm
     const auto m3_right{projectMatrix_right.row(2)};
 
     auto nCols{config.pixel_left_.cols()};
-    Eigen::Matrix4Xd matA(4, 4 * nCols);
+    Eigen::Matrix<value_type, 4, Eigen::Dynamic> matA(4, 4 * nCols);
     matA.setZero();
     for (decltype(nCols) i = 0; i < nCols; ++i)
     {
-      const double u_left{config.pixel_left_(0, i)};
-      const double v_left{config.pixel_left_(1, i)};
-      const double u_right{config.pixel_right_(0, i)};
-      const double v_right{config.pixel_right_(1, i)};
+      const value_type u_left{config.pixel_left_(0, i)};
+      const value_type v_left{config.pixel_left_(1, i)};
+      const value_type u_right{config.pixel_right_(0, i)};
+      const value_type v_right{config.pixel_right_(1, i)};
 
       matA(Eigen::all, Eigen::seqN(4 * i, 4)) //
           << u_left * m3_left - m1_left,
@@ -321,9 +325,9 @@ struct EightPointAlgorithm
     }
 
     Eigen::JacobiSVD<decltype(matA)> svd{matA, Eigen::ComputeThinV};
-    Eigen::VectorXd matA_svd_result{
+    Eigen::Vector<value_type, Eigen::Dynamic> matA_svd_result{
         svd.matrixV().col(svd.matrixV().cols() - 1)};
-    Eigen::Map<Eigen::Matrix4Xd> modelPointsInWorldCoordinates{
+    Eigen::Map<decltype(matA)> modelPointsInWorldCoordinates{
         matA_svd_result.data(),
         4,
         matA_svd_result.size() / 4,
@@ -341,18 +345,18 @@ struct EightPointAlgorithm
  * @brief 估计基础矩阵
  * @return 基础矩阵
  */
-  static Eigen::Matrix3d
+  static Eigen::Matrix<value_type, 3, 3>
   EstimateFundamentalMatrix(const TriangulationConfig &config)
   {
     auto nCols{config.pixel_left_.cols()};
-    Eigen::MatrixX9d matW(nCols, 9);
+    Eigen::Matrix<value_type, Eigen::Dynamic, 9> matW(nCols, 9);
     matW.setZero();
     for (decltype(nCols) i = 0; i < nCols; ++i)
     {
-      const double u_left{config.pixel_left_(0, i)};
-      const double v_left{config.pixel_left_(1, i)};
-      const double u_right{config.pixel_right_(0, i)};
-      const double v_right{config.pixel_right_(1, i)};
+      const value_type u_left{config.pixel_left_(0, i)};
+      const value_type v_left{config.pixel_left_(1, i)};
+      const value_type u_right{config.pixel_right_(0, i)};
+      const value_type v_right{config.pixel_right_(1, i)};
       matW.row(i)              //
           << u_left * u_right, //
           v_left * u_right,    //
@@ -367,17 +371,18 @@ struct EightPointAlgorithm
 
     // 进行第一次奇异值分解（给出最小二乘解）
     Eigen::JacobiSVD<decltype(matW)> svd1{matW, Eigen::ComputeFullV};
-    Eigen::VectorXd matW_svd_result{
+    Eigen::Vector<value_type, Eigen::Dynamic> matW_svd_result{
         svd1.matrixV().col(svd1.matrixV().cols() - 1)};
 
     // 进行第二次奇异值分解（保证基础矩阵的秩为2）
-    Eigen::JacobiSVD<Eigen::Matrix3d> svd2{
-        Eigen::Map<Eigen::Matrix3d>{matW_svd_result.data(), 3, 3},
+    Eigen::JacobiSVD<Eigen::Matrix<value_type, 3, 3>> svd2{
+        Eigen::Map<Eigen::Matrix<value_type, 3, 3>>{matW_svd_result.data(), 3,
+                                                    3},
         Eigen::ComputeFullU | Eigen::ComputeFullV,
     };
-    Eigen::Vector3d singularValues{svd2.singularValues()};
+    Eigen::Vector<value_type, 3> singularValues{svd2.singularValues()};
     singularValues[2] = 0.0; // 将最小奇异值置零
-    Eigen::Matrix3d fundamental_matrix{
+    Eigen::Matrix<value_type, 3, 3> fundamental_matrix{
         svd2.matrixU() * singularValues.asDiagonal()
             * svd2.matrixV().transpose(),
     };
@@ -393,19 +398,21 @@ struct EightPointAlgorithm
  * @brief 估计单应矩阵
  * @return 单应矩阵
  */
-  static Eigen::Matrix3d EstimateHomography(const TriangulationConfig &&config)
+  static Eigen::Matrix<value_type, 3, 3>
+  EstimateHomography(const TriangulationConfig &&config)
   {
     auto nCols{config.pixel_left_.cols()};
-    Eigen::MatrixX9d matA(2 * nCols, 9);
+    Eigen::Matrix<value_type, Eigen::Dynamic, 9> matA(2 * nCols, 9);
 
     matA.setZero();
     for (decltype(nCols) i = 0; i < nCols; ++i)
     {
-      const double u_left{config.pixel_left_(0, i)};
-      const double v_left{config.pixel_left_(1, i)};
-      const double u_right{config.pixel_right_(0, i)};
-      const double v_right{config.pixel_right_(1, i)};
-      Eigen::RowVector3d zero_vector{Eigen::RowVector3d::Zero()};
+      const value_type u_left{config.pixel_left_(0, i)};
+      const value_type v_left{config.pixel_left_(1, i)};
+      const value_type u_right{config.pixel_right_(0, i)};
+      const value_type v_right{config.pixel_right_(1, i)};
+      Eigen::RowVector<value_type, 3> zero_vector{
+          Eigen::RowVector<value_type, 3>::Zero()};
       matA.row(2 * i + 0)                //
           << -config.pixel_left_.col(i), // -u_left, -v_left, -1.0,
           zero_vector,                   //
@@ -420,27 +427,30 @@ struct EightPointAlgorithm
           v_right;                       //
     }
 
-    Eigen::JacobiSVD<Eigen::MatrixX9d> svd{matA, Eigen::ComputeThinV};
-    Eigen::Vector9d matA_svd_result{
+    Eigen::JacobiSVD<Eigen::Matrix<value_type, Eigen::Dynamic, 9>> svd{
+        matA, Eigen::ComputeThinV};
+    Eigen::Vector<value_type, 9> matA_svd_result{
         svd.matrixV().col(svd.matrixV().cols() - 1)};
-    Eigen::Map<Eigen::Matrix3d> matH{matA_svd_result.data(), 3, 3};
+    Eigen::Map<Eigen::Matrix<value_type, 3, 3>> matH{matA_svd_result.data(), 3,
+                                                     3};
 
     // 各向同性逆归一化
-    Eigen::Matrix3d homography_matrix{
+    Eigen::Matrix<value_type, 3, 3> homography_matrix{
         config.T_right_.transpose() * matH * config.T_left_,
     };
 
     return homography_matrix;
   }
 
-  static auto DecomposeEssentialMatrix(const Eigen::Matrix3d &essential_matrix)
+  static auto DecomposeEssentialMatrix(
+      const Eigen::Matrix<value_type, 3, 3> &essential_matrix)
   {
-    const Eigen::Matrix3d matW{
+    const Eigen::Matrix<value_type, 3, 3> matW{
         {0.0, -1.0, 0.0},
         {1.0, 0.0, 0.0},
         {0.0, 0.0, 1.0},
     };
-    const Eigen::Matrix3d matZ{
+    const Eigen::Matrix<value_type, 3, 3> matZ{
         {0.0, 1.0, 0.0},
         {-1.0, 0.0, 0.0},
         {0.0, 0.0, 0.0},
@@ -452,26 +462,28 @@ struct EightPointAlgorithm
     // 故 T_antisym = U * diag(1,1,0) * W^T * U^T
     // 或           = U * diag(1,1,0) * W * U^T
 
-    Eigen::JacobiSVD<Eigen::Matrix3d> svd1{
+    Eigen::JacobiSVD<Eigen::Matrix<value_type, 3, 3>> svd1{
         essential_matrix,
         Eigen::ComputeFullU | Eigen::ComputeFullV,
     };
-    const Eigen::Matrix3d matU{svd1.matrixU()};
-    const Eigen::Matrix3d matV{svd1.matrixV()};
+    const Eigen::Matrix<value_type, 3, 3> matU{svd1.matrixU()};
+    const Eigen::Matrix<value_type, 3, 3> matV{svd1.matrixV()};
 
     // matV^T = W * U^T * R
     // R = U * W^T * matV^T
-    Eigen::Matrix3d matR1{matU * matW.transpose() * matV.transpose()};
+    Eigen::Matrix<value_type, 3, 3> matR1{matU * matW.transpose()
+                                          * matV.transpose()};
     matR1 *= matR1.determinant();
 
-    Eigen::Matrix3d matR2{matU * matW * matV.transpose()};
+    Eigen::Matrix<value_type, 3, 3> matR2{matU * matW * matV.transpose()};
     matR2 *= matR2.determinant();
 
-    Eigen::JacobiSVD<Eigen::Matrix3d> svd2{
+    Eigen::JacobiSVD<Eigen::Matrix<value_type, 3, 3>> svd2{
         matU * matZ * matU.transpose(),
         Eigen::ComputeFullV,
     };
-    Eigen::Vector3d vecT{svd2.matrixV().col(svd2.matrixV().cols() - 1)};
+    Eigen::Vector<value_type, 3> vecT{
+        svd2.matrixV().col(svd2.matrixV().cols() - 1)};
 
     // TODO
     // 选择一对特征点，进行三角化，理论上正确的一组解 (R, T) 可以保证对应的路标点在两个相机坐标系下的 Z 坐标都是正数
