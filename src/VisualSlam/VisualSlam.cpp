@@ -50,13 +50,23 @@ private:
   CornerDetection::FastDetector<> detector_{};
   size_t frame_index_{};
   // EKF<> ekf_{};
+  bool visualize_{true};
+  bool plot_disparity_and_depth_{false};
 
 public:
-  StereoSlam()
+  StereoSlam(bool visualize = true, bool plot_disparity_and_depth = false) :
+    visualize_{visualize}, plot_disparity_and_depth_{plot_disparity_and_depth}
   {
-    cv::namedWindow(loopback_window_name_, cv::WINDOW_NORMAL);
-    cv::namedWindow(disparity_window_name_, cv::WINDOW_NORMAL);
-    cv::namedWindow(depth_window_name_, cv::WINDOW_NORMAL);
+    if (visualize_)
+    {
+      cv::namedWindow(loopback_window_name_, cv::WINDOW_NORMAL);
+      if (plot_disparity_and_depth)
+      {
+
+        cv::namedWindow(disparity_window_name_, cv::WINDOW_NORMAL);
+        cv::namedWindow(depth_window_name_, cv::WINDOW_NORMAL);
+      }
+    }
   }
 
   ~StereoSlam()
@@ -170,20 +180,24 @@ private:
   }
 
 public:
-  void StartOdometer(bool visualize                = true,
-                     bool plot_disparity_and_depth = false)
+  void StartOdometer()
   {
-    if (!visualize)
-    {
-      cv::destroyAllWindows();
-    }
-
     bool init{false};
     StereoFrame<cv::Mat> prev_frame;
     std::vector<cv::Point2f> corners_prev_left;
     std::vector<cv::Point2f> corners_prev_right;
     std::vector<cv::Point2f> corners_next_left;
     std::vector<cv::Point2f> corners_next_right;
+
+    data_output_ << "timestamp, "
+                    "dqw, dqx, dqy, dqz, "
+                    "dpx, dpy, dpz, "
+                    "qw, qx, qy, qz, "
+                    "px, py, pz, "
+                    "\n";
+
+    Eigen::Quaterniond attitude{Eigen::Quaterniond::Identity()};
+    Eigen::Vector3d position{Eigen::Vector3d::Zero()};
 
     while (loader_)
     {
@@ -318,6 +332,10 @@ public:
 
         Eigen::Quaterniond quad_rotation{best_matR};
 
+        // 更新状态
+        position = attitude * (position + best_vecT);
+        attitude = attitude * quad_rotation;
+
         data_output_ << std::fixed                //
                      << std::setprecision(18)     //
                      << frame.timestamp_ << ", "  //
@@ -327,7 +345,15 @@ public:
                      << quad_rotation.z() << ", " //
                      << best_vecT.x() << ", "     //
                      << best_vecT.y() << ", "     //
-                     << best_vecT.z() << "\n";
+                     << best_vecT.z() << ", "     //
+                     << attitude.w() << ", "      //
+                     << attitude.x() << ", "      //
+                     << attitude.y() << ", "      //
+                     << attitude.z() << ", "      //
+                     << position.x() << ", "      //
+                     << position.y() << ", "      //
+                     << position.z()              //
+                     << "\n";
 
         // 路标点在世界坐标系中的齐次坐标 ( 变量类型实际上是 `std::vector<Eigen::Vector4d>` )
         // std::vector<Landmark> landmarks;
@@ -338,11 +364,11 @@ public:
         // TODO 将计算得到的路标点，与之前记录的路标点进行比较，检测回环（即是否回到起点或其附近位置）
       }
 
-      std::cerr << "\t最终检测到 " << corners_prev_left.size()
-                << " 个角点 ...\n";
+      // std::cerr << "\t最终检测到 " << corners_prev_left.size()
+      //           << " 个角点 ...\n";
 
       // 可视化
-      if (visualize)
+      if (visualize_)
       {
         {
           cv::Mat vis_top, vis_bottom, vis;
@@ -382,7 +408,7 @@ public:
           cv::setWindowTitle(loopback_window_name_, ss_window_title.str());
         }
 
-        if (plot_disparity_and_depth)
+        if (plot_disparity_and_depth_)
         {
           // 绘制视差图
 
@@ -469,8 +495,8 @@ int main()
 {
   try
   {
-    StereoSlam slam{};
-    slam.StartOdometer(false);
+    StereoSlam slam{false};
+    slam.StartOdometer();
   }
   catch (const std::exception &e)
   {

@@ -317,8 +317,8 @@ public:
       }
     }
 
-    std::cerr << "\t通过所有筛选! 最终存活角点 = " << corners_prev_left.size()
-              << "\n";
+    // std::cerr << "\t通过所有筛选! 最终存活角点 = " << corners_prev_left.size()
+    //           << "\n";
     return true;
   }
 };
