@@ -86,6 +86,7 @@ template <typename PointType = cv::Point2f>
 struct StereoSlam : public StereoSlamPublisher
 {
 public:
+  static constexpr double threshold_for_pose_recovery_{20.0};
   const std::string loopback_window_name_{"VisualSlam"};
   const std::string disparity_window_name_{"Disparity"};
   const std::string depth_window_name_{"Depth Map"};
@@ -248,8 +249,17 @@ public:
                     "\n";
 
     Eigen::Quaternion<value_type> attitude{
-        Eigen::Quaternion<value_type>::Identity()};
-    Eigen::Vector<value_type, 3> position{Eigen::Vector<value_type, 3>::Zero()};
+        Eigen::Quaternion<value_type>::Identity(),
+    };
+    Eigen::Vector<value_type, 3> position{
+        Eigen::Vector<value_type, 3>::Zero(),
+    };
+    Eigen::Quaternion<value_type> delta_rotation{
+        Eigen::Quaternion<value_type>::Identity(),
+    };
+    Eigen::Vector<value_type, 3> delta_position{
+        Eigen::Vector<value_type, 3>::Zero(),
+    };
 
     // 引入 rclcpp::ok() 以响应 ROS 2 节点的关闭信号 (如 Ctrl+C)
     while (rclcpp::ok() && loader_)
@@ -293,9 +303,34 @@ public:
         // 3. 分解本质矩阵 E = T_antisym * R
         // 4. 三角化
 
-        const cv::Mat fundamental_matrix_cv{
+        // https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#ga59b0d57f46f8677fb5904294a23d404a
+        const cv::Mat fundamental_matrix{
             cv::findFundamentalMat(corners_prev_left, corners_next_left),
         };
+
+        cv::Mat camera_matrix;
+        cv::eigen2cv(euroc_.mat_cam_intrinsic_rectified_, camera_matrix);
+        const cv::Mat essential_matrix{
+            cv::findEssentialMat(corners_prev_left, corners_next_left,
+                                 camera_matrix),
+        };
+
+        cv::Mat matR, vecT, triangulatedPoints;
+        // https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#ga2ee9f187170acece29c5172c2175e7ae
+        const int number_inliers_pass_chirality_check{
+            // 通过“手性检查”的特征点个数
+            cv::recoverPose(essential_matrix, corners_prev_left,
+                            corners_next_left, camera_matrix, matR, vecT,
+                            threshold_for_pose_recovery_, cv::noArray(),
+                            triangulatedPoints),
+        };
+        if (number_inliers_pass_chirality_check < 8)
+        {
+          std::cerr << "\t通过“手性检查”的特征点个数 ("
+                    << number_inliers_pass_chirality_check
+                    << ") 过少! 当前图像帧无法用于姿态估计!\n";
+          continue;
+        }
 
         // double sampsonDistance_cv{NAN};
         // try
@@ -333,24 +368,24 @@ public:
         //   throw e;
         // }
 
-        auto pixel_left{
-            Util::ConvertToMatrix3X_EigenMap(corners_prev_left),
-        };
-        auto pixel_right{
-            Util::ConvertToMatrix3X_EigenMap(corners_next_left),
-        };
+        // auto pixel_left{
+        //     Util::ConvertToMatrix3X_EigenMap(corners_prev_left),
+        // };
+        // auto pixel_right{
+        //     Util::ConvertToMatrix3X_EigenMap(corners_next_left),
+        // };
 
-        typename EPA::TriangulationConfig tri_config{
-            euroc_.mat_cam_intrinsic_rectified_.template cast<value_type>(),
-            euroc_.mat_cam_intrinsic_rectified_.template cast<value_type>(),
-            Eigen::Matrix<value_type, 3, 3>::Identity(),
-            Eigen::Vector<value_type, 3>::Zero(),
-            pixel_left,
-            pixel_right,
-        };
-        auto fundamental_matrix{
-            EPA::EstimateFundamentalMatrix(tri_config),
-        };
+        // typename EPA::TriangulationConfig tri_config{
+        //     euroc_.mat_cam_intrinsic_rectified_.template cast<value_type>(),
+        //     euroc_.mat_cam_intrinsic_rectified_.template cast<value_type>(),
+        //     Eigen::Matrix<value_type, 3, 3>::Identity(),
+        //     Eigen::Vector<value_type, 3>::Zero(),
+        //     pixel_left,
+        //     pixel_right,
+        // };
+        // auto fundamental_matrix{
+        //     EPA::EstimateFundamentalMatrix(tri_config),
+        // };
 
         // double sampsonDistance_handmade{NAN};
         // try
@@ -400,103 +435,117 @@ public:
         //           << "\t\tSampson Distance = " << sampsonDistance_cv << "\n";
         // 得出结论：OpenCV 算出的基础矩阵的误差比我的算法的误差要小很多
 
-        auto essential_matrix{
-            tri_config.ComputeEssentialMatrix(fundamental_matrix),
-        };
-        auto &&[matR1, matR2, vecT]
-            = EPA::DecomposeEssentialMatrix(essential_matrix);
-        // 第 1 种组合方式 (matR1 + vecT)
-        tri_config.rotation_    = matR1;
-        tri_config.translation_ = vecT;
-        auto model_points1{
-            EPA::Triangulate(tri_config),
-        };
-        auto model_points1_count_positive_z{
-            (model_points1.row(2).array() > 0.0).count(),
-        };
-        // 第 2 种组合方式 (matR1 + -vecT)
-        tri_config.translation_ = -vecT;
-        auto model_points2{
-            EPA::Triangulate(tri_config),
-        };
-        auto model_points2_count_positive_z{
-            (model_points2.row(2).array() > 0.0).count(),
-        };
-        // 第 3 种组合方式 (matR2 + -vecT)
-        tri_config.rotation_ = matR2;
-        auto model_points3{
-            EPA::Triangulate(tri_config),
-        };
-        auto model_points3_count_positive_z{
-            (model_points3.row(2).array() > 0.0).count(),
-        };
-        // 第 4 种组合方式 (matR2 + vecT)
-        tri_config.translation_ = vecT;
-        auto model_points4{
-            EPA::Triangulate(tri_config),
-        };
-        auto model_points4_count_positive_z{
-            (model_points4.row(2).array() > 0.0).count(),
-        };
+        // auto essential_matrix{
+        //     tri_config.ComputeEssentialMatrix(fundamental_matrix),
+        // };
+        // auto &&[matR1, matR2, vecT]
+        //     = EPA::DecomposeEssentialMatrix(essential_matrix);
+        // // 第 1 种组合方式 (matR1 + vecT)
+        // tri_config.rotation_    = matR1;
+        // tri_config.translation_ = vecT;
+        // auto model_points1{
+        //     EPA::Triangulate(tri_config),
+        // };
+        // auto model_points1_count_positive_z{
+        //     (model_points1.row(2).array() > 0.0).count(),
+        // };
+        // // 第 2 种组合方式 (matR1 + -vecT)
+        // tri_config.translation_ = -vecT;
+        // auto model_points2{
+        //     EPA::Triangulate(tri_config),
+        // };
+        // auto model_points2_count_positive_z{
+        //     (model_points2.row(2).array() > 0.0).count(),
+        // };
+        // // 第 3 种组合方式 (matR2 + -vecT)
+        // tri_config.rotation_ = matR2;
+        // auto model_points3{
+        //     EPA::Triangulate(tri_config),
+        // };
+        // auto model_points3_count_positive_z{
+        //     (model_points3.row(2).array() > 0.0).count(),
+        // };
+        // // 第 4 种组合方式 (matR2 + vecT)
+        // tri_config.translation_ = vecT;
+        // auto model_points4{
+        //     EPA::Triangulate(tri_config),
+        // };
+        // auto model_points4_count_positive_z{
+        //     (model_points4.row(2).array() > 0.0).count(),
+        // };
 
-        // 找出 Z 分量大于零的列向量个数最多的组合方式
-        decltype(matR1) best_matR;
-        decltype(vecT) best_vecT;
-        decltype(model_points1) best_model_points;
-        decltype(model_points1_count_positive_z) max_positive_z_count{0};
+        // // 找出 Z 分量大于零的列向量个数最多的组合方式
+        // decltype(matR1) best_matR;
+        // decltype(vecT) best_vecT;
+        // decltype(model_points1) best_model_points;
+        // decltype(model_points1_count_positive_z) max_positive_z_count{0};
 
-        if (model_points1_count_positive_z > max_positive_z_count)
-        {
-          max_positive_z_count = model_points1_count_positive_z;
-          best_matR            = matR1;
-          best_vecT            = vecT;
-          best_model_points    = std::move(model_points1);
-        }
-        if (model_points2_count_positive_z > max_positive_z_count)
-        {
-          max_positive_z_count = model_points2_count_positive_z;
-          best_matR            = matR1;
-          best_vecT            = -vecT;
-          best_model_points    = std::move(model_points2);
-        }
-        if (model_points3_count_positive_z > max_positive_z_count)
-        {
-          max_positive_z_count = model_points3_count_positive_z;
-          best_matR            = matR2;
-          best_vecT            = -vecT;
-          best_model_points    = std::move(model_points3);
-        }
-        if (model_points4_count_positive_z > max_positive_z_count)
-        {
-          max_positive_z_count = model_points4_count_positive_z;
-          best_matR            = matR2;
-          best_vecT            = vecT;
-          best_model_points    = std::move(model_points4);
-        }
+        // if (model_points1_count_positive_z > max_positive_z_count)
+        // {
+        //   max_positive_z_count = model_points1_count_positive_z;
+        //   best_matR            = matR1;
+        //   best_vecT            = vecT;
+        //   best_model_points    = std::move(model_points1);
+        // }
+        // if (model_points2_count_positive_z > max_positive_z_count)
+        // {
+        //   max_positive_z_count = model_points2_count_positive_z;
+        //   best_matR            = matR1;
+        //   best_vecT            = -vecT;
+        //   best_model_points    = std::move(model_points2);
+        // }
+        // if (model_points3_count_positive_z > max_positive_z_count)
+        // {
+        //   max_positive_z_count = model_points3_count_positive_z;
+        //   best_matR            = matR2;
+        //   best_vecT            = -vecT;
+        //   best_model_points    = std::move(model_points3);
+        // }
+        // if (model_points4_count_positive_z > max_positive_z_count)
+        // {
+        //   max_positive_z_count = model_points4_count_positive_z;
+        //   best_matR            = matR2;
+        //   best_vecT            = vecT;
+        //   best_model_points    = std::move(model_points4);
+        // }
 
-        Eigen::Quaternion<value_type> quad_rotation{best_matR};
+        // Eigen::Quaternion<value_type> delta_rotation{best_matR};
 
         // 更新状态
-        position = attitude * best_vecT + position;
-        attitude = attitude * quad_rotation;
+        delta_rotation = Eigen::Quaternion<value_type>{
+            Eigen::Matrix<value_type, 3, 3>{
+                {matR.template at<value_type>(0, 0),
+                 matR.template at<value_type>(0, 1),
+                 matR.template at<value_type>(0, 2)},
+                {matR.template at<value_type>(1, 0),
+                 matR.template at<value_type>(1, 1),
+                 matR.template at<value_type>(1, 2)},
+                {matR.template at<value_type>(2, 0),
+                 matR.template at<value_type>(2, 1),
+                 matR.template at<value_type>(2, 2)},
+            },
+        };
+        cv::cv2eigen(vecT, delta_position);
+        position = attitude * delta_position + position;
+        attitude = attitude * delta_rotation;
 
-        data_output_ << std::fixed                //
-                     << std::setprecision(18)     //
-                     << frame.timestamp_ << ", "  //
-                     << quad_rotation.w() << ", " //
-                     << quad_rotation.x() << ", " //
-                     << quad_rotation.y() << ", " //
-                     << quad_rotation.z() << ", " //
-                     << best_vecT.x() << ", "     //
-                     << best_vecT.y() << ", "     //
-                     << best_vecT.z() << ", "     //
-                     << attitude.w() << ", "      //
-                     << attitude.x() << ", "      //
-                     << attitude.y() << ", "      //
-                     << attitude.z() << ", "      //
-                     << position.x() << ", "      //
-                     << position.y() << ", "      //
-                     << position.z()              //
+        data_output_ << std::fixed                 //
+                     << std::setprecision(18)      //
+                     << frame.timestamp_ << ", "   //
+                     << delta_rotation.w() << ", " //
+                     << delta_rotation.x() << ", " //
+                     << delta_rotation.y() << ", " //
+                     << delta_rotation.z() << ", " //
+                     << delta_position.x() << ", " //
+                     << delta_position.y() << ", " //
+                     << delta_position.z() << ", " //
+                     << attitude.w() << ", "       //
+                     << attitude.x() << ", "       //
+                     << attitude.y() << ", "       //
+                     << attitude.z() << ", "       //
+                     << position.x() << ", "       //
+                     << position.y() << ", "       //
+                     << position.z()               //
                      << "\n";
 
         // 路标点在世界坐标系中的齐次坐标 ( 变量类型实际上是 `std::vector<Eigen::Vector4d>` )
