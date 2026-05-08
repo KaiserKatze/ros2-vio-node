@@ -27,8 +27,8 @@ struct AbstractDetector
 {
   static constexpr size_t minCorners{10};
   static constexpr size_t maxCorners{200};
-  static constexpr double atol_parallax{2.0};
-  static constexpr double atol_coincidence{1.5};
+  static constexpr double atol_parallax{1.5};
+  static constexpr double atol_coincidence{1.0};
   const cv::Size winSize{15, 15};
   static constexpr int maxLevel{2};
 };
