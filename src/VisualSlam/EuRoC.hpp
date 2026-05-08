@@ -55,6 +55,14 @@ struct EuRoC
   Eigen::Matrix4d T_C1C0;
   cv::Size imageSize{752, 480};
 
+  // Output 3x4 projection matrix in the new (rectified) coordinate systems for
+  // the first camera, i.e. it projects points given in the rectified first
+  // camera coordinate system into the rectified first camera's image
+  cv::Mat P0;
+  // Output 3x4 projection matrix in the new (rectified) coordinate systems for
+  // the second camera, i.e. it projects points given in the rectified first
+  // camera coordinate system into the rectified second camera's image
+  cv::Mat P1;
   // Output 4×4 disparity-to-depth mapping matrix
   cv::Mat Q;
 
@@ -174,14 +182,6 @@ struct EuRoC
     // unrectified second camera's coordinate system to the rectified second
     // camera's coordinate system
     cv::Mat R1;
-    // Output 3x4 projection matrix in the new (rectified) coordinate systems for
-    // the first camera, i.e. it projects points given in the rectified first
-    // camera coordinate system into the rectified first camera's image
-    cv::Mat P0;
-    // Output 3x4 projection matrix in the new (rectified) coordinate systems for
-    // the second camera, i.e. it projects points given in the rectified first
-    // camera coordinate system into the rectified second camera's image
-    cv::Mat P1;
 
     // https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#ga617b1685d4059c6040827800e72ad2b6
     cv::stereoRectify(cameraMatrix0, distCoeffs0, cameraMatrix1, distCoeffs1,

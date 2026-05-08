@@ -7,13 +7,10 @@
 #include <iostream>
 #include <ranges>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
-
-#include <geometry_msgs/msg/pose_stamped.hpp>
-#include <nav_msgs/msg/path.hpp>
-#include <rclcpp/rclcpp.hpp>
 
 #include <Eigen/Dense>
 
@@ -38,7 +35,15 @@
 #include "FastDetector.hpp"
 #include "ImageDataLoader.hpp"
 
-#define START_VISUALIZATION 1
+#define START_VISUALIZATION 0
+
+#if (!START_VISUALIZATION)
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <nav_msgs/msg/path.hpp>
+#include <rclcpp/rclcpp.hpp>
+
+#include "euroc_vio/main.h"
+#endif
 
 #if (!START_VISUALIZATION)
 struct StereoSlamPublisher : public rclcpp::Node
@@ -98,6 +103,8 @@ public:
   const EuRoC::EuRoC euroc_{};
 
   using value_type = typename PointType::value_type;
+  // using Point2     = PointType;
+  // using Point3     = cv::Point3_<value_type>;
   using EPA        = EightPointAlgorithm<value_type>;
   using Landmark   = Eigen::Vector<value_type, 4>;
 
@@ -255,9 +262,9 @@ public:
     // === 初始化 CLAHE 实例 ===
     // clipLimit: 对比度限制阈值，一般取 2.0 到 4.0 之间。值越大，对比度增强越强，但也可能引入更多噪声。
     // tileGridSize: 图像划分的网格大小，通常为 8x8。
-    cv::Ptr<cv::CLAHE> clahe{
-        cv::createCLAHE(3.0, cv::Size(8, 8)),
-    };
+    // cv::Ptr<cv::CLAHE> clahe{
+    //     cv::createCLAHE(3.0, cv::Size(8, 8)),
+    // };
 
     StereoFrame<cv::Mat> prev_frame;
     std::vector<PointType> corners_prev_left;
@@ -322,10 +329,10 @@ public:
 
       // === 应用 CLAHE 图像增强 ===
       // 直接在原灰度图变量上进行原地操作（或者覆写），保证后续特征提取和视差计算全部基于增强后的图像
-      clahe->apply(image_prev_left_grayscale, image_prev_left_grayscale);
-      clahe->apply(image_prev_right_grayscale, image_prev_right_grayscale);
-      clahe->apply(image_next_left_grayscale, image_next_left_grayscale);
-      clahe->apply(image_next_right_grayscale, image_next_right_grayscale);
+      // clahe->apply(image_prev_left_grayscale, image_prev_left_grayscale);
+      // clahe->apply(image_prev_right_grayscale, image_prev_right_grayscale);
+      // clahe->apply(image_next_left_grayscale, image_next_left_grayscale);
+      // clahe->apply(image_next_right_grayscale, image_next_right_grayscale);
 
       const bool found_corners{
           detector_.FindCorners(
@@ -354,42 +361,94 @@ public:
             << centroid(corners_next_left) << ","
             << "\n";
 
-        // https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#ga59b0d57f46f8677fb5904294a23d404a
-        const cv::Mat fundamental_matrix{
-            cv::findFundamentalMat(corners_prev_left, corners_next_left),
-        };
+        // 世界坐标系 (即以左目光心为原点的坐标系) 中路标点的齐次坐标
+        cv::Mat landmarks_homo;
 
+        // https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#gad3fc9a0c82b08df034234979960b778c
+        cv::triangulatePoints(euroc_.P0, euroc_.P1, corners_prev_left,
+                              corners_prev_right, landmarks_homo);
+        std::cerr << "\t经过三角化，得到 " << landmarks_homo.cols
+                  << " 个路标点 (type=" << landmarks_homo.type() << ")\n";
+
+        if (landmarks_homo.cols == 0)
+        {
+          goto continue_loop;
+        }
+
+        if (static_cast<size_t>(landmarks_homo.cols)
+            != corners_prev_left.size())
+        {
+          std::stringstream ss;
+          ss << "空间路标点个数 (" << landmarks_homo.cols
+             << ") 与图像上特征点个数 (" << corners_prev_left.size()
+             << ") 不匹配!\n";
+          throw std::runtime_error{ss.str()};
+        }
+
+        // 世界坐标系中路标点的非齐次坐标
+        cv::Mat landmarks_nonhomo;
+        // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#gac42edda3a3a0f717979589fcd6ac0035
+        cv::convertPointsFromHomogeneous(landmarks_homo.t(), landmarks_nonhomo);
+
+        // 相机内参矩阵
         cv::Mat camera_matrix;
         cv::eigen2cv(euroc_.mat_cam_intrinsic_rectified_, camera_matrix);
-        const cv::Mat essential_matrix{
-            cv::findEssentialMat(corners_prev_left, corners_next_left,
-                                 camera_matrix),
-        };
 
-        cv::Mat matR, vecT, triangulatedPoints;
-        // https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#ga2ee9f187170acece29c5172c2175e7ae
-        const int number_inliers_pass_chirality_check{
-            // 通过“手性检查”的特征点个数
-            cv::recoverPose(essential_matrix, corners_prev_left,
-                            corners_next_left, camera_matrix, matR, vecT,
-                            threshold_for_pose_recovery_, cv::noArray(),
-                            triangulatedPoints),
-        };
+        // 旋转向量与平移向量
+        cv::Mat rVec, tVec;
+        // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga50620f0e26e02caa2e9adc07b5fbf24e
+        cv::solvePnPRansac(landmarks_nonhomo, corners_next_left, camera_matrix,
+                           cv::noArray(), rVec, tVec);
 
-        delta_rotation = Eigen::Quaternion<value_type>{
-            Eigen::Matrix<value_type, 3, 3>{
-                {matR.template at<value_type>(0, 0),
-                 matR.template at<value_type>(0, 1),
-                 matR.template at<value_type>(0, 2)},
-                {matR.template at<value_type>(1, 0),
-                 matR.template at<value_type>(1, 1),
-                 matR.template at<value_type>(1, 2)},
-                {matR.template at<value_type>(2, 0),
-                 matR.template at<value_type>(2, 1),
-                 matR.template at<value_type>(2, 2)},
-            },
-        };
-        cv::cv2eigen(vecT, delta_position);
+        // // https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#ga59b0d57f46f8677fb5904294a23d404a
+        // const cv::Mat fundamental_matrix{
+        //     cv::findFundamentalMat(corners_prev_left, corners_next_left),
+        // };
+
+        // const cv::Mat essential_matrix{
+        //     cv::findEssentialMat(corners_prev_left, corners_next_left,
+        //                          camera_matrix),
+        // };
+
+        // cv::Mat matR, vecT, triangulatedPoints;
+        // // https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#ga2ee9f187170acece29c5172c2175e7ae
+        // const int number_inliers_pass_chirality_check{
+        //     // 通过“手性检查”的特征点个数
+        //     cv::recoverPose(essential_matrix, corners_prev_left,
+        //                     corners_next_left, camera_matrix, matR, vecT,
+        //                     threshold_for_pose_recovery_, cv::noArray(),
+        //                     triangulatedPoints),
+        // };
+
+        // delta_rotation = Eigen::Quaternion<value_type>{
+        //     Eigen::Matrix<value_type, 3, 3>{
+        //         {matR.template at<value_type>(0, 0),
+        //          matR.template at<value_type>(0, 1),
+        //          matR.template at<value_type>(0, 2)},
+        //         {matR.template at<value_type>(1, 0),
+        //          matR.template at<value_type>(1, 1),
+        //          matR.template at<value_type>(1, 2)},
+        //         {matR.template at<value_type>(2, 0),
+        //          matR.template at<value_type>(2, 1),
+        //          matR.template at<value_type>(2, 2)},
+        //     },
+        // };
+        // cv::cv2eigen(vecT, delta_position);
+
+        // 数据类型转换
+        {
+          Eigen::Vector<value_type, 3> rVec_eigen;
+          cv::cv2eigen(rVec, rVec_eigen);
+          // https://libeigen.gitlab.io/eigen/docs-nightly/classEigen_1_1Quaternion.html#a943e557caacc45202b3e4427ffa7d5fc
+          delta_rotation = Eigen::Quaternion<value_type>{
+              // https://libeigen.gitlab.io/eigen/docs-nightly/classEigen_1_1AngleAxis.html#a78b42395c8c42bc24adeac7c53443cf5
+              Eigen::AngleAxis<value_type>{
+                  rVec_eigen.norm(),
+                  rVec_eigen.normalized(),
+              },
+          };
+          cv::cv2eigen(tVec, delta_position);
+        }
 
         // 打印旋转轴、旋转角点、平移距离、平移方向
         {
@@ -441,13 +500,13 @@ public:
                     << "]\n";
         }
 
-        if (number_inliers_pass_chirality_check < 8)
-        {
-          std::cerr << "\t通过“手性检查”的特征点个数 ("
-                    << number_inliers_pass_chirality_check
-                    << ") 过少! 当前图像帧无法用于姿态估计!\n";
-        }
-        else
+        // if (number_inliers_pass_chirality_check < 8)
+        // {
+        //   std::cerr << "\t通过“手性检查”的特征点个数 ("
+        //             << number_inliers_pass_chirality_check
+        //             << ") 过少! 当前图像帧无法用于姿态估计!\n";
+        // }
+        // else
         {
 
           // double sampsonDistance_cv{NAN};
@@ -789,6 +848,7 @@ public:
         }
       }
 
+    continue_loop:
       prev_frame = std::move(frame);
       ++loader_;
       corners_prev_left  = std::move(corners_next_left);
@@ -826,6 +886,9 @@ void StartVisualSlamAsRosNode(int argc, char *argv[])
 
 int main(int argc, char *argv[])
 {
+  std::cerr << "OpenCV Version: " << cv::getVersionString() << "\n"
+            << cv::getBuildInformation() << std::endl;
+
 #if START_VISUALIZATION
   (void) argc;
   (void) argv;
