@@ -212,6 +212,19 @@ target_link_libraries(StereoSlam
   ${OpenCV_LIBS}
 )
 
+add_executable(VisualSim src/VisualSim/VisualSim.cpp)
+target_include_directories(VisualSim PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+install(TARGETS VisualSim
+  DESTINATION lib/${PROJECT_NAME}
+)
+target_link_libraries(VisualSim
+  Eigen3::Eigen
+  ${OpenCV_LIBS}
+)
+
 # --- 单元测试 ---
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
