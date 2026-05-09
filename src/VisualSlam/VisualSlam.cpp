@@ -105,8 +105,8 @@ public:
   using value_type = typename PointType::value_type;
   // using Point2     = PointType;
   // using Point3     = cv::Point3_<value_type>;
-  using EPA        = EightPointAlgorithm<value_type>;
-  using Landmark   = Eigen::Vector<value_type, 4>;
+  using EPA      = EightPointAlgorithm<value_type>;
+  using Landmark = Eigen::Vector<value_type, 4>;
 
 private:
   std::ofstream data_output_{"StereoSlam.csv", std::ios::out | std::ios::trunc};
@@ -116,6 +116,7 @@ private:
   // EKF<PointType> ekf_{};
   const bool visualize_{true};
   const bool plot_disparity_and_depth_{false};
+  Eigen::Vector<value_type, 3> boundary_{Eigen::Vector<value_type, 3>::Zero()};
 
 public:
   StereoSlam(bool visualize = true, bool plot_disparity_and_depth = false) :
@@ -135,9 +136,19 @@ public:
   ~StereoSlam()
   {
     cv::destroyAllWindows();
+    std::cerr << "Current Boundary [Stereo]: [" << std::fixed
+              << std::setprecision(3) << boundary_.x() << ", " << boundary_.y()
+              << ", " << boundary_.z() << " ]\n";
   }
 
 private:
+  void UpdateBoundary(const Eigen::Vector<value_type, 3> &pos)
+  {
+    boundary_.x() = std::max(boundary_.x(), std::abs(pos.x()));
+    boundary_.y() = std::max(boundary_.y(), std::abs(pos.y()));
+    boundary_.z() = std::max(boundary_.z(), std::abs(pos.z()));
+  }
+
   enum class KeyEvent
   {
     EXIT,
@@ -690,7 +701,8 @@ public:
 
           // 更新状态
           position = attitude * delta_position + position;
-          attitude = attitude * delta_rotation;
+          attitude = (attitude * delta_rotation).normalized();
+          UpdateBoundary(position);
 
           data_output_ << std::fixed                 //
                        << std::setprecision(18)      //

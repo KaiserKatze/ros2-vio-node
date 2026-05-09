@@ -2,6 +2,8 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <type_traits>
+#include <vector>
 
 #include <Eigen/Dense>
 
@@ -20,6 +22,20 @@
 #include <opencv2/videoio.hpp>
 #include <opencv2/viz/vizcore.hpp>
 
+// 1. 定义基础 trait：默认不是 vector
+template <typename T> struct is_vector : std::false_type
+{
+};
+// 2. 偏特化：匹配 std::vector 模板实例
+// 注意：vector 有两个模板参数，一个是类型 T，一个是分配器 Allocator
+template <typename T, typename Alloc>
+struct is_vector<std::vector<T, Alloc>> : std::true_type
+{
+};
+// 3. 封装为 Concept
+template <typename T>
+concept StdVectorType = is_vector<std::remove_cvref_t<T>>::value;
+
 namespace CornerDetection
 {
 
@@ -32,5 +48,35 @@ struct AbstractDetector
   const cv::Size winSize{15, 15};
   static constexpr int maxLevel{2};
 };
+
+// 自定义适配器，用于包装 cv::cornerSubPix
+struct SubPixAdaptor
+{
+  const cv::Mat &image_;
+  cv::Size win_size_;
+  cv::Size zero_zone_;
+  cv::TermCriteria criteria_;
+
+  // 重载 | 运算符
+  friend auto operator|(StdVectorType auto &&vec, const SubPixAdaptor &adaptor)
+  {
+    if (!vec.empty())
+    {
+      cv::cornerSubPix(adaptor.image_, vec, adaptor.win_size_,
+                       adaptor.zero_zone_, adaptor.criteria_);
+    }
+    return vec;
+  }
+};
+
+// 辅助工厂函数，类似于 std::views::transform
+inline auto RefineSubPix(const cv::Mat &image, cv::Size win_size = {5, 5},
+                         cv::Size zero_zone = {-1, -1},
+                         cv::TermCriteria criteria
+                         = {cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 40,
+                            0.01})
+{
+  return SubPixAdaptor{image, win_size, zero_zone, criteria};
+}
 
 } // namespace CornerDetection
