@@ -15,7 +15,6 @@ template <typename value_type> struct Path
 {
   using Point2 = Eigen::Vector<value_type, 2>;
   using Point3 = Eigen::Vector<value_type, 3>;
-  using Point4 = Eigen::Vector<value_type, 4>;
 
   /**
    * @brief 让双目相机 rig 绕着房间的几何中心，在平行于地板的平面内，做匀速圆周运动
@@ -93,7 +92,7 @@ template <typename value_type> struct Path
                 << center_pixel_right.z() << "]\n";
     }
 
-    return rig.Project(room.object_matrix, R_body.transpose(),
+    return rig.Project(room.object_matrix_, R_body.transpose(),
                        -R_body.transpose() * body_pos);
   }
 };
