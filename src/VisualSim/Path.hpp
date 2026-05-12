@@ -48,15 +48,15 @@ template <typename value_type> struct Path
     Point3 basis_z{(center - pos_body).normalized()};    // Z 轴
     Point3 basis_y{0.0, 0.0, -1.0};                      // Y 轴
     Point3 basis_x{basis_y.cross(basis_z).normalized()}; // X 轴
-    std::cerr                                            //
-        << std::fixed << std::setprecision(1)            //
-        << "\tX: [" << basis_x.x() << ", " << basis_x.y() << ", " << basis_x.z()
-        << "]; "
-        << "\tY: [" << basis_y.x() << ", " << basis_y.y() << ", " << basis_y.z()
-        << "]; "
-        << "\tZ: [" << basis_z.x() << ", " << basis_z.y() << ", " << basis_z.z()
-        << "]; "
-        << "\n";
+    // std::cerr                                            //
+    //     << std::fixed << std::setprecision(1)            //
+    //     << "\tX: [" << basis_x.x() << ", " << basis_x.y() << ", " << basis_x.z()
+    //     << "]; "
+    //     << "\tY: [" << basis_y.x() << ", " << basis_y.y() << ", " << basis_y.z()
+    //     << "]; "
+    //     << "\tZ: [" << basis_z.x() << ", " << basis_z.y() << ", " << basis_z.z()
+    //     << "]; "
+    //     << "\n";
 
     Attitude att_body;
     // 体坐标系的三个基向量在世界坐标系下的坐标，组成了从世界坐标系到体坐标系的旋转变换在世界坐标系下的矩阵表示

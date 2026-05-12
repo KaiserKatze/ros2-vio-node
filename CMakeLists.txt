@@ -212,13 +212,12 @@ target_link_libraries(StereoSlam
   ${OpenCV_LIBS}
 )
 
-add_executable(VisualSim src/VisualSim/VisualSim.cpp)
-target_include_directories(VisualSim PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
-install(TARGETS VisualSim
-  DESTINATION lib/${PROJECT_NAME}
+# ===== 目标： 纯视觉 SLAM 仿真 =====
+add_ros2_executable(VisualSim src/VisualSim/VisualSim.cpp)
+ament_target_dependencies(VisualSim
+  rclcpp
+  geometry_msgs
+  nav_msgs
 )
 target_link_libraries(VisualSim
   Eigen3::Eigen

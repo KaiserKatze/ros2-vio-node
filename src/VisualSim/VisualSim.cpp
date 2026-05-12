@@ -5,6 +5,7 @@
 #include <iostream>
 #include <limits>
 #include <print>
+#include <rclcpp/time.hpp>
 #include <sstream>
 #include <stdexcept>
 #include <type_traits>
@@ -20,6 +21,64 @@
 #include "Path.hpp"
 #include "Room.hpp"
 #include "StereoRig.hpp"
+
+#define START_VISUALIZATION 1
+
+#if (!START_VISUALIZATION)
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <nav_msgs/msg/path.hpp>
+#include <rclcpp/rclcpp.hpp>
+
+#include "euroc_vio/main.h"
+#endif
+
+#if (!START_VISUALIZATION)
+struct PathPublisher : public rclcpp::Node
+{
+private:
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_{
+      create_publisher<nav_msgs::msg::Path>("/path_stereo_slam",
+                                            rclcpp::QoS{10}),
+  };
+  nav_msgs::msg::Path msg_path_;
+
+protected:
+  PathPublisher() : Node("StereoSlam")
+  {
+    msg_path_.header.frame_id = DEFAULT_FRAME_ID;
+  }
+
+  template <typename value_type>
+  void Publish(const rclcpp::Time timestamp,
+               const Eigen::Quaternion<value_type> &attitude,
+               const Eigen::Vector<value_type, 3> &position)
+  {
+    geometry_msgs::msg::PoseStamped msg_pose;
+
+    msg_path_.header.stamp = timestamp;
+    msg_pose.header.stamp  = timestamp;
+
+    msg_pose.pose.position.x = position.x();
+    msg_pose.pose.position.y = position.y();
+    msg_pose.pose.position.z = position.z();
+
+    msg_pose.pose.orientation.w = attitude.w();
+    msg_pose.pose.orientation.x = attitude.x();
+    msg_pose.pose.orientation.y = attitude.y();
+    msg_pose.pose.orientation.z = attitude.z();
+
+    msg_path_.poses.push_back(msg_pose);
+    publisher_->publish(msg_path_);
+  }
+
+  template <typename value_type>
+  void Publish(const Eigen::Quaternion<value_type> &attitude,
+               const Eigen::Vector<value_type, 3> &position)
+  {
+    Publish(this->get_clock()->now(), attitude, position);
+  }
+};
+#endif
 
 // static void PrintCvMatInfo(const std::string &mat_name, const cv::Mat &mat)
 // {
@@ -48,7 +107,11 @@
 // #define PrintInfo(mat) PrintCvMatInfo(#mat, mat)
 #define PrintInfo(mat) /* do nothing */
 
-template <typename value_type> struct VisualSim
+template <typename value_type>
+struct VisualSim
+#if (!START_VISUALIZATION)
+  : public PathPublisher
+#endif
 {
   // 传入长宽高的划分段数
   Room<value_type> room_{10, 10, 6};
@@ -146,6 +209,14 @@ template <typename value_type> struct VisualSim
 
     for (value_type time = 0.0; time < 50.0; time += 0.1)
     {
+#if (!START_VISUALIZATION)
+      // 引入 rclcpp::ok() 以响应 ROS 2 节点的关闭信号 (如 Ctrl+C)
+      if (!rclcpp::ok())
+      {
+        break;
+      }
+#endif
+
       std::cerr << "[INFO] 时间 = (" << std::fixed << std::setprecision(1)
                 << time << ").\n";
 
@@ -160,6 +231,9 @@ template <typename value_type> struct VisualSim
       {
         first_loop = false;
         std::print("\t初始化 ...\n");
+#if (!START_VISUALIZATION)
+        Publish(attitude, position);
+#endif
       }
       else
       {
@@ -346,6 +420,9 @@ template <typename value_type> struct VisualSim
           // 状态更新
           position = attitude * delta_position + position;
           attitude = (attitude * delta_rotation).normalized();
+#if (!START_VISUALIZATION)
+          Publish(attitude, position);
+#endif
         }
 
         Point3 true_position{Point3::Zero()};
@@ -422,8 +499,16 @@ template <typename value_type> struct VisualSim
   }
 };
 
-int main()
+int main(int argc, char *argv[])
 {
+#if (!START_VISUALIZATION)
+  // 初始化 ROS 2
+  rclcpp::init(argc, argv);
+#else
+  (void) argc;
+  (void) argv;
+#endif
+
   try
   {
     VisualSim<float>{}.Start();
@@ -432,5 +517,10 @@ int main()
   {
     std::cerr << ex.what() << "\n";
   }
+
+#if (!START_VISUALIZATION)
+  // 关闭 ROS 2 实例
+  rclcpp::shutdown();
+#endif
   return 0;
 }

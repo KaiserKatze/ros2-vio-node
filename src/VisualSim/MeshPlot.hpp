@@ -24,8 +24,15 @@ template <typename value_type> struct MeshPlot
   {
     cv::namedWindow(window_left_, cv::WINDOW_NORMAL);
     cv::namedWindow(window_right_, cv::WINDOW_NORMAL);
-    cv::moveWindow(window_left_, 0, 0);
-    cv::moveWindow(window_right_, 0, 0);
+    // cv::Mat dummy_image(800, 600, CV_8UC3, 0);
+    // cv::imshow(window_left_, dummy_image);
+    // cv::imshow(window_right_, dummy_image);
+    // cv::waitKey(1);
+    // cv::moveWindow(window_left_, 0, 0);
+    // cv::moveWindow(window_right_, 0, 0);
+    // cv::Size window_size{800, 600};
+    // cv::resizeWindow(window_left_, window_size);
+    // cv::resizeWindow(window_right_, window_size);
   }
 
   ~MeshPlot()
