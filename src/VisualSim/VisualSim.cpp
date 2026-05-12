@@ -5,7 +5,6 @@
 #include <iostream>
 #include <limits>
 #include <print>
-#include <rclcpp/time.hpp>
 #include <sstream>
 #include <stdexcept>
 #include <type_traits>
@@ -22,12 +21,16 @@
 #include "Room.hpp"
 #include "StereoRig.hpp"
 
-#define START_VISUALIZATION 1
+#define START_VISUALIZATION 0
 
 #if (!START_VISUALIZATION)
+#include <cv_bridge/cv_bridge.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <nav_msgs/msg/path.hpp>
+#include <rclcpp/publisher.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <rclcpp/time.hpp>
+#include <sensor_msgs/msg/image.hpp>
 
 #include "euroc_vio/main.h"
 #endif
@@ -36,9 +39,15 @@
 struct PathPublisher : public rclcpp::Node
 {
 private:
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_{
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_{
       create_publisher<nav_msgs::msg::Path>("/path_stereo_slam",
                                             rclcpp::QoS{10}),
+  };
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_image0_{
+      create_publisher<sensor_msgs::msg::Image>("/image0", rclcpp::QoS{10}),
+  };
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_image1_{
+      create_publisher<sensor_msgs::msg::Image>("/image1", rclcpp::QoS{10}),
   };
   nav_msgs::msg::Path msg_path_;
 
@@ -49,14 +58,15 @@ protected:
   }
 
   template <typename value_type>
-  void Publish(const rclcpp::Time timestamp,
-               const Eigen::Quaternion<value_type> &attitude,
+  void Publish(const Eigen::Quaternion<value_type> &attitude,
                const Eigen::Vector<value_type, 3> &position)
   {
-    geometry_msgs::msg::PoseStamped msg_pose;
+    rclcpp::Time now{this->get_clock()->now()};
 
-    msg_path_.header.stamp = timestamp;
-    msg_pose.header.stamp  = timestamp;
+    msg_path_.header.stamp = now;
+
+    geometry_msgs::msg::PoseStamped msg_pose;
+    msg_pose.header.stamp = now;
 
     msg_pose.pose.position.x = position.x();
     msg_pose.pose.position.y = position.y();
@@ -68,14 +78,22 @@ protected:
     msg_pose.pose.orientation.z = attitude.z();
 
     msg_path_.poses.push_back(msg_pose);
-    publisher_->publish(msg_path_);
+    publisher_path_->publish(msg_path_);
   }
 
-  template <typename value_type>
-  void Publish(const Eigen::Quaternion<value_type> &attitude,
-               const Eigen::Vector<value_type, 3> &position)
+  void Publish(const cv::Mat &image_left, const cv::Mat &image_right)
   {
-    Publish(this->get_clock()->now(), attitude, position);
+    rclcpp::Time now{this->get_clock()->now()};
+
+    cv_bridge::CvImage cv_image;
+    cv_image.header.stamp    = now;
+    cv_image.header.frame_id = DEFAULT_FRAME_ID;
+    cv_image.encoding        = sensor_msgs::image_encodings::BGR8;
+
+    cv_image.image = image_left;
+    publisher_image0_->publish(*cv_image.toImageMsg());
+    cv_image.image = image_right;
+    publisher_image0_->publish(*cv_image.toImageMsg());
   }
 };
 #endif
@@ -487,6 +505,10 @@ struct VisualSim
         // 核心绘制逻辑收口
         mesh_plot_.Draw(cv_image_left, cv_image_right, visible_object_indices,
                         image_points_left, image_points_right);
+
+#if (!START_VISUALIZATION)
+        Publish(cv_image_left, cv_image_right);
+#endif
 
         if (mesh_plot_.Render(cv_image_left, cv_image_right, 1000))
         {

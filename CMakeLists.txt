@@ -218,6 +218,8 @@ ament_target_dependencies(VisualSim
   rclcpp
   geometry_msgs
   nav_msgs
+  sensor_msgs
+  cv_bridge
 )
 target_link_libraries(VisualSim
   Eigen3::Eigen
