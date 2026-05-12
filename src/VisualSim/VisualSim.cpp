@@ -44,10 +44,12 @@ private:
                                             rclcpp::QoS{10}),
   };
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_image0_{
-      create_publisher<sensor_msgs::msg::Image>("/image0", rclcpp::QoS{10}),
+      create_publisher<sensor_msgs::msg::Image>("/cam0/image_raw",
+                                                rclcpp::QoS{10}),
   };
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_image1_{
-      create_publisher<sensor_msgs::msg::Image>("/image1", rclcpp::QoS{10}),
+      create_publisher<sensor_msgs::msg::Image>("/cam1/image_raw",
+                                                rclcpp::QoS{10}),
   };
   nav_msgs::msg::Path msg_path_;
 
@@ -58,8 +60,8 @@ protected:
   }
 
   template <typename value_type>
-  void Publish(const Eigen::Quaternion<value_type> &attitude,
-               const Eigen::Vector<value_type, 3> &position)
+  void PublishPath(const Eigen::Quaternion<value_type> &attitude,
+                   const Eigen::Vector<value_type, 3> &position)
   {
     rclcpp::Time now{this->get_clock()->now()};
 
@@ -81,7 +83,7 @@ protected:
     publisher_path_->publish(msg_path_);
   }
 
-  void Publish(const cv::Mat &image_left, const cv::Mat &image_right)
+  void PublishImage(const cv::Mat &image_left, const cv::Mat &image_right)
   {
     rclcpp::Time now{this->get_clock()->now()};
 
@@ -134,7 +136,10 @@ struct VisualSim
   // 传入长宽高的划分段数
   Room<value_type> room_{10, 10, 6};
   // 初始化专属绘制器
-  MeshPlot<value_type> mesh_plot_;
+  MeshPlot<value_type> mesh_plot_{
+      /* create_named_window */
+      static_cast<bool>(START_VISUALIZATION),
+  };
   // 仿真双目相机
   StereoRig<value_type> rig_{};
   // 仿真双目相机运动路径
@@ -225,7 +230,7 @@ struct VisualSim
     bool first_loop{true};
     Frame prev_frame;
 
-    for (value_type time = 0.0; time < 50.0; time += 0.1)
+    for (value_type time = 0.0; time < 200.0; time += 0.1)
     {
 #if (!START_VISUALIZATION)
       // 引入 rclcpp::ok() 以响应 ROS 2 节点的关闭信号 (如 Ctrl+C)
@@ -250,7 +255,7 @@ struct VisualSim
         first_loop = false;
         std::print("\t初始化 ...\n");
 #if (!START_VISUALIZATION)
-        Publish(attitude, position);
+        PublishPath(attitude, position);
 #endif
       }
       else
@@ -439,7 +444,7 @@ struct VisualSim
           position = attitude * delta_position + position;
           attitude = (attitude * delta_rotation).normalized();
 #if (!START_VISUALIZATION)
-          Publish(attitude, position);
+          PublishPath(attitude, position);
 #endif
         }
 
@@ -507,13 +512,13 @@ struct VisualSim
                         image_points_left, image_points_right);
 
 #if (!START_VISUALIZATION)
-        Publish(cv_image_left, cv_image_right);
-#endif
-
+        PublishImage(cv_image_left, cv_image_right);
+#else
         if (mesh_plot_.Render(cv_image_left, cv_image_right, 1000))
         {
           break;
         }
+#endif
       }
 
       prev_frame = std::move(frame);
