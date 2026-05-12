@@ -15,8 +15,10 @@ template <typename value_type> struct StereoRig
   Camera<value_type> camera_right_;
 
   using Point2 = Eigen::Vector<value_type, 2>;
+  using Frame  = std::tuple<std::vector<size_t>, std::vector<Point2>,
+                            std::vector<Point2>>;
 
-  std::tuple<std::vector<size_t>, std::vector<Point2>, std::vector<Point2>>
+  Frame
   Project(const Eigen::Matrix<value_type, 3, Eigen::Dynamic> &object_matrix,
           const Eigen::Matrix<value_type, 3, 3> &parent_rotation
           = Eigen::Matrix<value_type, 3, 3>::Identity(),
@@ -65,5 +67,46 @@ template <typename value_type> struct StereoRig
     }
 
     return {common_indices, common_image_left, common_image_right};
+  }
+
+  static void AlignFrames(Frame &frame1, Frame &frame2)
+  {
+    const std::vector<size_t> &indices1{std::get<0>(frame1)};
+    const std::vector<size_t> &indices2{std::get<0>(frame2)};
+    std::vector<size_t> common_indices;
+    std::vector<Point2> common_frame1_image_left;
+    std::vector<Point2> common_frame1_image_right;
+    std::vector<Point2> common_frame2_image_left;
+    std::vector<Point2> common_frame2_image_right;
+
+    size_t i{0}, j{0};
+    while (i < indices1.size() && j < indices2.size())
+    {
+      if (indices1[i] == indices2[j])
+      {
+        common_indices.push_back(indices1[i]);
+        common_frame1_image_left.push_back(std::get<1>(frame1)[i]);
+        common_frame1_image_right.push_back(std::get<1>(frame1)[i]);
+        common_frame2_image_left.push_back(std::get<1>(frame2)[j]);
+        common_frame2_image_right.push_back(std::get<1>(frame2)[j]);
+        ++i;
+        ++j;
+      }
+      else if (indices1[i] < indices2[j])
+      {
+        ++i;
+      }
+      else
+      {
+        ++j;
+      }
+    }
+
+    std::get<0>(frame1) = common_indices;
+    std::get<0>(frame2) = common_indices;
+    std::get<1>(frame1) = std::move(common_frame1_image_left);
+    std::get<2>(frame1) = std::move(common_frame1_image_right);
+    std::get<1>(frame2) = std::move(common_frame2_image_left);
+    std::get<2>(frame2) = std::move(common_frame2_image_right);
   }
 };

@@ -118,12 +118,12 @@ template <typename value_type> struct Room
       };
     }
 
-    std::cerr << "网格点生成完毕，共计 " << total << " 个点:\n";
-    for (const auto &point : object_points_)
-    {
-      std::cerr << "\t[" << point[0] << ", " << point[1] << ", " << point[2]
-                << "];\n";
-    }
+    std::cerr << "网格点生成完毕，共计 " << total << " 个点.\n";
+    // for (const auto &point : object_points_)
+    // {
+    //   std::cerr << "\t[" << point[0] << ", " << point[1] << ", " << point[2]
+    //             << "];\n";
+    // }
   }
 
   // 辅助函数：通过整数坐标查找其在矩阵中的索引

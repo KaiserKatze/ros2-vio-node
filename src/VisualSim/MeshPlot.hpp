@@ -24,6 +24,8 @@ template <typename value_type> struct MeshPlot
   {
     cv::namedWindow(window_left_, cv::WINDOW_NORMAL);
     cv::namedWindow(window_right_, cv::WINDOW_NORMAL);
+    cv::moveWindow(window_left_, 0, 0);
+    cv::moveWindow(window_right_, 0, 0);
   }
 
   ~MeshPlot()
@@ -266,7 +268,8 @@ template <typename value_type> struct MeshPlot
     }
   }
 
-  bool Render(cv::Mat &img_left, cv::Mat &img_right, int delay = 0) const
+  bool Render(const cv::Mat &img_left, const cv::Mat &img_right,
+              int delay = 0) const
   {
     cv::imshow(window_left_, img_left);
     cv::imshow(window_right_, img_right);
