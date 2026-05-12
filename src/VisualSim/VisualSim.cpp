@@ -8,13 +8,13 @@
 #include <sstream>
 #include <stdexcept>
 #include <type_traits>
+#include <utility>
 
 #include <Eigen/Dense>
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/check.hpp>
 #include <opencv2/core/eigen.hpp>
-#include <utility>
 
 #include "MeshPlot.hpp"
 #include "Path.hpp"
@@ -59,8 +59,10 @@ template <typename value_type> struct VisualSim
   // 仿真双目相机运动路径
   Path<value_type> path_{};
 
-  using Point2 = typename StereoRig<value_type>::Point2;
-  using Frame  = typename StereoRig<value_type>::Frame;
+  using Point3     = Eigen::Vector<value_type, 3>;
+  using Point2     = Eigen::Vector<value_type, 2>;
+  using Quaternion = Eigen::Quaternion<value_type>;
+  using Frame      = typename StereoRig<value_type>::Frame;
 
   VisualSim() : mesh_plot_{room_}
   {
@@ -89,6 +91,23 @@ template <typename value_type> struct VisualSim
     // 投影矩阵 P = K [R, t]
     cv::Mat cv_projection_matrix_left;
     cv::Mat cv_projection_matrix_right;
+
+    // 全局状态
+    Quaternion attitude{
+        Quaternion::Identity(),
+    };
+    Point3 position{
+        Point3::Zero(),
+    };
+    // 位姿初始化
+    std::tie(position, attitude) = path_.GetPose(room_, 0.0);
+    // 局部增量
+    Quaternion delta_rotation{
+        Quaternion::Identity(),
+    };
+    Point3 delta_position{
+        Point3::Zero(),
+    };
 
     // 将 Eigen 矩阵转换为 OpenCV 矩阵
     {
@@ -313,6 +332,64 @@ template <typename value_type> struct VisualSim
             << "\n"
             << "\tMinimal Error: " << reproj_error_min << "\n"
             << "\tMaximal Error: " << reproj_error_max << "\n";
+
+        // 估计轨迹
+        {
+          // 类型转换
+          Point3 eigen_rVec;
+          cv::cv2eigen(rVec, eigen_rVec);
+          delta_rotation = Quaternion{Eigen::AngleAxis<value_type>{
+              eigen_rVec.norm(),
+              eigen_rVec.normalized(),
+          }};
+          cv::cv2eigen(tVec, delta_position);
+          // 状态更新
+          position = attitude * delta_position + position;
+          attitude = (attitude * delta_rotation).normalized();
+        }
+
+        Point3 true_position{Point3::Zero()};
+        Quaternion true_attitude{Quaternion::Identity()};
+        std::tie(true_position, true_attitude) = path_.GetPose(room_, time);
+
+        std::cerr //
+            << "\t===== 位姿估计误差 =====\n"
+
+            << "\t真实位置: ["             //
+            << true_position.x() << ", "   //
+            << true_position.y() << ", "   //
+            << true_position.z() << "];\n" //
+
+            << "\t真实朝向: ["           //
+            << true_attitude.w() << ", " //
+            << true_attitude.x() << ", " //
+            << true_attitude.y() << ", " //
+            << true_attitude.z()         //
+            << "]\n"                     //
+
+            << "\t估计位置: ["        //
+            << position.x() << ", "   //
+            << position.y() << ", "   //
+            << position.z() << "];\n" //
+
+            << "\t估计朝向: ["      //
+            << attitude.w() << ", " //
+            << attitude.x() << ", " //
+            << attitude.y() << ", " //
+            << attitude.z()         //
+            << "]\n"                //
+
+            << "\t位置误差: ["                                      //
+            << std::abs(true_position.x() - position.x()) << ", "   //
+            << std::abs(true_position.y() - position.y()) << ", "   //
+            << std::abs(true_position.z() - position.z()) << "];\n" //
+
+            << "\t朝向误差: ["                                    //
+            << std::abs(true_attitude.w() - attitude.w()) << ", " //
+            << std::abs(true_attitude.x() - attitude.x()) << ", " //
+            << std::abs(true_attitude.y() - attitude.y()) << ", " //
+            << std::abs(true_attitude.z() - attitude.z())         //
+            << "]\n";
       }
 
       // 绘制相机图像
