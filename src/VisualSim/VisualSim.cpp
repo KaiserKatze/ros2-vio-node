@@ -159,7 +159,6 @@ struct VisualSim
   using Point3     = Eigen::Vector<value_type, 3>;
   using Point2     = Eigen::Vector<value_type, 2>;
   using Quaternion = Eigen::Quaternion<value_type>;
-  using Frame      = typename StereoRig<value_type>::Frame;
 
   VisualSim() : mesh_plot_{room_}
   {
@@ -239,7 +238,7 @@ struct VisualSim
         cv_projection_matrix_left(cv::Range(0, 3), cv::Range(0, 3))};
 
     bool first_loop{true};
-    Frame prev_frame;
+    AlignedFrame<value_type> prev_frame_{};
 
     for (value_type time = 0.0; time < time_limit_simulation_; time += 0.1)
     {
@@ -254,11 +253,20 @@ struct VisualSim
       std::cerr << "[INFO] 时间 = (" << std::fixed << std::setprecision(1)
                 << time << ").\n";
 
-      // 直接拿到可见顶点的全局索引，而不是三维坐标系本身了
-      const Frame frame{path_.GetImage(rig_, time, room_, orientation_mode_)};
+      // 左右目图像分别对应的一组路标点、像素点
+      const Frame<value_type> frame{
+          path_.GetImage(rig_, time, room_, orientation_mode_),
+      };
+
+      // 必须复制一份
+      // 如果不提前复制一份，就直接把 frame 用于对齐
+      // 那么在执行 `prev_frame = std::move(frame)` 以后
+      // prev_frame 中可用的像素点个数一定会逐渐减少
+      // 直到像素点个数少于 4 个时触发 cv::solvePnPRansac 函数报错
+      AlignedFrame<value_type> current_frame{frame};
 
       std::cerr << "\t当前场景中，双目可见路标点有 "
-                << std::get<0>(frame).size() << " 个.\n";
+                << current_frame.indices_common_.size() << " 个.\n";
 
       // 利用像素点进行三角化
       if (first_loop)
@@ -268,234 +276,240 @@ struct VisualSim
       }
       else
       {
-        // 必须复制一份
-        // 如果不提前复制一份，就直接把 frame 用于对齐
-        // 那么在执行 `prev_frame = std::move(frame)` 以后
-        // prev_frame 中可用的像素点个数一定会逐渐减少
-        // 直到像素点个数少于 4 个时触发 cv::solvePnPRansac 函数报错
-        Frame current_frame{frame};
-        // 先将前后相邻两个图像帧中的像素点对齐，只保留交集部分
-        StereoRig<value_type>::AlignFrames(prev_frame, current_frame);
-        const std::vector<size_t> &visible_object_indices{
-            std::get<0>(current_frame),
-        };
-        const std::vector<Point2> &image_points_left{
-            std::get<1>(current_frame),
-        };
-
-        if (std::get<0>(prev_frame).size() != std::get<0>(current_frame).size())
+        try
         {
-          std::stringstream ss;
-          ss << "[ERROR] 前一帧路标点个数 (" << std::get<0>(prev_frame).size()
-             << ") 与后一帧 (" << std::get<0>(current_frame).size()
-             << ") 不符!\n";
-          throw std::runtime_error{ss.str()};
-        }
+          // 先将前后相邻两个图像帧中的像素点对齐，只保留交集部分
+          StereoRig<value_type>::AlignFrames(prev_frame_, current_frame);
 
-        // std::cerr << "\t正在执行三角化 ...\n";
+          if (prev_frame_.indices_common_.size()
+              != current_frame.indices_common_.size())
+          {
+            std::stringstream ss;
+            ss << "[ERROR] 前一帧路标点个数 ("
+               << prev_frame_.indices_common_.size() << ") 与后一帧 ("
+               << current_frame.indices_common_.size() << ") 不符!\n";
+            throw std::runtime_error{ss.str()};
+          }
 
-        cv::Mat prev_cv_image_points_left{
-            VisualSim::eigen2cv(std::get<1>(prev_frame)),
-        };
-        cv::Mat prev_cv_image_points_right{
-            VisualSim::eigen2cv(std::get<2>(prev_frame)),
-        };
-
-        PrintInfo(cv_projection_matrix_left);
-        PrintInfo(cv_projection_matrix_right);
-        PrintInfo(prev_cv_image_points_left);
-        PrintInfo(prev_cv_image_points_right);
-
-        // 世界坐标系 (即以左目光心为原点的坐标系) 中路标点的齐次坐标
-        cv::Mat landmarks_homo;
-        // https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#gad3fc9a0c82b08df034234979960b778c
-        cv::triangulatePoints(cv_projection_matrix_left,
-                              cv_projection_matrix_right,
-                              prev_cv_image_points_left,
-                              prev_cv_image_points_right, landmarks_homo);
-
-        PrintInfo(landmarks_homo);
-
-        // std::cerr << "\t三角化执行完毕 ...\n";
-
-        if (visible_object_indices.size()
-            != static_cast<size_t>(landmarks_homo.cols))
-        {
-          std::stringstream ss;
-          ss << "三角化得到的路标点个数 (" << landmarks_homo.cols
-             << ") 与预期 (" << visible_object_indices.size() << ") 不符!\n";
-          throw std::runtime_error{ss.str()};
-        }
-
-        // std::cerr << "\t正在将齐次坐标转为非齐次坐标 ...\n";
-
-        // 世界坐标系中路标点的非齐次坐标
-        cv::Mat landmarks_nonhomo;
-        // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#gac42edda3a3a0f717979589fcd6ac0035
-        cv::convertPointsFromHomogeneous(landmarks_homo.t(), landmarks_nonhomo);
-
-        landmarks_nonhomo = landmarks_nonhomo.t();
-
-        // std::cerr << "\t坐标转换完毕 ...\n";
-
-        PrintInfo(landmarks_nonhomo);
-
-        float error_sum{0.0f};
-        float error_min{std::numeric_limits<float>::max()};
-        float error_max{std::numeric_limits<float>::lowest()};
-        for (size_t i = 0; i < visible_object_indices.size(); ++i)
-        {
-          const size_t object_point_index{visible_object_indices[i]};
-          // Eigen::Vector<value_type, 3>
-          const auto &object_point{
-              room_.object_matrix_.col(object_point_index),
+          const std::vector<size_t> &visible_object_indices{
+              current_frame.indices_common_,
           };
-          const cv::Point3f landmark{landmarks_nonhomo.at<cv::Point3f>(0, i)};
-          // 计算 L1 误差
-          const float error{std::abs(object_point.x() - landmark.x)
-                            + std::abs(object_point.y() - landmark.y)
-                            + std::abs(object_point.z() - landmark.z)};
-          error_sum += error;
-          error_min = std::min(error_min, error);
-          error_max = std::max(error_max, error);
+          const std::vector<Point2> &image_points_left{
+              current_frame.pixels_left_,
+          };
+
+          // std::cerr << "\t正在执行三角化 ...\n";
+
+          cv::Mat prev_cv_image_points_left{
+              VisualSim::eigen2cv(prev_frame_.pixels_left_),
+          };
+          cv::Mat prev_cv_image_points_right{
+              VisualSim::eigen2cv(prev_frame_.pixels_left_),
+          };
+
+          PrintInfo(cv_projection_matrix_left);
+          PrintInfo(cv_projection_matrix_right);
+          PrintInfo(prev_cv_image_points_left);
+          PrintInfo(prev_cv_image_points_right);
+
+          // 世界坐标系 (即以左目光心为原点的坐标系) 中路标点的齐次坐标
+          cv::Mat landmarks_homo;
+          // https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#gad3fc9a0c82b08df034234979960b778c
+          cv::triangulatePoints(cv_projection_matrix_left,
+                                cv_projection_matrix_right,
+                                prev_cv_image_points_left,
+                                prev_cv_image_points_right, landmarks_homo);
+
+          PrintInfo(landmarks_homo);
+
+          // std::cerr << "\t三角化执行完毕 ...\n";
+
+          if (visible_object_indices.size()
+              != static_cast<size_t>(landmarks_homo.cols))
+          {
+            std::stringstream ss;
+            ss << "三角化得到的路标点个数 (" << landmarks_homo.cols
+               << ") 与预期 (" << visible_object_indices.size() << ") 不符!\n";
+            throw std::runtime_error{ss.str()};
+          }
+
+          // std::cerr << "\t正在将齐次坐标转为非齐次坐标 ...\n";
+
+          // 世界坐标系中路标点的非齐次坐标
+          cv::Mat landmarks_nonhomo;
+          // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#gac42edda3a3a0f717979589fcd6ac0035
+          cv::convertPointsFromHomogeneous(landmarks_homo.t(),
+                                           landmarks_nonhomo);
+
+          landmarks_nonhomo = landmarks_nonhomo.t();
+
+          // std::cerr << "\t坐标转换完毕 ...\n";
+
+          PrintInfo(landmarks_nonhomo);
+
+          float error_sum{0.0f};
+          float error_min{std::numeric_limits<float>::max()};
+          float error_max{std::numeric_limits<float>::lowest()};
+          for (size_t i = 0; i < visible_object_indices.size(); ++i)
+          {
+            const size_t object_point_index{visible_object_indices[i]};
+            // Eigen::Vector<value_type, 3>
+            const auto &object_point{
+                room_.object_matrix_.col(object_point_index),
+            };
+            const cv::Point3f landmark{landmarks_nonhomo.at<cv::Point3f>(0, i)};
+            // 计算 L1 误差
+            const float error{std::abs(object_point.x() - landmark.x)
+                              + std::abs(object_point.y() - landmark.y)
+                              + std::abs(object_point.z() - landmark.z)};
+            error_sum += error;
+            error_min = std::min(error_min, error);
+            error_max = std::max(error_max, error);
+          }
+
+          std::cerr //
+              << "\t===== 路标点估计误差 =====\n"
+              << "\tAverage Error: "
+              << (error_sum / static_cast<float>(visible_object_indices.size()))
+              << "\n"
+              << "\tMinimal Error: " << error_min << "\n"
+              << "\tMaximal Error: " << error_max << "\n";
+
+          cv::Mat cv_image_points_left{
+              VisualSim::eigen2cv(image_points_left),
+          };
+          // cv::Mat cv_image_points_right{
+          //     VisualSim::eigen2cv(image_points_right),
+          // };
+
+          // 张量 cv_image_points_left 只有 1 个通道
+          // 而 cv::solvePnPRansac 要求 imagePoints 参数必须是 Nx2 形状
+          // 因此必须提前转置
+          cv::Mat cv_image_points_next{cv_image_points_left.t()};
+          PrintInfo(cv_image_points_next);
+
+          // const int npoints_o{std::max(landmarks_nonhomo.checkVector(3, CV_32F),
+          //                              landmarks_nonhomo.checkVector(3, CV_64F))};
+          // std::print("\tlen(landmarks_nonhomo) = {}.\n", npoints_o);
+          // const int npoints_i{
+          //     std::max(cv_image_points_next.checkVector(2, CV_32F),
+          //              cv_image_points_next.checkVector(2, CV_64F))};
+          // std::print("\tlen(cv_image_points_next) = {}.\n", npoints_i);
+
+          cv::Mat rVec, tVec;
+          // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga50620f0e26e02caa2e9adc07b5fbf24e
+          cv::solvePnPRansac(landmarks_nonhomo, cv_image_points_next,
+                             cv_camera_matrix, cv::noArray(), rVec, tVec);
+
+          PrintInfo(rVec);
+          PrintInfo(tVec);
+
+          cv::Mat cv_reproj_left;
+          // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga1019495a2c8d1743ed5cc23fa0daff8c
+          cv::projectPoints(landmarks_nonhomo, rVec, tVec, cv_camera_matrix,
+                            cv::noArray(), cv_reproj_left);
+
+          PrintInfo(cv_reproj_left);
+
+          static_assert(
+              std::is_same_v<typename std::remove_cvref_t<
+                                 decltype(image_points_left)>::value_type,
+                             Point2>,
+              "变量 `image_points_left` 类型错误!");
+          if (cv_reproj_left.total() * cv_reproj_left.channels()
+              != image_points_left.size() * Point2::RowsAtCompileTime)
+          {
+            throw std::runtime_error{
+                "[ERROR] 重投影点个数与理论投影点个数不符!"};
+          }
+
+          float reproj_error_sum{0.0f};
+          float reproj_error_min{std::numeric_limits<float>::max()};
+          float reproj_error_max{std::numeric_limits<float>::lowest()};
+          for (size_t i = 0; i < image_points_left.size(); ++i)
+          {
+            const Point2 &image_point{image_points_left[i]};
+            const cv::Point2f cv_image{cv_reproj_left.at<cv::Point2f>(i, 0)};
+            // 计算 L1 误差
+            const float error{std::abs(image_point.x() - cv_image.x)
+                              + std::abs(image_point.y() - cv_image.y)};
+            reproj_error_sum += error;
+            reproj_error_min = std::min(reproj_error_min, error);
+            reproj_error_max = std::max(reproj_error_max, error);
+          }
+
+          std::cerr //
+              << "\t===== 重投影误差 =====\n"
+              << "\tAverage Error: "
+              << (reproj_error_sum
+                  / static_cast<float>(image_points_left.size()))
+              << "\n"
+              << "\tMinimal Error: " << reproj_error_min << "\n"
+              << "\tMaximal Error: " << reproj_error_max << "\n";
+
+          // 估计轨迹
+          {
+            // 类型转换
+            Point3 eigen_rVec;
+            cv::cv2eigen(rVec, eigen_rVec);
+            delta_rotation = Quaternion{Eigen::AngleAxis<value_type>{
+                eigen_rVec.norm(),
+                eigen_rVec.normalized(),
+            }};
+            cv::cv2eigen(tVec, delta_position);
+            // 状态更新
+            position = attitude * delta_position + position;
+            attitude = (attitude * delta_rotation).normalized();
+          }
+
+          Point3 true_position{Point3::Zero()};
+          Quaternion true_attitude{Quaternion::Identity()};
+          std::tie(true_position, true_attitude)
+              = path_.GetPose(room_, time, orientation_mode_);
+
+          std::cerr //
+              << "\t===== 位姿估计误差 =====\n"
+
+              << "\t真实位置: ["             //
+              << true_position.x() << ", "   //
+              << true_position.y() << ", "   //
+              << true_position.z() << "];\n" //
+
+              << "\t真实朝向: ["           //
+              << true_attitude.w() << ", " //
+              << true_attitude.x() << ", " //
+              << true_attitude.y() << ", " //
+              << true_attitude.z()         //
+              << "]\n"                     //
+
+              << "\t估计位置: ["        //
+              << position.x() << ", "   //
+              << position.y() << ", "   //
+              << position.z() << "];\n" //
+
+              << "\t估计朝向: ["      //
+              << attitude.w() << ", " //
+              << attitude.x() << ", " //
+              << attitude.y() << ", " //
+              << attitude.z()         //
+              << "]\n"                //
+
+              << "\t位置误差: ["                                      //
+              << std::abs(true_position.x() - position.x()) << ", "   //
+              << std::abs(true_position.y() - position.y()) << ", "   //
+              << std::abs(true_position.z() - position.z()) << "];\n" //
+
+              << "\t朝向误差: ["                                    //
+              << std::abs(true_attitude.w() - attitude.w()) << ", " //
+              << std::abs(true_attitude.x() - attitude.x()) << ", " //
+              << std::abs(true_attitude.y() - attitude.y()) << ", " //
+              << std::abs(true_attitude.z() - attitude.z())         //
+              << "]\n";
         }
-
-        std::cerr //
-            << "\t===== 路标点估计误差 =====\n"
-            << "\tAverage Error: "
-            << (error_sum / static_cast<float>(visible_object_indices.size()))
-            << "\n"
-            << "\tMinimal Error: " << error_min << "\n"
-            << "\tMaximal Error: " << error_max << "\n";
-
-        cv::Mat cv_image_points_left{
-            VisualSim::eigen2cv(image_points_left),
-        };
-        // cv::Mat cv_image_points_right{
-        //     VisualSim::eigen2cv(image_points_right),
-        // };
-
-        // 张量 cv_image_points_left 只有 1 个通道
-        // 而 cv::solvePnPRansac 要求 imagePoints 参数必须是 Nx2 形状
-        // 因此必须提前转置
-        cv::Mat cv_image_points_next{cv_image_points_left.t()};
-        PrintInfo(cv_image_points_next);
-
-        // const int npoints_o{std::max(landmarks_nonhomo.checkVector(3, CV_32F),
-        //                              landmarks_nonhomo.checkVector(3, CV_64F))};
-        // std::print("\tlen(landmarks_nonhomo) = {}.\n", npoints_o);
-        // const int npoints_i{
-        //     std::max(cv_image_points_next.checkVector(2, CV_32F),
-        //              cv_image_points_next.checkVector(2, CV_64F))};
-        // std::print("\tlen(cv_image_points_next) = {}.\n", npoints_i);
-
-        cv::Mat rVec, tVec;
-        // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga50620f0e26e02caa2e9adc07b5fbf24e
-        cv::solvePnPRansac(landmarks_nonhomo, cv_image_points_next,
-                           cv_camera_matrix, cv::noArray(), rVec, tVec);
-
-        PrintInfo(rVec);
-        PrintInfo(tVec);
-
-        cv::Mat cv_reproj_left;
-        // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga1019495a2c8d1743ed5cc23fa0daff8c
-        cv::projectPoints(landmarks_nonhomo, rVec, tVec, cv_camera_matrix,
-                          cv::noArray(), cv_reproj_left);
-
-        PrintInfo(cv_reproj_left);
-
-        static_assert(
-            std::is_same_v<typename std::remove_cvref_t<
-                               decltype(image_points_left)>::value_type,
-                           Point2>,
-            "变量 `image_points_left` 类型错误!");
-        if (cv_reproj_left.total() * cv_reproj_left.channels()
-            != image_points_left.size() * Point2::RowsAtCompileTime)
+        catch (const std::exception &ex)
         {
-          throw std::runtime_error{"[ERROR] 重投影点个数与理论投影点个数不符!"};
+          std::cerr << ex.what() << "\n";
         }
-
-        float reproj_error_sum{0.0f};
-        float reproj_error_min{std::numeric_limits<float>::max()};
-        float reproj_error_max{std::numeric_limits<float>::lowest()};
-        for (size_t i = 0; i < image_points_left.size(); ++i)
-        {
-          const Point2 &image_point{image_points_left[i]};
-          const cv::Point2f cv_image{cv_reproj_left.at<cv::Point2f>(i, 0)};
-          // 计算 L1 误差
-          const float error{std::abs(image_point.x() - cv_image.x)
-                            + std::abs(image_point.y() - cv_image.y)};
-          reproj_error_sum += error;
-          reproj_error_min = std::min(reproj_error_min, error);
-          reproj_error_max = std::max(reproj_error_max, error);
-        }
-
-        std::cerr //
-            << "\t===== 重投影误差 =====\n"
-            << "\tAverage Error: "
-            << (reproj_error_sum / static_cast<float>(image_points_left.size()))
-            << "\n"
-            << "\tMinimal Error: " << reproj_error_min << "\n"
-            << "\tMaximal Error: " << reproj_error_max << "\n";
-
-        // 估计轨迹
-        {
-          // 类型转换
-          Point3 eigen_rVec;
-          cv::cv2eigen(rVec, eigen_rVec);
-          delta_rotation = Quaternion{Eigen::AngleAxis<value_type>{
-              eigen_rVec.norm(),
-              eigen_rVec.normalized(),
-          }};
-          cv::cv2eigen(tVec, delta_position);
-          // 状态更新
-          position = attitude * delta_position + position;
-          attitude = (attitude * delta_rotation).normalized();
-        }
-
-        Point3 true_position{Point3::Zero()};
-        Quaternion true_attitude{Quaternion::Identity()};
-        std::tie(true_position, true_attitude)
-            = path_.GetPose(room_, time, orientation_mode_);
-
-        std::cerr //
-            << "\t===== 位姿估计误差 =====\n"
-
-            << "\t真实位置: ["             //
-            << true_position.x() << ", "   //
-            << true_position.y() << ", "   //
-            << true_position.z() << "];\n" //
-
-            << "\t真实朝向: ["           //
-            << true_attitude.w() << ", " //
-            << true_attitude.x() << ", " //
-            << true_attitude.y() << ", " //
-            << true_attitude.z()         //
-            << "]\n"                     //
-
-            << "\t估计位置: ["        //
-            << position.x() << ", "   //
-            << position.y() << ", "   //
-            << position.z() << "];\n" //
-
-            << "\t估计朝向: ["      //
-            << attitude.w() << ", " //
-            << attitude.x() << ", " //
-            << attitude.y() << ", " //
-            << attitude.z()         //
-            << "]\n"                //
-
-            << "\t位置误差: ["                                      //
-            << std::abs(true_position.x() - position.x()) << ", "   //
-            << std::abs(true_position.y() - position.y()) << ", "   //
-            << std::abs(true_position.z() - position.z()) << "];\n" //
-
-            << "\t朝向误差: ["                                    //
-            << std::abs(true_attitude.w() - attitude.w()) << ", " //
-            << std::abs(true_attitude.x() - attitude.x()) << ", " //
-            << std::abs(true_attitude.y() - attitude.y()) << ", " //
-            << std::abs(true_attitude.z() - attitude.z())         //
-            << "]\n";
       }
 
       // 绘制相机图像
@@ -510,12 +524,8 @@ struct VisualSim
 
         std::print("\t绘制双目图像 ...\n");
 
-        const std::vector<size_t> &visible_object_indices{std::get<0>(frame)};
-        const std::vector<Point2> &image_points_left{std::get<1>(frame)};
-        const std::vector<Point2> &image_points_right{std::get<2>(frame)};
         // 核心绘制逻辑收口
-        mesh_plot_.Draw(cv_image_left, cv_image_right, visible_object_indices,
-                        image_points_left, image_points_right);
+        mesh_plot_.Draw(cv_image_left, cv_image_right, frame);
 
 #if (!START_VISUALIZATION) && (PUBLISH_IMAGE)
         PublishImage(cv_image_left, cv_image_right);
@@ -531,7 +541,7 @@ struct VisualSim
       PublishPath(attitude, position);
 #endif
 
-      prev_frame = std::move(frame);
+      prev_frame_ = AlignedFrame<value_type>{frame};
 
       std::this_thread::sleep_for(50ms);
     }

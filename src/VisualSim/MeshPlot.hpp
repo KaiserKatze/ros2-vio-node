@@ -9,6 +9,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include "Room.hpp"
+#include "StereoRig.hpp"
 
 template <typename value_type> struct MeshPlot
 {
@@ -287,53 +288,79 @@ template <typename value_type> struct MeshPlot
     return key == 'q';
   }
 
-  // 渲染绘制方法
+  /**
+   * @brief 渲染并绘制双目相机的观测图像上的三维网格面片.
+   * @param img_left 左相机渲染的目标图像矩阵.
+   * @param img_right 右相机渲染的目标图像矩阵.
+   * @param frame 当前帧包含的左右目可见点索引及像素坐标.
+   */
   void Draw(cv::Mat &img_left, cv::Mat &img_right,
-            const std::vector<size_t> &visible_indices,
-            const std::vector<Point2> &img_pts_left,
-            const std::vector<Point2> &img_pts_right) const
+            const Frame<value_type> &frame) const
   {
-    // 利用序号作为 key，轻量级映射
-    std::map<size_t, std::pair<cv::Point2f, cv::Point2f>> visible_map;
-    for (size_t i = 0; i < visible_indices.size(); ++i)
+    // 定义并初始化左目相机的局部可见点索引到像素坐标的映射表.
+    std::map<size_t, cv::Point2f> map_left;
+    // 遍历当前帧左目相机中所有可见的路标点.
+    for (size_t i = 0; i < frame.indices_left_.size(); ++i)
     {
-      visible_map[visible_indices[i]]
-          = {cv::Point2f(img_pts_left[i].x(), img_pts_left[i].y()),
-             cv::Point2f(img_pts_right[i].x(), img_pts_right[i].y())};
+      // 提取二维点坐标并通过索引构建左目的键值对映射关系.
+      map_left[frame.indices_left_[i]]
+          = cv::Point2f(frame.pixels_left_[i].x(), frame.pixels_left_[i].y());
     }
 
+    // 定义并初始化右目相机的局部可见点索引到像素坐标的映射表.
+    std::map<size_t, cv::Point2f> map_right;
+    // 遍历当前帧右目相机中所有可见的路标点.
+    for (size_t i = 0; i < frame.indices_right_.size(); ++i)
+    {
+      // 提取二维点坐标并通过索引构建右目的键值对映射关系.
+      map_right[frame.indices_right_[i]]
+          = cv::Point2f(frame.pixels_right_[i].x(), frame.pixels_right_[i].y());
+    }
+
+    // 遍历当前网格模型中包含的所有三角形面片.
     for (size_t i = 0; i < mesh_.size(); ++i)
     {
+      // 取出构成当前三角形的三个顶点的路标点全局索引.
       size_t v0{mesh_[i][0]}, v1{mesh_[i][1]}, v2{mesh_[i][2]};
 
-      if (visible_map.count(v0) && visible_map.count(v1)
-          && visible_map.count(v2))
+      // 根据网格的颜色属性表判断当前面片应填充白色还是黑色.
+      cv::Scalar fill_color
+          = (mesh_colors_[i]) ? cv::Scalar(255, 255, 255) : cv::Scalar(0, 0, 0);
+
+      // 检查当前三角形的三个顶点是否在左目相机的可见映射表中全部存在.
+      if (map_left.count(v0) && map_left.count(v1) && map_left.count(v2))
       {
-        cv::Point pts_left[3], pts_right[3];
-        auto p0{visible_map[v0]}, p1{visible_map[v1]}, p2{visible_map[v2]};
-
-        pts_left[0] = cv::Point(std::round(p0.first.x), std::round(p0.first.y));
-        pts_left[1] = cv::Point(std::round(p1.first.x), std::round(p1.first.y));
-        pts_left[2] = cv::Point(std::round(p2.first.x), std::round(p2.first.y));
-
-        pts_right[0]
-            = cv::Point(std::round(p0.second.x), std::round(p0.second.y));
-        pts_right[1]
-            = cv::Point(std::round(p1.second.x), std::round(p1.second.y));
-        pts_right[2]
-            = cv::Point(std::round(p2.second.x), std::round(p2.second.y));
-
-        cv::Scalar fill_color = (mesh_colors_[i]) ? cv::Scalar(255, 255, 255)
-                                                  : cv::Scalar(0, 0, 0);
+        // 声明一个 OpenCV 的点数组来存储三角形在左目图像上的三个顶点坐标.
+        cv::Point pts_left[3];
+        // 提取第一个顶点坐标进行四舍五入并存入该点数组中.
+        pts_left[0]
+            = cv::Point(std::round(map_left[v0].x), std::round(map_left[v0].y));
+        // 提取第二个顶点坐标进行四舍五入并存入该点数组中.
+        pts_left[1]
+            = cv::Point(std::round(map_left[v1].x), std::round(map_left[v1].y));
+        // 提取第三个顶点坐标进行四舍五入并存入该点数组中.
+        pts_left[2]
+            = cv::Point(std::round(map_left[v2].x), std::round(map_left[v2].y));
+        // 调用 OpenCV 函数在左目图像上填充绘制该多边形面片.
         cv::fillConvexPoly(img_left, pts_left, 3, fill_color);
-        cv::fillConvexPoly(img_right, pts_right, 3, fill_color);
+      }
 
-        const cv::Point *l_ptr[1] = {pts_left};
-        const cv::Point *r_ptr[1] = {pts_right};
-        int npts[]                = {3};
-        cv::polylines(img_left, l_ptr, npts, 1, true, cv::Scalar(0, 255, 0), 1);
-        cv::polylines(img_right, r_ptr, npts, 1, true, cv::Scalar(0, 255, 0),
-                      1);
+      // 检查当前三角形的三个顶点是否在右目相机的可见映射表中全部存在.
+      if (map_right.count(v0) && map_right.count(v1) && map_right.count(v2))
+      {
+        // 声明一个 OpenCV 的点数组来存储三角形在右目图像上的三个顶点坐标.
+        cv::Point pts_right[3];
+        // 提取第一个顶点坐标进行四舍五入并存入该点数组中.
+        pts_right[0] = cv::Point(std::round(map_right[v0].x),
+                                 std::round(map_right[v0].y));
+        // 提取第二个顶点坐标进行四舍五入并存入该点数组中.
+        pts_right[1] = cv::Point(std::round(map_right[v1].x),
+                                 std::round(map_right[v1].y));
+        // 提取第三个顶点坐标进行四舍五入并存入该点数组中.
+        pts_right[2] = cv::Point(std::round(map_right[v2].x),
+                                 std::round(map_right[v2].y));
+        // 调用 OpenCV 函数在右目图像上填充绘制该多边形面片.
+        cv::fillConvexPoly(img_right, pts_right, 3, fill_color);
       }
     }
   }
