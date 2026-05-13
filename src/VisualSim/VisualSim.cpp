@@ -298,7 +298,7 @@ struct VisualSim
             VisualSim::eigen2cv(std::get<1>(prev_frame)),
         };
         cv::Mat prev_cv_image_points_right{
-            VisualSim::eigen2cv(std::get<1>(prev_frame)),
+            VisualSim::eigen2cv(std::get<2>(prev_frame)),
         };
 
         PrintInfo(cv_projection_matrix_left);

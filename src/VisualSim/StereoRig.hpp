@@ -86,9 +86,9 @@ template <typename value_type> struct StereoRig
       {
         common_indices.push_back(indices1[i]);
         common_frame1_image_left.push_back(std::get<1>(frame1)[i]);
-        common_frame1_image_right.push_back(std::get<1>(frame1)[i]);
+        common_frame1_image_right.push_back(std::get<2>(frame1)[i]);
         common_frame2_image_left.push_back(std::get<1>(frame2)[j]);
-        common_frame2_image_right.push_back(std::get<1>(frame2)[j]);
+        common_frame2_image_right.push_back(std::get<2>(frame2)[j]);
         ++i;
         ++j;
       }
