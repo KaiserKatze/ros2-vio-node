@@ -19,9 +19,9 @@ template <typename value_type> struct Room
     return std::tie(p1(0), p1(1), p1(2)) < std::tie(p2(0), p2(1), p2(2));
   }
 
-  const value_type width_{5.0};  // 开间
-  const value_type depth_{5.0};  // 进深
-  const value_type height_{3.0}; // 层高
+  const value_type width_{20.0};  // 开间
+  const value_type depth_{20.0};  // 进深
+  const value_type height_{12.0}; // 层高
   const Point3 center_{
       //房间的几何中心
       depth_ * static_cast<value_type>(0.5),

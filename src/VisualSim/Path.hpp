@@ -19,8 +19,20 @@ template <typename value_type> struct Path
 
   const value_type omega_{0.5}; // 角速度 (rad/s)
 
-  std::pair<Point3, Attitude> GetPose(const Room<value_type> &room,
-                                      value_type time) const
+  /**
+ * @brief 相机朝向模式
+ */
+  enum class OrientationMode
+  {
+    LookAtCenter, // 朝向圆心 (原逻辑)
+    BackToCenter, // 背对圆心
+    Tangent,      // 沿切线方向 (线速度方向)
+    Upward        // 朝向天花板 (垂直向上)
+  };
+
+  std::pair<Point3, Attitude>
+  GetPose(const Room<value_type> &room, value_type time,
+          OrientationMode mode = OrientationMode::LookAtCenter) const
   {
     // 1. 计算房间几何中心
     const Point3 center{room.center_};
@@ -45,9 +57,42 @@ template <typename value_type> struct Path
     // 习惯上：让相机 Z 轴指向房间中心 (Look-at)，X 轴水平
     // 这里构造一个简单的旋转矩阵：
     // https://libeigen.gitlab.io/eigen/docs-nightly/group__Geometry__Module.html#gac32d7ca309f8c0ef9ae04172d49a88e6
-    Point3 basis_z{(center - pos_body).normalized()};    // Z 轴
-    Point3 basis_y{0.0, 0.0, -1.0};                      // Y 轴
-    Point3 basis_x{basis_y.cross(basis_z).normalized()}; // X 轴
+    Point3 basis_x;
+    Point3 basis_y;
+    Point3 basis_z;
+
+    switch (mode)
+    {
+    case OrientationMode::LookAtCenter:
+    {
+      basis_z = (center - pos_body).normalized();    // 朝向圆心
+      basis_y = {0.0, 0.0, -1.0};                    // 朝向地心
+      basis_x = basis_y.cross(basis_z).normalized(); // 朝向右侧
+      break;
+    }
+    case OrientationMode::BackToCenter:
+    {
+      basis_z = (pos_body - center).normalized();    // 背对圆心
+      basis_y = {0.0, 0.0, -1.0};                    // 朝向地心
+      basis_x = basis_y.cross(basis_z).normalized(); // 朝向右侧
+      break;
+    }
+    case OrientationMode::Tangent:
+    {
+      // 逆时针运动的切线方向
+      basis_z = Point3{-std::sin(angle), std::cos(angle), 0.0};
+      basis_y = {0.0, 0.0, -1.0};                    // 朝向地心
+      basis_x = basis_y.cross(basis_z).normalized(); // 朝向右侧
+      break;
+    }
+    case OrientationMode::Upward:
+    {
+      basis_z = {0.0, 0.0, 1.0};                     // 指向天花板
+      basis_x = (center - pos_body).normalized();    // 朝向圆心
+      basis_y = basis_z.cross(basis_x).normalized(); // 朝向运动的反方向
+      break;
+    }
+    }
     // std::cerr                                            //
     //     << std::fixed << std::setprecision(1)            //
     //     << "\tX: [" << basis_x.x() << ", " << basis_x.y() << ", " << basis_x.z()
@@ -71,10 +116,11 @@ template <typename value_type> struct Path
    * @brief 让双目相机 rig 绕着房间的几何中心，在平行于地板的平面内，做匀速圆周运动
    */
   auto GetImage(const StereoRig<value_type> &rig, value_type time,
-                const Room<value_type> &room) const
+                const Room<value_type> &room,
+                OrientationMode mode = OrientationMode::LookAtCenter) const
   {
     const Point3 center{room.center_};
-    const auto &&[pos_body, att_body] = GetPose(room, time);
+    const auto &&[pos_body, att_body] = GetPose(room, time, mode);
 
     // if constexpr (false)
     {

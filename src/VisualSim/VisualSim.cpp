@@ -7,6 +7,7 @@
 #include <print>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 #include <type_traits>
 #include <utility>
 
@@ -21,7 +22,10 @@
 #include "Room.hpp"
 #include "StereoRig.hpp"
 
+using namespace std::chrono_literals;
+
 #define START_VISUALIZATION 0
+#define PUBLISH_IMAGE 0
 
 #if (!START_VISUALIZATION)
 #include <cv_bridge/cv_bridge.hpp>
@@ -43,6 +47,7 @@ private:
       create_publisher<nav_msgs::msg::Path>("/path_stereo_slam",
                                             rclcpp::QoS{10}),
   };
+#if (PUBLISH_IMAGE)
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_image0_{
       create_publisher<sensor_msgs::msg::Image>("/cam0/image_raw",
                                                 rclcpp::QoS{10}),
@@ -51,6 +56,7 @@ private:
       create_publisher<sensor_msgs::msg::Image>("/cam1/image_raw",
                                                 rclcpp::QoS{10}),
   };
+#endif
   nav_msgs::msg::Path msg_path_;
 
 protected:
@@ -83,6 +89,7 @@ protected:
     publisher_path_->publish(msg_path_);
   }
 
+#if (PUBLISH_IMAGE)
   void PublishImage(const cv::Mat &image_left, const cv::Mat &image_right)
   {
     rclcpp::Time now{this->get_clock()->now()};
@@ -95,8 +102,9 @@ protected:
     cv_image.image = image_left;
     publisher_image0_->publish(*cv_image.toImageMsg());
     cv_image.image = image_right;
-    publisher_image0_->publish(*cv_image.toImageMsg());
+    publisher_image1_->publish(*cv_image.toImageMsg());
   }
+#endif
 };
 #endif
 
@@ -143,7 +151,10 @@ struct VisualSim
   // 仿真双目相机
   StereoRig<value_type> rig_{};
   // 仿真双目相机运动路径
+  using OrientationMode = Path<value_type>::OrientationMode;
+  OrientationMode orientation_mode_{OrientationMode::LookAtCenter};
   Path<value_type> path_{};
+  value_type time_limit_simulation_{200.0};
 
   using Point3     = Eigen::Vector<value_type, 3>;
   using Point2     = Eigen::Vector<value_type, 2>;
@@ -186,7 +197,7 @@ struct VisualSim
         Point3::Zero(),
     };
     // 位姿初始化
-    std::tie(position, attitude) = path_.GetPose(room_, 0.0);
+    std::tie(position, attitude) = path_.GetPose(room_, 0.0, orientation_mode_);
     // 局部增量
     Quaternion delta_rotation{
         Quaternion::Identity(),
@@ -230,7 +241,7 @@ struct VisualSim
     bool first_loop{true};
     Frame prev_frame;
 
-    for (value_type time = 0.0; time < 200.0; time += 0.1)
+    for (value_type time = 0.0; time < time_limit_simulation_; time += 0.1)
     {
 #if (!START_VISUALIZATION)
       // 引入 rclcpp::ok() 以响应 ROS 2 节点的关闭信号 (如 Ctrl+C)
@@ -244,7 +255,7 @@ struct VisualSim
                 << time << ").\n";
 
       // 直接拿到可见顶点的全局索引，而不是三维坐标系本身了
-      Frame frame{path_.GetImage(rig_, time, room_)};
+      const Frame frame{path_.GetImage(rig_, time, room_, orientation_mode_)};
 
       std::cerr << "\t当前场景中，双目可见路标点有 "
                 << std::get<0>(frame).size() << " 个.\n";
@@ -254,9 +265,6 @@ struct VisualSim
       {
         first_loop = false;
         std::print("\t初始化 ...\n");
-#if (!START_VISUALIZATION)
-        PublishPath(attitude, position);
-#endif
       }
       else
       {
@@ -265,7 +273,7 @@ struct VisualSim
         // 那么在执行 `prev_frame = std::move(frame)` 以后
         // prev_frame 中可用的像素点个数一定会逐渐减少
         // 直到像素点个数少于 4 个时触发 cv::solvePnPRansac 函数报错
-        Frame current_frame{std::as_const(frame)};
+        Frame current_frame{frame};
         // 先将前后相邻两个图像帧中的像素点对齐，只保留交集部分
         StereoRig<value_type>::AlignFrames(prev_frame, current_frame);
         const std::vector<size_t> &visible_object_indices{
@@ -443,14 +451,12 @@ struct VisualSim
           // 状态更新
           position = attitude * delta_position + position;
           attitude = (attitude * delta_rotation).normalized();
-#if (!START_VISUALIZATION)
-          PublishPath(attitude, position);
-#endif
         }
 
         Point3 true_position{Point3::Zero()};
         Quaternion true_attitude{Quaternion::Identity()};
-        std::tie(true_position, true_attitude) = path_.GetPose(room_, time);
+        std::tie(true_position, true_attitude)
+            = path_.GetPose(room_, time, orientation_mode_);
 
         std::cerr //
             << "\t===== 位姿估计误差 =====\n"
@@ -511,17 +517,23 @@ struct VisualSim
         mesh_plot_.Draw(cv_image_left, cv_image_right, visible_object_indices,
                         image_points_left, image_points_right);
 
-#if (!START_VISUALIZATION)
+#if (!START_VISUALIZATION) && (PUBLISH_IMAGE)
         PublishImage(cv_image_left, cv_image_right);
 #else
+#endif
         if (mesh_plot_.Render(cv_image_left, cv_image_right, 1000))
         {
           break;
         }
-#endif
       }
 
+#if (!START_VISUALIZATION)
+      PublishPath(attitude, position);
+#endif
+
       prev_frame = std::move(frame);
+
+      std::this_thread::sleep_for(50ms);
     }
   }
 };
