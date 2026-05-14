@@ -287,12 +287,19 @@ template <typename value_type> struct MeshPlot
     return key == 'q';
   }
 
-  // 渲染绘制方法
-  void Draw(cv::Mat &img_left, cv::Mat &img_right,
-            const std::vector<size_t> &visible_indices,
-            const std::vector<Point2> &img_pts_left,
-            const std::vector<Point2> &img_pts_right) const
+  /**
+   * @brief 渲染并绘制双目相机的观测图像上的三维网格面片.
+   * @param img_left 左相机渲染的目标图像矩阵.
+   * @param img_right 右相机渲染的目标图像矩阵.
+   * @param frame 当前帧包含的左右目可见点索引及像素坐标.
+   */
+  template <typename FrameType>
+  void Draw(cv::Mat &img_left, cv::Mat &img_right, const FrameType &frame) const
   {
+    const std::vector<size_t> &visible_indices{std::get<0>(frame)};
+    const std::vector<Point2> &img_pts_left{std::get<1>(frame)};
+    const std::vector<Point2> &img_pts_right{std::get<2>(frame)};
+
     // 利用序号作为 key，轻量级映射
     std::map<size_t, std::pair<cv::Point2f, cv::Point2f>> visible_map;
     for (size_t i = 0; i < visible_indices.size(); ++i)

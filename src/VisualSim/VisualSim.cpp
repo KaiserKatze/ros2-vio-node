@@ -510,12 +510,8 @@ struct VisualSim
 
         std::print("\t绘制双目图像 ...\n");
 
-        const std::vector<size_t> &visible_object_indices{std::get<0>(frame)};
-        const std::vector<Point2> &image_points_left{std::get<1>(frame)};
-        const std::vector<Point2> &image_points_right{std::get<2>(frame)};
         // 核心绘制逻辑收口
-        mesh_plot_.Draw(cv_image_left, cv_image_right, visible_object_indices,
-                        image_points_left, image_points_right);
+        mesh_plot_.Draw(cv_image_left, cv_image_right, frame);
 
 #if (!START_VISUALIZATION) && (PUBLISH_IMAGE)
         PublishImage(cv_image_left, cv_image_right);
