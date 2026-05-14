@@ -1,7 +1,5 @@
 #include <algorithm>
-#include <iomanip>
-#include <ios>
-#include <iostream>
+#include <print>
 
 #include <Eigen/Dense>
 
@@ -93,15 +91,6 @@ template <typename value_type> struct Path
       break;
     }
     }
-    // std::cerr                                            //
-    //     << std::fixed << std::setprecision(1)            //
-    //     << "\tX: [" << basis_x.x() << ", " << basis_x.y() << ", " << basis_x.z()
-    //     << "]; "
-    //     << "\tY: [" << basis_y.x() << ", " << basis_y.y() << ", " << basis_y.z()
-    //     << "]; "
-    //     << "\tZ: [" << basis_z.x() << ", " << basis_z.y() << ", " << basis_z.z()
-    //     << "]; "
-    //     << "\n";
 
     Attitude att_body;
     // 体坐标系的三个基向量在世界坐标系下的坐标，组成了从世界坐标系到体坐标系的旋转变换在世界坐标系下的矩阵表示
@@ -125,28 +114,27 @@ template <typename value_type> struct Path
     // if constexpr (false)
     {
       auto center_body{att_body.transpose() * (center - pos_body)};
-      // 几何中心在体坐标系下的坐标应该恒等于 [0,0,radius]
-      std::cerr << std::fixed << std::setprecision(1)
-                << "\t房间几何中心在世界坐标系下的坐标 = [" << center.x()
-                << ", " << center.y() << ", " << center.z() << "]\n"
-                << "\t房间几何中心在体坐标系下的坐标 = [" << center_body.x()
-                << ", " << center_body.y() << ", " << center_body.z() << "]\n";
       auto center_pixel_left{
           rig.camera_left_.ProjectPoint(center, att_body.transpose(),
                                         -att_body.transpose() * pos_body),
       };
-      std::cerr << std::fixed << std::setprecision(1)
-                << "\t房间几何中心的左目投影坐标 = [" << center_pixel_left.x()
-                << ", " << center_pixel_left.y() << ", "
-                << center_pixel_left.z() << "]\n";
       auto center_pixel_right{
           rig.camera_right_.ProjectPoint(center, att_body.transpose(),
                                          -att_body.transpose() * pos_body),
       };
-      std::cerr << std::fixed << std::setprecision(1)
-                << "\t房间几何中心的右目投影坐标 = [" << center_pixel_right.x()
-                << ", " << center_pixel_right.y() << ", "
-                << center_pixel_right.z() << "]\n";
+      // 当相机对准几何中心时，几何中心在体坐标系下的坐标应该恒等于 [0,0,radius]
+      std::print(
+          stderr,
+          "\t房间几何中心在世界坐标系下的坐标 = [{:.1f}, {:.1f}, {:.1f}]\n"
+          "\t房间几何中心在体坐标系下的坐标 = [{:.1f}, {:.1f}, {:.1f}]\n"
+          "\t房间几何中心的左目投影坐标 = [{:.1f}, {:.1f}, {:.1f}]\n"
+          "\t房间几何中心的右目投影坐标 = [{:.1f}, {:.1f}, {:.1f}]\n",
+          center.x(), center.y(), center.z(),                //
+          center_body.x(), center_body.y(), center_body.z(), //
+          center_pixel_left.x(), center_pixel_left.y(),
+          center_pixel_left.z(), //
+          center_pixel_right.x(), center_pixel_right.y(),
+          center_pixel_right.z());
     }
 
     return rig.Project(room.object_matrix_, att_body.transpose(),

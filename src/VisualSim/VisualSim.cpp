@@ -1,7 +1,7 @@
 #include <cstddef>
+#include <cstdio>
 #include <exception>
 #include <format>
-#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <print>
@@ -87,6 +87,9 @@ protected:
 
     msg_path_.poses.push_back(msg_pose);
     publisher_path_->publish(msg_path_);
+
+    std::print(stderr, "[INFO] 成功在话题 {} 发布轨迹消息\n",
+               publisher_path_->get_topic_name());
   }
 
 #if (PUBLISH_IMAGE)
@@ -142,7 +145,7 @@ struct VisualSim
 #endif
 {
   // 传入长宽高的划分段数
-  Room<value_type> room_{10, 10, 6};
+  Room<value_type> room_{};
   // 初始化专属绘制器
   MeshPlot<value_type> mesh_plot_{
       /* create_named_window */
@@ -232,6 +235,8 @@ struct VisualSim
                 << cv_projection_matrix_left << "\n"
                 << "右目相机投影矩阵 =\n"
                 << cv_projection_matrix_right << "\n\n";
+      // std::print("左目相机投影矩阵 =\n{}\n右目相机投影矩阵 =\n{}\n",
+      //            cv_projection_matrix_left, cv_projection_matrix_right);
     }
 
     // 内参矩阵 K
@@ -251,14 +256,13 @@ struct VisualSim
       }
 #endif
 
-      std::cerr << "[INFO] 时间 = (" << std::fixed << std::setprecision(1)
-                << time << ").\n";
+      std::print(stderr, "[INFO] 时间 = ({:.1f}).\n", time);
 
       // 直接拿到可见顶点的全局索引，而不是三维坐标系本身了
       const Frame frame{path_.GetImage(rig_, time, room_, orientation_mode_)};
 
-      std::cerr << "\t当前场景中，双目可见路标点有 "
-                << std::get<0>(frame).size() << " 个.\n";
+      std::print(stderr, "\t当前场景中，双目可见路标点有 {} 个.\n",
+                 std::get<0>(frame).size());
 
       // 利用像素点进行三角化
       if (first_loop)
@@ -283,16 +287,13 @@ struct VisualSim
             std::get<1>(current_frame),
         };
 
-        if (std::get<0>(prev_frame).size() != std::get<0>(current_frame).size())
+        if (std::get<0>(prev_frame).size() != visible_object_indices.size())
         {
           std::stringstream ss;
           ss << "[ERROR] 前一帧路标点个数 (" << std::get<0>(prev_frame).size()
-             << ") 与后一帧 (" << std::get<0>(current_frame).size()
-             << ") 不符!\n";
+             << ") 与后一帧 (" << visible_object_indices.size() << ") 不符!\n";
           throw std::runtime_error{ss.str()};
         }
-
-        // std::cerr << "\t正在执行三角化 ...\n";
 
         cv::Mat prev_cv_image_points_left{
             VisualSim::eigen2cv(std::get<1>(prev_frame)),
@@ -316,8 +317,6 @@ struct VisualSim
 
         PrintInfo(landmarks_homo);
 
-        // std::cerr << "\t三角化执行完毕 ...\n";
-
         if (visible_object_indices.size()
             != static_cast<size_t>(landmarks_homo.cols))
         {
@@ -327,16 +326,12 @@ struct VisualSim
           throw std::runtime_error{ss.str()};
         }
 
-        // std::cerr << "\t正在将齐次坐标转为非齐次坐标 ...\n";
-
         // 世界坐标系中路标点的非齐次坐标
         cv::Mat landmarks_nonhomo;
         // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#gac42edda3a3a0f717979589fcd6ac0035
         cv::convertPointsFromHomogeneous(landmarks_homo.t(), landmarks_nonhomo);
 
         landmarks_nonhomo = landmarks_nonhomo.t();
-
-        // std::cerr << "\t坐标转换完毕 ...\n";
 
         PrintInfo(landmarks_nonhomo);
 
@@ -360,13 +355,14 @@ struct VisualSim
           error_max = std::max(error_max, error);
         }
 
-        std::cerr //
-            << "\t===== 路标点估计误差 =====\n"
-            << "\tAverage Error: "
-            << (error_sum / static_cast<float>(visible_object_indices.size()))
-            << "\n"
-            << "\tMinimal Error: " << error_min << "\n"
-            << "\tMaximal Error: " << error_max << "\n";
+        std::print(
+            stderr,
+            "\t===== 路标点估计误差 =====\n"
+            "\tAverage Error: {}\n"
+            "\tMinimal Error: {}\n"
+            "\tMaximal Error: {}\n",
+            (error_sum / static_cast<float>(visible_object_indices.size())),
+            error_min, error_max);
 
         cv::Mat cv_image_points_left{
             VisualSim::eigen2cv(image_points_left),
@@ -430,13 +426,14 @@ struct VisualSim
           reproj_error_max = std::max(reproj_error_max, error);
         }
 
-        std::cerr //
-            << "\t===== 重投影误差 =====\n"
-            << "\tAverage Error: "
-            << (reproj_error_sum / static_cast<float>(image_points_left.size()))
-            << "\n"
-            << "\tMinimal Error: " << reproj_error_min << "\n"
-            << "\tMaximal Error: " << reproj_error_max << "\n";
+        std::print(
+            stderr,
+            "\t===== 重投影误差 =====\n"
+            "\tAverage Error: {}\n"
+            "\tMinimal Error: {}\n"
+            "\tMaximal Error: {}\n",
+            (reproj_error_sum / static_cast<float>(image_points_left.size())),
+            reproj_error_min, reproj_error_max);
 
         // 估计轨迹
         {
@@ -458,44 +455,25 @@ struct VisualSim
         std::tie(true_position, true_attitude)
             = path_.GetPose(room_, time, orientation_mode_);
 
-        std::cerr //
-            << "\t===== 位姿估计误差 =====\n"
-
-            << "\t真实位置: ["             //
-            << true_position.x() << ", "   //
-            << true_position.y() << ", "   //
-            << true_position.z() << "];\n" //
-
-            << "\t真实朝向: ["           //
-            << true_attitude.w() << ", " //
-            << true_attitude.x() << ", " //
-            << true_attitude.y() << ", " //
-            << true_attitude.z()         //
-            << "]\n"                     //
-
-            << "\t估计位置: ["        //
-            << position.x() << ", "   //
-            << position.y() << ", "   //
-            << position.z() << "];\n" //
-
-            << "\t估计朝向: ["      //
-            << attitude.w() << ", " //
-            << attitude.x() << ", " //
-            << attitude.y() << ", " //
-            << attitude.z()         //
-            << "]\n"                //
-
-            << "\t位置误差: ["                                      //
-            << std::abs(true_position.x() - position.x()) << ", "   //
-            << std::abs(true_position.y() - position.y()) << ", "   //
-            << std::abs(true_position.z() - position.z()) << "];\n" //
-
-            << "\t朝向误差: ["                                    //
-            << std::abs(true_attitude.w() - attitude.w()) << ", " //
-            << std::abs(true_attitude.x() - attitude.x()) << ", " //
-            << std::abs(true_attitude.y() - attitude.y()) << ", " //
-            << std::abs(true_attitude.z() - attitude.z())         //
-            << "]\n";
+        std::print(stderr,
+                   "\t===== 位姿估计误差 =====\n"
+                   "\t真实位置: [{:.3f}, {:.3f}, {:.3f}];\n"
+                   "\t真实朝向: [{:.3f}, {:.3f}, {:.3f}, {:.3f}]\n"
+                   "\t估计位置: [{:.3f}, {:.3f}, {:.3f}];\n"
+                   "\t估计朝向: [{:.3f}, {:.3f}, {:.3f}, {:.3f}]\n"
+                   "\t位置误差: [{:.3f}, {:.3f}, {:.3f}];\n"
+                   "\t朝向误差: [{:.3f}, {:.3f}, {:.3f}, {:.3f}]\n",
+                   true_position.x(), true_position.y(), true_position.z(),
+                   true_attitude.w(), true_attitude.x(), true_attitude.y(),
+                   true_attitude.z(), position.x(), position.y(), position.z(),
+                   attitude.w(), attitude.x(), attitude.y(), attitude.z(),
+                   std::abs(true_position.x() - position.x()),
+                   std::abs(true_position.y() - position.y()),
+                   std::abs(true_position.z() - position.z()),
+                   std::abs(true_attitude.w() - attitude.w()),
+                   std::abs(true_attitude.x() - attitude.x()),
+                   std::abs(true_attitude.y() - attitude.y()),
+                   std::abs(true_attitude.z() - attitude.z()));
       }
 
       // 绘制相机图像
@@ -524,6 +502,7 @@ struct VisualSim
       }
 
 #if (!START_VISUALIZATION)
+      std::print(stderr, "[INFO] 尝试发布位姿 ...\n");
       PublishPath(attitude, position);
 #endif
 
@@ -550,7 +529,7 @@ int main(int argc, char *argv[])
   }
   catch (const std::exception &ex)
   {
-    std::cerr << ex.what() << "\n";
+    std::println(stderr, "{}", ex.what());
   }
 
 #if (!START_VISUALIZATION)

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdio>
 #include <iostream>
+#include <print>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -19,9 +21,9 @@ template <typename value_type> struct Room
     return std::tie(p1(0), p1(1), p1(2)) < std::tie(p2(0), p2(1), p2(2));
   }
 
-  const value_type width_{20.0};  // 开间
-  const value_type depth_{20.0};  // 进深
-  const value_type height_{12.0}; // 层高
+  const value_type width_{10.0}; // 开间
+  const value_type depth_{10.0}; // 进深
+  const value_type height_{3.0}; // 层高
   const Point3 center_{
       //房间的几何中心
       depth_ * static_cast<value_type>(0.5),
@@ -45,7 +47,7 @@ template <typename value_type> struct Room
    * @brief 按照网格生成路标点
    * @note 网格间距，默认 0.5 米
    */
-  Room(int cnt_sep_depth = 10, int cnt_sep_width = 10, int cnt_sep_height = 6) :
+  Room(int cnt_sep_depth = 20, int cnt_sep_width = 20, int cnt_sep_height = 6) :
     cnt_sep_depth_{cnt_sep_depth}, cnt_sep_width_{cnt_sep_width},
     cnt_sep_height_{cnt_sep_height}, step_d_{depth_ / cnt_sep_depth_},
     step_w_{width_ / cnt_sep_width_}, step_h_{height_ / cnt_sep_height_}
@@ -118,12 +120,7 @@ template <typename value_type> struct Room
       };
     }
 
-    std::cerr << "网格点生成完毕，共计 " << total << " 个点.\n";
-    // for (const auto &point : object_points_)
-    // {
-    //   std::cerr << "\t[" << point[0] << ", " << point[1] << ", " << point[2]
-    //             << "];\n";
-    // }
+    std::print(stderr, "网格点生成完毕，共计 {} 个点.\n", total);
   }
 
   // 辅助函数：通过整数坐标查找其在矩阵中的索引
