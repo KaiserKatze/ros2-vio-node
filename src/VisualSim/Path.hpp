@@ -37,8 +37,10 @@ template <typename value_type> struct Path
 
     // 2. 设置圆周运动参数
     const value_type radius{
-        std::min<value_type>(room.depth_, room.width_)
-            * static_cast<value_type>(0.4),
+        // 下面的系数必须小于 0.5
+        static_cast<value_type>(mode == OrientationMode::LookAtCenter ? 0.4
+                                                                      : 0.45)
+            * std::min<value_type>(room.depth_, room.width_),
     }; // 运动半径（留在房间内）
     const value_type angle{omega_ * time}; // 当前角度
 
@@ -47,7 +49,10 @@ template <typename value_type> struct Path
     Point3 pos_body{
         center.x() + radius * std::cos(angle),
         center.y() + radius * std::sin(angle),
-        center.z(),
+        center.z()
+            + static_cast<value_type>(mode == OrientationMode::LookAtCenter
+                                          ? 0.0
+                                          : -0.3 * room.height_),
     };
     // 初始位置: [cx+r,cy,cz]
 

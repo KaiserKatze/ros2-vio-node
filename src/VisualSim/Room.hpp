@@ -47,7 +47,7 @@ template <typename value_type> struct Room
    * @brief 按照网格生成路标点
    * @note 网格间距，默认 0.5 米
    */
-  Room(int cnt_sep_depth = 20, int cnt_sep_width = 20, int cnt_sep_height = 6) :
+  Room(int cnt_sep_depth = 40, int cnt_sep_width = 40, int cnt_sep_height = 12) :
     cnt_sep_depth_{cnt_sep_depth}, cnt_sep_width_{cnt_sep_width},
     cnt_sep_height_{cnt_sep_height}, step_d_{depth_ / cnt_sep_depth_},
     step_w_{width_ / cnt_sep_width_}, step_h_{height_ / cnt_sep_height_}

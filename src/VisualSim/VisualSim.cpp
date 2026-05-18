@@ -1,7 +1,9 @@
 #include <cstddef>
 #include <cstdio>
 #include <exception>
+#include <filesystem>
 #include <format>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <print>
@@ -26,8 +28,9 @@ using namespace std::chrono_literals;
 
 #define START_VISUALIZATION 0
 #define PUBLISH_IMAGE 0
+#define OUTPUT_AS_EUROC 1
 
-#if (!START_VISUALIZATION)
+#if (!START_VISUALIZATION && !OUTPUT_AS_EUROC)
 #include <cv_bridge/cv_bridge.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <nav_msgs/msg/path.hpp>
@@ -39,7 +42,7 @@ using namespace std::chrono_literals;
 #include "euroc_vio/main.h"
 #endif
 
-#if (!START_VISUALIZATION)
+#if (!START_VISUALIZATION && !OUTPUT_AS_EUROC)
 struct PathPublisher : public rclcpp::Node
 {
 private:
@@ -140,7 +143,7 @@ protected:
 
 template <typename value_type>
 struct VisualSim
-#if (!START_VISUALIZATION)
+#if (!START_VISUALIZATION && !OUTPUT_AS_EUROC)
   : public PathPublisher
 #endif
 {
@@ -155,9 +158,11 @@ struct VisualSim
   StereoRig<value_type> rig_{};
   // 仿真双目相机运动路径
   using OrientationMode = Path<value_type>::OrientationMode;
-  OrientationMode orientation_mode_{OrientationMode::LookAtCenter};
+  OrientationMode orientation_mode_{OrientationMode::Upward};
   Path<value_type> path_{};
   value_type time_limit_simulation_{200.0};
+  // 时间步长 (单位: 秒)
+  value_type step_{static_cast<value_type>(0.05)};
 
   using Point3     = Eigen::Vector<value_type, 3>;
   using Point2     = Eigen::Vector<value_type, 2>;
@@ -186,8 +191,59 @@ struct VisualSim
     return cv_image_points;
   }
 
+  void WriteCameraConfig(const std::filesystem::path &path_cam,
+                         const Camera<value_type> &camera) const
+  {
+    std::ofstream fout_cam(path_cam / "sensor.yaml");
+    std::print(
+        fout_cam,
+        "sensor_type: camera\n\n"
+        "T_BS:\n"
+        "  cols: 4\n"
+        "  rows: 4\n"
+        "  data: [{:.4f}, {:.4f}, {:.4f}, {:.4f},\n"
+        "         {:.4f}, {:.4f}, {:.4f}, {:.4f},\n"
+        "         {:.4f}, {:.4f}, {:.4f}, {:.4f},\n"
+        "         0.0, 0.0, 0.0, 1.0]\n\n"
+        "rate_hz: {}\n"
+        "resolution: [{}, {}]\n"
+        "camera_model: pinhole\n"
+        "intrinsics: [{:.3f}, {:.3f}, {:.3f}, {:.3f}] # fu, fv, cu, cv\n"
+        "distortion_model: radial-tangential\n"
+        "distortion_coefficients: [0.0, 0.0, 0.0, 0.0]\n",
+        // 空间变换的齐次矩阵形式
+        camera.rotation_(0, 0), camera.rotation_(0, 1), camera.rotation_(0, 2),
+        camera.translation_(0), camera.rotation_(1, 0), camera.rotation_(1, 1),
+        camera.rotation_(1, 2), camera.translation_(1), camera.rotation_(2, 0),
+        camera.rotation_(2, 1), camera.rotation_(2, 2), camera.translation_(2),
+        // 采样频率
+        static_cast<value_type>(1.0) / step_,
+        // 分辨率
+        camera.width_, camera.height_,
+        // 相机内参
+        camera.intrinsic_(0, 0), camera.intrinsic_(1, 1),
+        camera.intrinsic_(0, 2), camera.intrinsic_(1, 2));
+  }
+
+  void
+  WriteGroundTruthConfig(const std::filesystem::path &path_groundtruth) const
+  {
+    std::ofstream fout(path_groundtruth / "sensor.yaml");
+    std::print(fout, "sensor_type: visual-inertial\n\n"
+                     "sensor_type: camera\n\n"
+                     "T_BS:\n"
+                     "  cols: 4\n"
+                     "  rows: 4\n"
+                     "  data: [1.0, 0.0, 0.0, 0.0,\n"
+                     "         0.0, 1.0, 0.0, 0.0,\n"
+                     "         0.0, 0.0, 1.0, 0.0,\n"
+                     "         0.0, 0.0, 0.0, 1.0]\n");
+  }
+
   void Start()
   {
+    const size_t min_count_common_landmarks{10};
+
     // 投影矩阵 P = K [R, t]
     cv::Mat cv_projection_matrix_left;
     cv::Mat cv_projection_matrix_right;
@@ -239,6 +295,88 @@ struct VisualSim
       //            cv_projection_matrix_left, cv_projection_matrix_right);
     }
 
+#if (OUTPUT_AS_EUROC)
+    // 创建 mav0 目录
+    std::error_code ec;
+    std::filesystem::path path_mav0{"mav0"};
+    std::filesystem::remove_all(path_mav0, ec);
+    if (std::filesystem::create_directories(path_mav0, ec))
+    {
+      std::print(stderr, "[INFO] 工作目录创建成功: {}\n",
+                 std::filesystem::absolute(path_mav0).string());
+    }
+    else
+    {
+      std::print(stderr, "[ERROR] 工作目录创建失败!\n");
+      return;
+    }
+    // 创建 mav0/cam0 目录
+    std::filesystem::path path_cam0{path_mav0 / "cam0"};
+    if (!std::filesystem::create_directories(path_cam0, ec))
+    {
+      std::print(stderr, "[ERROR] 工作目录创建失败!\n");
+      return;
+    }
+    // 创建 mav0/cam0/data 目录
+    std::filesystem::path path_cam0_data{path_mav0 / "cam0" / "data"};
+    if (!std::filesystem::create_directories(path_cam0_data, ec))
+    {
+      std::print(stderr, "[ERROR] 工作目录创建失败!\n");
+      return;
+    }
+    // 创建 mav0/cam1 目录
+    std::filesystem::path path_cam1{path_mav0 / "cam1"};
+    if (!std::filesystem::create_directories(path_cam1, ec))
+    {
+      std::print(stderr, "[ERROR] 工作目录创建失败!\n");
+      return;
+    }
+    // 创建 mav0/cam1/data 目录
+    std::filesystem::path path_cam1_data{path_mav0 / "cam1" / "data"};
+    if (!std::filesystem::create_directories(path_cam1_data, ec))
+    {
+      std::print(stderr, "[ERROR] 工作目录创建失败!\n");
+      return;
+    }
+    // 创建 mav0/state_groundtruth_estimate0 目录
+    std::filesystem::path path_groundtruth{path_mav0
+                                           / "state_groundtruth_estimate0"};
+    if (!std::filesystem::create_directories(path_groundtruth, ec))
+    {
+      std::print(stderr, "[ERROR] 工作目录创建失败!\n");
+      return;
+    }
+
+    // 输出 mav0/cam0/sensor.yaml
+    WriteCameraConfig(path_cam0, rig_.camera_left_);
+    // 输出 mav0/cam1/sensor.yaml
+    WriteCameraConfig(path_cam1, rig_.camera_right_);
+    // 输出 mav0/state_groundtruth_estimate0/sensor.yaml
+    WriteGroundTruthConfig(path_groundtruth);
+
+    // 输出 mav0/cam0/data.csv 表头
+    std::ofstream fout_cam0_data_csv(path_cam0 / "data.csv");
+    std::print(fout_cam0_data_csv, "#timestamp [ns],filename\n");
+    // 输出 mav0/cam1/data.csv 表头
+    std::ofstream fout_cam1_data_csv(path_cam1 / "data.csv");
+    std::print(fout_cam1_data_csv, "#timestamp [ns],filename\n");
+    // 输出 mav0/state_groundtruth_estimate0/data.csv 表头
+    std::ofstream fout_groundtruth_csv(path_groundtruth / "data.csv");
+    std::print(fout_groundtruth_csv,
+               "#timestamp [ns], p_RS_R_x [m], p_RS_R_y [m], p_RS_R_z [m], "
+               "q_RS_w [], q_RS_x [], q_RS_y [], q_RS_z []\n");
+    std::print(fout_groundtruth_csv,
+               // 时间戳
+               "{:020d}, "
+               // 位置
+               "{:.18f}, {:.18f}, {:.18f}, "
+               // 朝向
+               "{:.18f}, {:.18f}, {:.18f}, {:.18f}\n",
+               0,                                        //
+               position.x(), position.y(), position.z(), //
+               attitude.w(), attitude.x(), attitude.y(), attitude.z());
+#endif
+
     // 内参矩阵 K
     const auto cv_camera_matrix{
         cv_projection_matrix_left(cv::Range(0, 3), cv::Range(0, 3))};
@@ -246,9 +384,9 @@ struct VisualSim
     bool first_loop{true};
     Frame prev_frame;
 
-    for (value_type time = 0.0; time < time_limit_simulation_; time += 0.1)
+    for (value_type time = 0.0; time < time_limit_simulation_; time += step_)
     {
-#if (!START_VISUALIZATION)
+#if (!START_VISUALIZATION && !OUTPUT_AS_EUROC)
       // 引入 rclcpp::ok() 以响应 ROS 2 节点的关闭信号 (如 Ctrl+C)
       if (!rclcpp::ok())
       {
@@ -258,11 +396,18 @@ struct VisualSim
 
       std::print(stderr, "[INFO] 时间 = ({:.1f}).\n", time);
 
+#if (OUTPUT_AS_EUROC)
+      const auto timestamp_ns{static_cast<std::int64_t>(time * 1e9)};
+      std::print(fout_cam0_data_csv, "{0:020d},{0:020d}.png\n", timestamp_ns);
+      std::print(fout_cam1_data_csv, "{0:020d},{0:020d}.png\n", timestamp_ns);
+#endif
+
       // 直接拿到可见顶点的全局索引，而不是三维坐标系本身了
       const Frame frame{path_.GetImage(rig_, time, room_, orientation_mode_)};
+      const size_t count_common_landmarks{std::get<0>(frame).size()};
 
       std::print(stderr, "\t当前场景中，双目可见路标点有 {} 个.\n",
-                 std::get<0>(frame).size());
+                 count_common_landmarks);
 
       // 利用像素点进行三角化
       if (first_loop)
@@ -270,7 +415,7 @@ struct VisualSim
         first_loop = false;
         std::print("\t初始化 ...\n");
       }
-      else
+      else if (count_common_landmarks >= min_count_common_landmarks)
       {
         // 必须复制一份
         // 如果不提前复制一份，就直接把 frame 用于对齐
@@ -455,6 +600,20 @@ struct VisualSim
         std::tie(true_position, true_attitude)
             = path_.GetPose(room_, time, orientation_mode_);
 
+#if (OUTPUT_AS_EUROC)
+        std::print(fout_groundtruth_csv,
+                   // 时间戳
+                   "{:020d}, "
+                   // 位置
+                   "{:.18f}, {:.18f}, {:.18f}, "
+                   // 朝向
+                   "{:.18f}, {:.18f}, {:.18f}, {:.18f}\n",
+                   timestamp_ns,                                            //
+                   true_position.x(), true_position.y(), true_position.z(), //
+                   true_attitude.w(), true_attitude.x(), true_attitude.y(),
+                   true_attitude.z());
+#endif
+
         std::print(stderr,
                    "\t===== 位姿估计误差 =====\n"
                    "\t真实位置: [{:.3f}, {:.3f}, {:.3f}];\n"
@@ -491,31 +650,55 @@ struct VisualSim
         // 核心绘制逻辑收口
         mesh_plot_.Draw(cv_image_left, cv_image_right, frame);
 
-#if (!START_VISUALIZATION) && (PUBLISH_IMAGE)
+#if (!START_VISUALIZATION && !OUTPUT_AS_EUROC) && (PUBLISH_IMAGE)
         PublishImage(cv_image_left, cv_image_right);
-#else
 #endif
+#if (START_VISUALIZATION)
         if (mesh_plot_.Render(cv_image_left, cv_image_right, 1000))
         {
           break;
         }
+#endif
+#if (OUTPUT_AS_EUROC)
+        // 时间戳作为图片文件名称
+        const std::string image_file_name{
+            std::format("{:020d}.png", timestamp_ns),
+        };
+        cv::imwrite(std::filesystem::absolute(path_cam0_data / image_file_name),
+                    cv_image_left);
+        cv::imwrite(std::filesystem::absolute(path_cam1_data / image_file_name),
+                    cv_image_right);
+#endif
       }
 
-#if (!START_VISUALIZATION)
+#if (!START_VISUALIZATION && !OUTPUT_AS_EUROC)
       std::print(stderr, "[INFO] 尝试发布位姿 ...\n");
       PublishPath(attitude, position);
 #endif
 
-      prev_frame = std::move(frame);
+      // 双目可见路标点数量过少!
+      if (count_common_landmarks < min_count_common_landmarks)
+      {
+        first_loop = true;
+      }
+      else
+      {
+        prev_frame = std::move(frame);
+      }
 
       std::this_thread::sleep_for(50ms);
+    }
+
+    if (first_loop)
+    {
+      throw std::runtime_error{"直到仿真结束，双目可见路标点数量还是太少!"};
     }
   }
 };
 
 int main(int argc, char *argv[])
 {
-#if (!START_VISUALIZATION)
+#if (!START_VISUALIZATION && !OUTPUT_AS_EUROC)
   // 初始化 ROS 2
   rclcpp::init(argc, argv);
 #else
@@ -532,7 +715,7 @@ int main(int argc, char *argv[])
     std::println(stderr, "{}", ex.what());
   }
 
-#if (!START_VISUALIZATION)
+#if (!START_VISUALIZATION && !OUTPUT_AS_EUROC)
   // 关闭 ROS 2 实例
   rclcpp::shutdown();
 #endif
