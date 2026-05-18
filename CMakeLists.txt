@@ -226,6 +226,20 @@ target_link_libraries(VisualSim
   ${OpenCV_LIBS}
 )
 
+# ===== 目标： 纯视觉仿真数据的朝向估计 =====
+add_ros2_executable(EstimationLoader src/VisualSim/EstimationLoader.cpp)
+ament_target_dependencies(EstimationLoader
+  rclcpp
+  geometry_msgs
+  nav_msgs
+  sensor_msgs
+  cv_bridge
+)
+target_link_libraries(EstimationLoader
+  Eigen3::Eigen
+  ${OpenCV_LIBS}
+)
+
 # --- 单元测试 ---
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

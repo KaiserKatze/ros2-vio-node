@@ -117,30 +117,30 @@ template <typename value_type> struct Path
     const auto &&[pos_body, att_body] = GetPose(room, time, mode);
 
     // if constexpr (false)
-    {
-      auto center_body{att_body.transpose() * (center - pos_body)};
-      auto center_pixel_left{
-          rig.camera_left_.ProjectPoint(center, att_body.transpose(),
-                                        -att_body.transpose() * pos_body),
-      };
-      auto center_pixel_right{
-          rig.camera_right_.ProjectPoint(center, att_body.transpose(),
-                                         -att_body.transpose() * pos_body),
-      };
-      // 当相机对准几何中心时，几何中心在体坐标系下的坐标应该恒等于 [0,0,radius]
-      std::print(
-          stderr,
-          "\t房间几何中心在世界坐标系下的坐标 = [{:.1f}, {:.1f}, {:.1f}]\n"
-          "\t房间几何中心在体坐标系下的坐标 = [{:.1f}, {:.1f}, {:.1f}]\n"
-          "\t房间几何中心的左目投影坐标 = [{:.1f}, {:.1f}, {:.1f}]\n"
-          "\t房间几何中心的右目投影坐标 = [{:.1f}, {:.1f}, {:.1f}]\n",
-          center.x(), center.y(), center.z(),                //
-          center_body.x(), center_body.y(), center_body.z(), //
-          center_pixel_left.x(), center_pixel_left.y(),
-          center_pixel_left.z(), //
-          center_pixel_right.x(), center_pixel_right.y(),
-          center_pixel_right.z());
-    }
+    // {
+    //   auto center_body{att_body.transpose() * (center - pos_body)};
+    //   auto center_pixel_left{
+    //       rig.camera_left_.ProjectPoint(center, att_body.transpose(),
+    //                                     -att_body.transpose() * pos_body),
+    //   };
+    //   auto center_pixel_right{
+    //       rig.camera_right_.ProjectPoint(center, att_body.transpose(),
+    //                                      -att_body.transpose() * pos_body),
+    //   };
+    //   // 当相机对准几何中心时，几何中心在体坐标系下的坐标应该恒等于 [0,0,radius]
+    //   std::print(
+    //       stderr,
+    //       "\t房间几何中心在世界坐标系下的坐标 = [{:.1f}, {:.1f}, {:.1f}]\n"
+    //       "\t房间几何中心在体坐标系下的坐标 = [{:.1f}, {:.1f}, {:.1f}]\n"
+    //       "\t房间几何中心的左目投影坐标 = [{:.1f}, {:.1f}, {:.1f}]\n"
+    //       "\t房间几何中心的右目投影坐标 = [{:.1f}, {:.1f}, {:.1f}]\n",
+    //       center.x(), center.y(), center.z(),                //
+    //       center_body.x(), center_body.y(), center_body.z(), //
+    //       center_pixel_left.x(), center_pixel_left.y(),
+    //       center_pixel_left.z(), //
+    //       center_pixel_right.x(), center_pixel_right.y(),
+    //       center_pixel_right.z());
+    // }
 
     return rig.Project(room.object_matrix_, att_body.transpose(),
                        -att_body.transpose() * pos_body);

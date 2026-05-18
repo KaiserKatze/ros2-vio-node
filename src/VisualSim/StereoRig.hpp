@@ -31,10 +31,10 @@ template <typename value_type> struct StereoRig
     auto &&[indices_right, pixels_right] = camera_right_.Project(
         object_matrix, parent_rotation, parent_translation);
 
-    std::print(
-        stderr,
-        "\t当前场景中，左目可见路标点有 {} 个, 右目可见路标点有 {} 个.\n",
-        indices_left.size(), indices_right.size());
+    // std::print(
+    //     stderr,
+    //     "\t当前场景中，左目可见路标点有 {} 个, 右目可见路标点有 {} 个.\n",
+    //     indices_left.size(), indices_right.size());
 
     // 左目、右目视图中可见三维点可能不一样，需要取交集
     std::vector<size_t> common_indices;

@@ -29,6 +29,13 @@ def generate_launch_description():
         output="screen",
     )
 
+    est_node = Node(
+        package="euroc_vio",
+        executable="EstimationLoader",
+        name="visual_slam_path_publisher",
+        output="screen",
+    )
+
     rviz_arg = DeclareLaunchArgument(
         name="rvizconfig",
         default_value=str(default_rviz_config_path),
@@ -40,7 +47,7 @@ def generate_launch_description():
         executable="rviz2",
         name="rviz2",
         output="screen",
-        arguments=["-d", LaunchConfiguration("rvizconfig")],
+        # arguments=["-d", LaunchConfiguration("rvizconfig")],
     )
 
     return LaunchDescription(
@@ -48,6 +55,7 @@ def generate_launch_description():
             rviz_arg,
             # 启动 IMU 仿真节点
             sim_node,
+            # est_node,
             # 启动 RViz2 并自动加载配置
             rviz_node,
         ]
