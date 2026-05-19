@@ -128,8 +128,13 @@ private:
     msg_path_.poses.push_back(msg_pose);
     publisher_path_->publish(msg_path_);
 
-    std::print(stderr, "[INFO] 成功在话题 {} 发布轨迹消息\n",
-               publisher_path_->get_topic_name());
+    // std::print(stderr, "[INFO] 成功在话题 {} 发布轨迹消息\n",
+    //            publisher_path_->get_topic_name());
+  }
+
+  void PublishPath()
+  {
+    publisher_path_->publish(msg_path_);
   }
 
 public:
@@ -141,6 +146,11 @@ public:
 
   void Start()
   {
+    using Point3     = Eigen::Vector<float, 3>;
+    using Quaternion = Eigen::Quaternion<float>;
+    Point3 position{Point3::Zero()};
+    Quaternion attitude{Quaternion::Identity()};
+
     std::ifstream file(path_estimation_csv);
     std::string line;
     size_t line_num{0};
@@ -155,6 +165,12 @@ public:
       if (!rclcpp::ok())
       {
         break;
+      }
+
+      // 只绘制一部分标架
+      if (line_num % 50 != 0)
+      {
+        continue;
       }
 
       std::stringstream ss(line);
@@ -175,16 +191,18 @@ public:
           get_item_as_float(ss),
       };
       // publish
-      using Point3     = Eigen::Vector<float, 3>;
-      using Quaternion = Eigen::Quaternion<float>;
-      Point3 true_position{Point3::Zero()};
-      Quaternion true_attitude{Quaternion::Identity()};
-      std::tie(true_position, true_attitude) = path_.GetPose(
+      std::tie(position, attitude) = path_.GetPose(
           room_, timestamp, Path<float>::OrientationMode::LookAtCenter);
-      Quaternion est_attitude{qw, qx, qy, qz};
+      attitude = Quaternion{qw, qx, qy, qz};
 
-      PublishPath(est_attitude, true_position);
-      std::this_thread::sleep_for(50ms);
+      PublishPath(attitude, position);
+    }
+
+    while (rclcpp::ok())
+    {
+      std::print(stderr, "正在循环发布已有数据!\n");
+      PublishPath();
+      std::this_thread::sleep_for(1000ms);
     }
   }
 };

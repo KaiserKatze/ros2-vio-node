@@ -55,7 +55,7 @@ def generate_launch_description():
             rviz_arg,
             # 启动 IMU 仿真节点
             sim_node,
-            # est_node,
+            est_node,
             # 启动 RViz2 并自动加载配置
             rviz_node,
         ]

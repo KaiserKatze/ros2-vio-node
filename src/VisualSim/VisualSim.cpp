@@ -99,8 +99,8 @@ protected:
     msg_path_.poses.push_back(msg_pose);
     publisher_path_->publish(msg_path_);
 
-    std::print(stderr, "[INFO] 成功在话题 {} 发布轨迹消息\n",
-               publisher_path_->get_topic_name());
+    // std::print(stderr, "[INFO] 成功在话题 {} 发布轨迹消息\n",
+    //            publisher_path_->get_topic_name());
   }
 
 #if (PUBLISH_IMAGE)
@@ -643,6 +643,7 @@ struct VisualSim
         //            std::abs(true_attitude.z() - attitude.z()));
       }
 
+#if (START_VISUALIZATION || PUBLISH_IMAGE || OUTPUT_AS_EUROC)
       // 绘制相机图像
       {
         const cv::Scalar background_gray{128, 128, 128};
@@ -678,9 +679,10 @@ struct VisualSim
                     cv_image_right);
 #endif
       }
+#endif
 
 #if (!START_VISUALIZATION && !OUTPUT_AS_EUROC)
-      std::print(stderr, "[INFO] 尝试发布位姿 ...\n");
+      // std::print(stderr, "[INFO] 尝试发布位姿 ...\n");
 #if (PUBLISH_GT_PATH)
       {
         Point3 true_position{Point3::Zero()};
