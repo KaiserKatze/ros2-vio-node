@@ -26,7 +26,7 @@ using namespace std::chrono_literals;
 
 struct GroundTruthData
 {
-  double timestamp{0.0};
+  double timestamp{0.0}; // in seconds
   double position[3]{0.0};
   double orientation[4]{0.0}; // quaternion (w, x, y, z)
 
@@ -46,7 +46,7 @@ struct GroundTruthData
     {
       std::stringstream ss(line);
       GroundTruthData gt;
-      gt.timestamp = AbstractLoader::get_item_as_int64(ss, delim);
+      gt.timestamp = 1e-9 * AbstractLoader::get_item_as_int64(ss, delim);
       for (int i = 0; i < 3; ++i)
       {
         gt.position[i] = AbstractLoader::get_item_as_double(ss, delim);
@@ -64,7 +64,7 @@ struct GroundTruthData
 
 struct EstimationData
 {
-  double timestamp{0.0};
+  double timestamp{0.0};      // in seconds
   double orientation[4]{0.0}; // quaternion (w, x, y, z)
 
   // 简单 CSV 解析函数
@@ -83,7 +83,7 @@ struct EstimationData
     {
       std::stringstream ss(line);
       EstimationData gt;
-      gt.timestamp = AbstractLoader::get_item_as_int64(ss, delim);
+      gt.timestamp = 1e-9 * AbstractLoader::get_item_as_int64(ss, delim);
       for (int i = 0; i < 4; ++i)
       {
         gt.orientation[i] = AbstractLoader::get_item_as_double(ss, delim);
@@ -96,7 +96,7 @@ struct EstimationData
 
 struct OrbSlam3Data
 {
-  double timestamp{0.0};
+  double timestamp{0.0}; // in seconds
   double position[3]{0.0};
   double orientation[4]{0.0}; // quaternion (w, x, y, z)
 
@@ -110,12 +110,12 @@ struct OrbSlam3Data
     std::ifstream file(filename);
     std::string line;
 
-    // ORBSLAM3 输出的位置信息需要绕 z 轴正方向旋转 90° 才能大致与 EuRoC 数据集提供的真值匹配
-    const Eigen::Matrix3d mat_rotation{
-        {0.0, -1.0, 0.0},
-        {1.0, 0.0, 0.0},
-        {0.0, 0.0, 1.0},
-    };
+    // // ORBSLAM3 输出的位置信息需要绕 z 轴正方向旋转 90° 才能大致与 EuRoC 数据集提供的真值匹配
+    // const Eigen::Matrix3d mat_rotation{
+    //     {0.0, -1.0, 0.0},
+    //     {1.0, 0.0, 0.0},
+    //     {0.0, 0.0, 1.0},
+    // };
 
     // 跳过表头
     std::getline(file, line);
@@ -129,12 +129,12 @@ struct OrbSlam3Data
         gt.position[i] = AbstractLoader::get_item_as_double(ss, delim);
       }
 
-      {
-        const auto px{gt.position[0]};
-        const auto py{gt.position[1]};
-        gt.position[0] = -py;
-        gt.position[1] = px;
-      }
+      // {
+      //   const auto px{gt.position[0]};
+      //   const auto py{gt.position[1]};
+      //   gt.position[0] = -py;
+      //   gt.position[1] = px;
+      // }
 
       // @see: https://github.com/UZ-SLAMLab/ORB_SLAM3/blob/4452a3c4ab75b1cde34e5505a36ec3f9edcdc4c4/Examples/Monocular/mono_euroc.cc#L200
       // @see: https://github.com/UZ-SLAMLab/ORB_SLAM3/blob/4452a3c4ab75b1cde34e5505a36ec3f9edcdc4c4/src/System.cc#L1109
@@ -144,22 +144,22 @@ struct OrbSlam3Data
         gt.orientation[i] = AbstractLoader::get_item_as_double(ss, delim);
       }
 
-      // 跟位置信息一样，对朝向四元数施加旋转
-      {
-        Eigen::Quaterniond orientation{
-            gt.orientation[0],
-            gt.orientation[1],
-            gt.orientation[2],
-            gt.orientation[3],
-        };
-        orientation
-            = Eigen::Quaterniond(mat_rotation * orientation.toRotationMatrix())
-                  .normalized();
-        gt.orientation[0] = orientation.w();
-        gt.orientation[1] = orientation.x();
-        gt.orientation[2] = orientation.y();
-        gt.orientation[3] = orientation.z();
-      }
+      // // 跟位置信息一样，对朝向四元数施加旋转
+      // {
+      //   Eigen::Quaterniond orientation{
+      //       gt.orientation[0],
+      //       gt.orientation[1],
+      //       gt.orientation[2],
+      //       gt.orientation[3],
+      //   };
+      //   orientation
+      //       = Eigen::Quaterniond(mat_rotation * orientation.toRotationMatrix())
+      //             .normalized();
+      //   gt.orientation[0] = orientation.w();
+      //   gt.orientation[1] = orientation.x();
+      //   gt.orientation[2] = orientation.y();
+      //   gt.orientation[3] = orientation.z();
+      // }
 
       data.push_back(gt);
     }
@@ -238,7 +238,7 @@ private:
       path_home_ / "vio_ws" / "cam0_estimated_quats.csv",
   };
   const std::filesystem::path path_csv_orbslam3_{
-      path_home_ / "vio_ws" / "CameraTrajectory.txt",
+      path_home_ / "vio_ws" / "est_seconds.tum",
   };
 
   // 用来比较位置
@@ -334,10 +334,10 @@ public:
 
       std::print(stderr,
                  "\n数据集时间范围:\n"
-                 "\t真值:     \t[{:.1f}, {:.1f}]\n"
-                 "\tORBSLAM3: \t[{:.1f}, {:.1f}]\n"
-                 "\t本实验:   \t[{:.1f}, {:.1f}]\n"
-                 "\t交集:     \t[{:.1f}, {:.1f}]\n",
+                 "\t真值:     \t[{:.18f}, {:.18f}]\n"
+                 "\tORBSLAM3: \t[{:.18f}, {:.18f}]\n"
+                 "\t本实验:   \t[{:.18f}, {:.18f}]\n"
+                 "\t交集:     \t[{:.18f}, {:.18f}]\n",
                  groundtruth_data[0].timestamp,
                  groundtruth_data[groundtruth_data.size() - 1].timestamp,
                  orbslam3_data[0].timestamp,
@@ -352,9 +352,9 @@ public:
       throw std::runtime_error{"时间范围没有交集!"};
     }
 
-    decltype(GroundTruthData::position) delta_position{0.0};
-    for (bool first_loop{true};
-         const EstimationData &datum_est : estimation_data)
+    // decltype(GroundTruthData::position) delta_position{0.0};
+    // bool first_loop{true};
+    for (const EstimationData &datum_est : estimation_data)
     {
       if (datum_est.timestamp < timestamp_start_
           || datum_est.timestamp > timestamp_end_)
@@ -370,23 +370,20 @@ public:
           Interpolate(orbslam3_data, datum_est.timestamp),
       };
 
-      // 将 ORBSLAM3 估计的相机初始位置平移到与相机初始位置真值重合
-      if (first_loop)
-      {
-        delta_position[0]
-            = datum_truth.position[0] - datum_orbslam3.position[0];
-        delta_position[1]
-            = datum_truth.position[1] - datum_orbslam3.position[1];
-        delta_position[2]
-            = datum_truth.position[2] - datum_orbslam3.position[2];
-        first_loop = false;
-      }
-      else
-      {
-        datum_orbslam3.position[0] += delta_position[0];
-        datum_orbslam3.position[1] += delta_position[1];
-        datum_orbslam3.position[2] += delta_position[2];
-      }
+      // // 将 ORBSLAM3 估计的相机初始位置平移到与相机初始位置真值重合
+      // if (first_loop)
+      // {
+      //   delta_position[0]
+      //       = datum_truth.position[0] - datum_orbslam3.position[0];
+      //   delta_position[1]
+      //       = datum_truth.position[1] - datum_orbslam3.position[1];
+      //   delta_position[2]
+      //       = datum_truth.position[2] - datum_orbslam3.position[2];
+      //   first_loop = false;
+      // }
+      // datum_orbslam3.position[0] += delta_position[0];
+      // datum_orbslam3.position[1] += delta_position[1];
+      // datum_orbslam3.position[2] += delta_position[2];
 
       data_est_.push_back(datum_est);
       data_truth_.push_back(datum_truth);
