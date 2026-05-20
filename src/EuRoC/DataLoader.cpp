@@ -238,7 +238,7 @@ private:
       path_home_ / "vio_ws" / "cam0_estimated_quats.csv",
   };
   const std::filesystem::path path_csv_orbslam3_{
-      path_home_ / "vio_ws" / "KeyFrameTrajectory.txt",
+      path_home_ / "vio_ws" / "CameraTrajectory.txt",
   };
 
   // 用来比较位置
