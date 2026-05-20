@@ -248,6 +248,7 @@ ament_target_dependencies(EuRoC_DataLoader
   nav_msgs
   sensor_msgs
   cv_bridge
+  # visualization_msgs
 )
 target_link_libraries(EuRoC_DataLoader
   Eigen3::Eigen
