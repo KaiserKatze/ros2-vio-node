@@ -35,6 +35,7 @@ using namespace std::chrono_literals;
 
 #define START_VISUALIZATION 0
 #define PUBLISH_GT_PATH 1
+#define PUBLISH_EST_PATH 1
 #define PUBLISH_IMAGE 0
 #define OUTPUT_AS_EUROC 0
 
@@ -54,11 +55,24 @@ using namespace std::chrono_literals;
 struct PathPublisher : public rclcpp::Node
 {
 private:
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_{
-      create_publisher<nav_msgs::msg::Path>("/path_stereo_slam",
-                                            rclcpp::QoS{10}),
+#if (PUBLISH_GT_PATH)
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_truth_{
+      create_publisher<nav_msgs::msg::Path>("/path_truth", rclcpp::QoS{10}),
   };
-  nav_msgs::msg::Path msg_path_;
+  nav_msgs::msg::Path msg_path_truth_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_pose_truth_{
+      create_publisher<nav_msgs::msg::Path>("/pose_truth", rclcpp::QoS{10}),
+  };
+#endif
+#if (PUBLISH_EST_PATH)
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_est_{
+      create_publisher<nav_msgs::msg::Path>("/path_est", rclcpp::QoS{10}),
+  };
+  nav_msgs::msg::Path msg_path_est_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_pose_est_{
+      create_publisher<nav_msgs::msg::Path>("/pose_est", rclcpp::QoS{10}),
+  };
+#endif
 #if (PUBLISH_IMAGE)
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_image0_{
       create_publisher<sensor_msgs::msg::Image>("/cam0/image_raw",
@@ -73,19 +87,18 @@ private:
 protected:
   PathPublisher() : Node("StereoSlam")
   {
-    msg_path_.header.frame_id = DEFAULT_FRAME_ID;
+    msg_path_truth_.header.frame_id = DEFAULT_FRAME_ID;
+    msg_path_est_.header.frame_id   = DEFAULT_FRAME_ID;
   }
 
   template <typename value_type>
-  void PublishPath(const Eigen::Quaternion<value_type> &attitude,
-                   const Eigen::Vector<value_type, 3> &position)
+  static geometry_msgs::msg::PoseStamped
+  CreatePose(const rclcpp::Time &time,
+             const Eigen::Quaternion<value_type> &attitude,
+             const Eigen::Vector<value_type, 3> &position)
   {
-    rclcpp::Time now{this->get_clock()->now()};
-
-    msg_path_.header.stamp = now;
-
     geometry_msgs::msg::PoseStamped msg_pose;
-    msg_pose.header.stamp = now;
+    msg_pose.header.stamp = time;
 
     msg_pose.pose.position.x = position.x();
     msg_pose.pose.position.y = position.y();
@@ -96,11 +109,56 @@ protected:
     msg_pose.pose.orientation.y = attitude.y();
     msg_pose.pose.orientation.z = attitude.z();
 
-    msg_path_.poses.push_back(msg_pose);
-    publisher_path_->publish(msg_path_);
+    return msg_pose;
+  }
 
-    // std::print(stderr, "[INFO] 成功在话题 {} 发布轨迹消息\n",
-    //            publisher_path_->get_topic_name());
+  template <typename value_type>
+  geometry_msgs::msg::PoseStamped
+  PublishPath(rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr &publisher,
+              nav_msgs::msg::Path &path,
+              const Eigen::Quaternion<value_type> &attitude,
+              const Eigen::Vector<value_type, 3> &position)
+  {
+    rclcpp::Time now{this->get_clock()->now()};
+    path.header.stamp = now;
+    const geometry_msgs::msg::PoseStamped pose{
+        CreatePose(now, attitude, position),
+    };
+    path.poses.push_back(pose);
+    publisher->publish(path);
+    return pose;
+  }
+
+  template <typename value_type>
+  void PublishGroundTruthPath(const Eigen::Quaternion<value_type> &attitude,
+                              const Eigen::Vector<value_type, 3> &position)
+  {
+    const geometry_msgs::msg::PoseStamped pose{
+        PublishPath(publisher_path_truth_,
+                    msg_path_truth_, //
+                    attitude, position),
+    };
+    nav_msgs::msg::Path path_pose;
+    path_pose.header.frame_id = DEFAULT_FRAME_ID;
+    path_pose.header.stamp    = pose.header.stamp;
+    path_pose.poses.push_back(pose);
+    publisher_pose_truth_->publish(path_pose);
+  }
+
+  template <typename value_type>
+  void PublishEstimatedPath(const Eigen::Quaternion<value_type> &attitude,
+                            const Eigen::Vector<value_type, 3> &position)
+  {
+    const geometry_msgs::msg::PoseStamped pose{
+        PublishPath(publisher_path_est_,
+                    msg_path_est_, //
+                    attitude, position),
+    };
+    nav_msgs::msg::Path path_pose;
+    path_pose.header.frame_id = DEFAULT_FRAME_ID;
+    path_pose.header.stamp    = pose.header.stamp;
+    path_pose.poses.push_back(pose);
+    publisher_pose_est_->publish(path_pose);
   }
 
 #if (PUBLISH_IMAGE)
@@ -689,10 +747,11 @@ struct VisualSim
         Quaternion true_attitude{Quaternion::Identity()};
         std::tie(true_position, true_attitude)
             = path_.GetPose(room_, time, orientation_mode_);
-        PublishPath(true_attitude, true_position);
+        PublishGroundTruthPath(true_attitude, true_position);
       }
-#else
-      PublishPath(attitude, position);
+#endif
+#if (PUBLISH_EST_PATH)
+      PublishEstimatedPath(attitude, position);
 #endif
 #endif
 
