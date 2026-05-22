@@ -232,6 +232,7 @@ struct VisualSim
 
   using Point3     = Eigen::Vector<value_type, 3>;
   using Point2     = Eigen::Vector<value_type, 2>;
+  using Attitude   = Eigen::Matrix<value_type, 3, 3>;
   using Quaternion = Eigen::Quaternion<value_type>;
   using Frame      = typename StereoRig<value_type>::Frame;
 
@@ -306,6 +307,11 @@ struct VisualSim
                      "         0.0, 0.0, 0.0, 1.0]\n");
   }
 
+  std::pair<Point3, Attitude> GetPose(value_type time) const
+  {
+    return path_.GetPose(room_, time, orientation_mode_);
+  }
+
   void Start()
   {
     const size_t min_count_common_landmarks{10};
@@ -322,7 +328,7 @@ struct VisualSim
         Point3::Zero(),
     };
     // 位姿初始化
-    std::tie(position, attitude) = path_.GetPose(room_, 0.0, orientation_mode_);
+    std::tie(position, attitude) = GetPose(static_cast<value_type>(0.0));
     // 局部增量
     Quaternion delta_rotation{
         Quaternion::Identity(),
@@ -663,8 +669,7 @@ struct VisualSim
 
         Point3 true_position{Point3::Zero()};
         Quaternion true_attitude{Quaternion::Identity()};
-        std::tie(true_position, true_attitude)
-            = path_.GetPose(room_, time, orientation_mode_);
+        std::tie(true_position, true_attitude) = GetPose(time);
 
 #if (OUTPUT_AS_EUROC)
         std::print(fout_groundtruth_csv,
@@ -745,8 +750,7 @@ struct VisualSim
       {
         Point3 true_position{Point3::Zero()};
         Quaternion true_attitude{Quaternion::Identity()};
-        std::tie(true_position, true_attitude)
-            = path_.GetPose(room_, time, orientation_mode_);
+        std::tie(true_position, true_attitude) = GetPose(time);
         PublishGroundTruthPath(true_attitude, true_position);
       }
 #endif
