@@ -37,9 +37,11 @@ using namespace std::chrono_literals;
 #define PUBLISH_GT_PATH 1
 #define PUBLISH_EST_PATH 1
 #define PUBLISH_IMAGE 0
+#define OUTPUT_AS_INNOV 0
 #define OUTPUT_AS_EUROC 0
 
-#if (!START_VISUALIZATION && !OUTPUT_AS_EUROC)
+#if ((PUBLISH_GT_PATH || PUBLISH_EST_PATH || PUBLISH_IMAGE)                    \
+     && !(OUTPUT_AS_EUROC || OUTPUT_AS_INNOV))
 #include <cv_bridge/cv_bridge.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <nav_msgs/msg/path.hpp>
@@ -51,7 +53,8 @@ using namespace std::chrono_literals;
 #include "euroc_vio/main.h"
 #endif
 
-#if (!START_VISUALIZATION && !OUTPUT_AS_EUROC)
+#if ((PUBLISH_GT_PATH || PUBLISH_EST_PATH || PUBLISH_IMAGE)                    \
+     && !(OUTPUT_AS_EUROC || OUTPUT_AS_INNOV))
 struct PathPublisher : public rclcpp::Node
 {
 private:
@@ -87,8 +90,12 @@ private:
 protected:
   PathPublisher() : Node("StereoSlam")
   {
+#if (PUBLISH_GT_PATH)
     msg_path_truth_.header.frame_id = DEFAULT_FRAME_ID;
-    msg_path_est_.header.frame_id   = DEFAULT_FRAME_ID;
+#endif
+#if (PUBLISH_EST_PATH)
+    msg_path_est_.header.frame_id = DEFAULT_FRAME_ID;
+#endif
   }
 
   template <typename value_type>
@@ -129,6 +136,7 @@ protected:
     return pose;
   }
 
+#if (PUBLISH_GT_PATH)
   template <typename value_type>
   void PublishGroundTruthPath(const Eigen::Quaternion<value_type> &attitude,
                               const Eigen::Vector<value_type, 3> &position)
@@ -144,7 +152,9 @@ protected:
     path_pose.poses.push_back(pose);
     publisher_pose_truth_->publish(path_pose);
   }
+#endif
 
+#if (PUBLISH_EST_PATH)
   template <typename value_type>
   void PublishEstimatedPath(const Eigen::Quaternion<value_type> &attitude,
                             const Eigen::Vector<value_type, 3> &position)
@@ -160,6 +170,7 @@ protected:
     path_pose.poses.push_back(pose);
     publisher_pose_est_->publish(path_pose);
   }
+#endif
 
 #if (PUBLISH_IMAGE)
   void PublishImage(const cv::Mat &image_left, const cv::Mat &image_right)
@@ -209,7 +220,8 @@ protected:
 
 template <typename value_type>
 struct VisualSim
-#if (!START_VISUALIZATION && !OUTPUT_AS_EUROC)
+#if ((PUBLISH_GT_PATH || PUBLISH_EST_PATH || PUBLISH_IMAGE)                    \
+     && !(OUTPUT_AS_EUROC || OUTPUT_AS_INNOV))
   : public PathPublisher
 #endif
 {
@@ -329,6 +341,7 @@ struct VisualSim
     };
     // 位姿初始化
     std::tie(position, attitude) = GetPose(static_cast<value_type>(0.0));
+    path_.print_debug_info_      = false;
     // 局部增量
     Quaternion delta_rotation{
         Quaternion::Identity(),
@@ -367,6 +380,26 @@ struct VisualSim
       //            cv_projection_matrix_left, cv_projection_matrix_right);
     }
 
+#if (OUTPUT_AS_INNOV)
+    // 创建文件结构
+    std::error_code ec;
+    std::filesystem::path path_fake{"fake"};
+    std::filesystem::remove_all(path_fake, ec);
+    if (std::filesystem::create_directories(path_fake, ec))
+    {
+      std::print(stderr, "[INFO] 工作目录创建成功: {}\n",
+                 std::filesystem::absolute(path_fake).string());
+    }
+    else
+    {
+      std::print(stderr, "[ERROR] 工作目录创建失败!\n");
+      return;
+    }
+    std::ofstream fout_fake_data_csv(path_fake / "data.csv");
+    std::print(fout_fake_data_csv, "#timestamp [ns], "
+                                   "r_x [rad], r_y [rad], r_z [rad], "
+                                   "t_x, t_y, t_z\n");
+#endif
 #if (OUTPUT_AS_EUROC)
     // 创建 mav0 目录
     std::error_code ec;
@@ -458,7 +491,8 @@ struct VisualSim
 
     for (value_type time = 0.0; time < time_limit_simulation_; time += step_)
     {
-#if (!START_VISUALIZATION && !OUTPUT_AS_EUROC)
+#if ((PUBLISH_GT_PATH || PUBLISH_EST_PATH || PUBLISH_IMAGE)                    \
+     && !(OUTPUT_AS_EUROC || OUTPUT_AS_INNOV))
       // 引入 rclcpp::ok() 以响应 ROS 2 节点的关闭信号 (如 Ctrl+C)
       if (!rclcpp::ok())
       {
@@ -468,8 +502,10 @@ struct VisualSim
 
       std::print(stderr, "[INFO] 时间 = ({:.1f}).\n", time);
 
-#if (OUTPUT_AS_EUROC)
+#if (OUTPUT_AS_EUROC || OUTPUT_AS_INNOV)
       const auto timestamp_ns{static_cast<std::int64_t>(time * 1e9)};
+#endif
+#if (OUTPUT_AS_EUROC)
       std::print(fout_cam0_data_csv, "{0:020d},{0:020d}.png\n", timestamp_ns);
       std::print(fout_cam1_data_csv, "{0:020d},{0:020d}.png\n", timestamp_ns);
 #endif
@@ -671,6 +707,34 @@ struct VisualSim
         Quaternion true_attitude{Quaternion::Identity()};
         std::tie(true_position, true_attitude) = GetPose(time);
 
+#if (OUTPUT_AS_INNOV)
+        // 向文件写入真值的旋转角度、单位化平移向量
+        Point3 true_prev_position{Point3::Zero()};
+        Quaternion true_prev_attitude{Quaternion::Identity()};
+        std::tie(true_prev_position, true_prev_attitude)
+            = GetPose(time - step_);
+        Point3 true_delta_position{
+            (true_position - true_prev_position).normalized(),
+        };
+        Quaternion true_delta_attitude{
+            (true_prev_attitude.conjugate() * true_attitude).normalized(),
+        };
+        Eigen::AngleAxis<value_type> true_rotation{true_delta_attitude};
+        value_type true_rotation_angle{true_rotation.angle()};
+        Eigen::Vector<value_type, 3> true_rotation_axis{true_rotation.axis()};
+        std::print(fout_fake_data_csv,
+                   // 时间戳
+                   "{:020d}, "
+                   // 旋转向量
+                   "{:.18f}, {:.18f}, {:.18f}, "
+                   // 平移方向
+                   "{:.18f}, {:.18f}, {:.18f}\n",
+                   timestamp_ns, true_rotation_angle * true_rotation_axis.x(),
+                   true_rotation_angle * true_rotation_axis.y(),
+                   true_rotation_angle * true_rotation_axis.z(),
+                   true_delta_position.x(), true_delta_position.y(),
+                   true_delta_position.z());
+#endif
 #if (OUTPUT_AS_EUROC)
         std::print(fout_groundtruth_csv,
                    // 时间戳
@@ -722,7 +786,7 @@ struct VisualSim
         // 核心绘制逻辑收口
         mesh_plot_.Draw(cv_image_left, cv_image_right, frame);
 
-#if (!START_VISUALIZATION && !OUTPUT_AS_EUROC) && (PUBLISH_IMAGE)
+#if (PUBLISH_IMAGE)
         PublishImage(cv_image_left, cv_image_right);
 #endif
 #if (START_VISUALIZATION)
@@ -744,7 +808,8 @@ struct VisualSim
       }
 #endif
 
-#if (!START_VISUALIZATION && !OUTPUT_AS_EUROC)
+#if ((PUBLISH_GT_PATH || PUBLISH_EST_PATH || PUBLISH_IMAGE)                    \
+     && !(OUTPUT_AS_EUROC || OUTPUT_AS_INNOV))
       // std::print(stderr, "[INFO] 尝试发布位姿 ...\n");
 #if (PUBLISH_GT_PATH)
       {
@@ -781,7 +846,8 @@ struct VisualSim
 
 int main(int argc, char *argv[])
 {
-#if (!START_VISUALIZATION && !OUTPUT_AS_EUROC)
+#if ((PUBLISH_GT_PATH || PUBLISH_EST_PATH || PUBLISH_IMAGE)                    \
+     && !(OUTPUT_AS_EUROC || OUTPUT_AS_INNOV))
   // 初始化 ROS 2
   rclcpp::init(argc, argv);
 #else
@@ -798,7 +864,8 @@ int main(int argc, char *argv[])
     std::println(stderr, "{}", ex.what());
   }
 
-#if (!START_VISUALIZATION && !OUTPUT_AS_EUROC)
+#if ((PUBLISH_GT_PATH || PUBLISH_EST_PATH || PUBLISH_IMAGE)                    \
+     && !(OUTPUT_AS_EUROC || OUTPUT_AS_INNOV))
   // 关闭 ROS 2 实例
   rclcpp::shutdown();
 #endif
