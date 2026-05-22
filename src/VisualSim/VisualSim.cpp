@@ -699,8 +699,8 @@ struct VisualSim
           }};
           cv::cv2eigen(tVec, delta_position);
           // 状态更新
-          position = attitude * delta_position + position;
-          attitude = (attitude * delta_rotation).normalized();
+          attitude = (attitude * delta_rotation.conjugate()).normalized();
+          position = position - attitude * delta_position;
         }
 
         Point3 true_position{Point3::Zero()};
