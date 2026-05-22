@@ -16,6 +16,7 @@ template <typename value_type> struct Path
   using Attitude = Eigen::Matrix<value_type, 3, 3>;
 
   const value_type omega_{0.5}; // 角速度 (rad/s)
+  bool print_debug_info_{true};
 
   /**
  * @brief 相机朝向模式
@@ -55,6 +56,16 @@ template <typename value_type> struct Path
                                           : -0.3 * room.height_),
     };
     // 初始位置: [cx+r,cy,cz]
+
+    if (print_debug_info_)
+    {
+      std::print(stderr,
+                 "[DEBUG] (匀速圆周运动) 运动参数:\n"
+                 "\t圆心在世界坐标系下的坐标 = [{:.1f}, {:.1f}, {:.1f}]\n"
+                 "\t角速率 = {:.1f}\n"
+                 "\t轨迹半径 = {:.1f}\n",
+                 center.x(), center.y(), center.z(), omega_, radius);
+    }
 
     // 4. 计算相机本体的朝向 (Rotation)
     // 习惯上：让相机 Z 轴指向房间中心 (Look-at)，X 轴水平
