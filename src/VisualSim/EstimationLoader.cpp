@@ -47,7 +47,8 @@ private:
       std::getenv("HOME"),
   };
   const std::filesystem::path path_estimation_csv{
-      path_home / "vio_ws" / "fake" / "data_camera.csv",
+      // path_home / "vio_ws" / "fake" / "data_camera.csv",
+      path_home / "vio_ws" / "fake" / "data_world.csv",
       // path_home / "vio_ws" / "estimated_motion_Tangent.csv"
       // path_home / "vio_ws" / "estimated_motion_LookAtCenter.csv",
   };
@@ -204,9 +205,21 @@ public:
                  " }} ...\n",
                  ++line_num, timestamp, wxt, wyt, wzt, tx, ty, tz);
       const Point3 delta_position{tx, ty, tz};
-      const Quaternion delta_rotation{0.0f, 0.5f * wxt, 0.5f * wyt, 0.5f * wzt};
-      position = position + attitude * delta_position;
-      attitude = (attitude * delta_rotation).normalized();
+      const Point3 delta_rotation_vector{wxt, wyt, wzt};
+      const Eigen::AngleAxisf delta_rotation_angle_axis{
+          delta_rotation_vector.norm(),
+          delta_rotation_vector.normalized(),
+      };
+      const Quaternion delta_rotation{delta_rotation_angle_axis};
+
+      // 如果数据集 path_estimation_csv 提供的旋转向量、平移向量是在相机坐标系下的表示
+      // 那么应该使用以下状态更新方程
+      // TODO
+
+      // 如果数据集 path_estimation_csv 提供的旋转向量、平移向量是在世界坐标系下的表示
+      // 那么应该使用以下状态更新方程
+      position = position + delta_position;
+      attitude = (delta_rotation * attitude).normalized();
 
       // Point3 true_position{Point3::Zero()};
       // Quaternion true_attitude{Quaternion::Identity()};
@@ -253,7 +266,7 @@ public:
       publisher_pose_->publish(msg_path_pose);
       counter = (counter + 1) % line_num;
 
-      std::this_thread::sleep_for(1000ms);
+      std::this_thread::sleep_for(50ms);
     }
   }
 };

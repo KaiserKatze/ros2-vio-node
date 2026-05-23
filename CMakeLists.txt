@@ -255,6 +255,17 @@ target_link_libraries(EuRoC_DataLoader
   ${OpenCV_LIBS}
 )
 
+# ===== 目标： 加载任意数据集 =====
+add_ros2_executable(SimpleDataLoader src/DataLoader/DataLoader.cpp)
+ament_target_dependencies(SimpleDataLoader
+  rclcpp
+  nav_msgs
+)
+target_link_libraries(SimpleDataLoader
+  Eigen3::Eigen
+  ${OpenCV_LIBS}
+)
+
 # --- 单元测试 ---
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

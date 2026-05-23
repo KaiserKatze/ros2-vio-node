@@ -738,9 +738,12 @@ struct VisualSim
             // C_21 = F_2 F_1.transpose
             true_current_attitude * true_prev_attitude.conjugate(),
         };
-        Eigen::AngleAxis<value_type> true_rotation{true_delta_attitude};
-        value_type true_rotation_angle{true_rotation.angle()};
-        Eigen::Vector<value_type, 3> true_rotation_axis{true_rotation.axis()};
+        Eigen::AngleAxis<value_type> true_rotation_angle_axis{
+            true_delta_attitude,
+        };
+        Point3 true_rotation_vector{
+            true_rotation_angle_axis.angle() * true_rotation_angle_axis.axis(),
+        };
         // 写入数据文件
         std::print(fout_fake_data_in_world_frame_csv,
                    // 时间戳
@@ -749,16 +752,16 @@ struct VisualSim
                    "{:.18f}, {:.18f}, {:.18f}, "
                    // 平移方向
                    "{:.18f}, {:.18f}, {:.18f}\n",
-                   timestamp_ns, true_rotation_angle * true_rotation_axis.x(),
-                   true_rotation_angle * true_rotation_axis.y(),
-                   true_rotation_angle * true_rotation_axis.z(),
+                   timestamp_ns, //
+                   true_rotation_vector.x(), true_rotation_vector.y(),
+                   true_rotation_vector.z(), //
                    true_delta_position.x(), true_delta_position.y(),
                    true_delta_position.z());
         // 转换坐标系：从世界坐标系转为相机坐标系
         true_delta_position
             = true_prev_attitude.conjugate() * true_delta_position;
-        true_rotation_axis
-            = true_prev_attitude.conjugate() * true_rotation_axis;
+        true_rotation_vector
+            = true_prev_attitude.conjugate() * true_rotation_vector;
         // 写入数据文件
         std::print(fout_fake_data_in_camera_frame_csv,
                    // 时间戳
@@ -767,9 +770,9 @@ struct VisualSim
                    "{:.18f}, {:.18f}, {:.18f}, "
                    // 平移方向
                    "{:.18f}, {:.18f}, {:.18f}\n",
-                   timestamp_ns, true_rotation_angle * true_rotation_axis.x(),
-                   true_rotation_angle * true_rotation_axis.y(),
-                   true_rotation_angle * true_rotation_axis.z(),
+                   timestamp_ns, //
+                   true_rotation_vector.x(), true_rotation_vector.y(),
+                   true_rotation_vector.z(), //
                    true_delta_position.x(), true_delta_position.y(),
                    true_delta_position.z());
 #endif
