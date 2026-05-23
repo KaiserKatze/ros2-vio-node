@@ -3,7 +3,9 @@ Panels:
     Help Height: 78
     Name: Displays
     Property Tree Widget:
-      Expanded: ~
+      Expanded:
+        - /Global Options1
+        - /Status1
       Splitter Ratio: 0.5
     Tree Height: 396
   - Class: rviz_common/Selection
@@ -55,6 +57,34 @@ Visualization Manager:
       Length: 0.30000001192092896
       Line Style: Lines
       Line Width: 0.029999999329447746
+      Name: path est
+      Offset:
+        X: -5
+        Y: -5
+        Z: -1.5
+      Pose Color: 255; 85; 255
+      Pose Style: None
+      Radius: 0.029999999329447746
+      Shaft Diameter: 0.10000000149011612
+      Shaft Length: 0.10000000149011612
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /path_est
+      Value: true
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 25; 255; 0
+      Enabled: true
+      Head Diameter: 0.30000001192092896
+      Head Length: 0.20000000298023224
+      Length: 0.30000001192092896
+      Line Style: Lines
+      Line Width: 0.029999999329447746
       Name: path true
       Offset:
         X: -5
@@ -80,7 +110,35 @@ Visualization Manager:
       Enabled: true
       Head Diameter: 0.30000001192092896
       Head Length: 0.20000000298023224
-      Length: 0.30000001192092896
+      Length: 1
+      Line Style: Lines
+      Line Width: 0.029999999329447746
+      Name: pose est
+      Offset:
+        X: -5
+        Y: -5
+        Z: -1.5
+      Pose Color: 255; 85; 255
+      Pose Style: Axes
+      Radius: 0.10000000149011612
+      Shaft Diameter: 0.10000000149011612
+      Shaft Length: 0.10000000149011612
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /pose_est
+      Value: true
+    - Alpha: 1
+      Buffer Length: 1
+      Class: rviz_default_plugins/Path
+      Color: 25; 255; 0
+      Enabled: true
+      Head Diameter: 0.30000001192092896
+      Head Length: 0.20000000298023224
+      Length: 1
       Line Style: Lines
       Line Width: 0.029999999329447746
       Name: pose true
@@ -90,7 +148,7 @@ Visualization Manager:
         Z: -1.5
       Pose Color: 255; 85; 255
       Pose Style: Axes
-      Radius: 0.029999999329447746
+      Radius: 0.10000000149011612
       Shaft Diameter: 0.10000000149011612
       Shaft Length: 0.10000000149011612
       Topic:
@@ -107,62 +165,6 @@ Visualization Manager:
       Name: Axes
       Radius: 0.10000000149011612
       Reference Frame: <Fixed Frame>
-      Value: true
-    - Alpha: 1
-      Buffer Length: 1
-      Class: rviz_default_plugins/Path
-      Color: 25; 255; 0
-      Enabled: true
-      Head Diameter: 0.30000001192092896
-      Head Length: 0.20000000298023224
-      Length: 0.30000001192092896
-      Line Style: Lines
-      Line Width: 0.029999999329447746
-      Name: path est
-      Offset:
-        X: -5
-        Y: -5
-        Z: -1.5
-      Pose Color: 255; 85; 255
-      Pose Style: None
-      Radius: 0.029999999329447746
-      Shaft Diameter: 0.10000000149011612
-      Shaft Length: 0.10000000149011612
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        Filter size: 10
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /path_fast_est
-      Value: true
-    - Alpha: 1
-      Buffer Length: 1
-      Class: rviz_default_plugins/Path
-      Color: 25; 255; 0
-      Enabled: true
-      Head Diameter: 0.30000001192092896
-      Head Length: 0.20000000298023224
-      Length: 30
-      Line Style: Lines
-      Line Width: 0.029999999329447746
-      Name: pose est
-      Offset:
-        X: -5
-        Y: -5
-        Z: -1.5
-      Pose Color: 255; 85; 255
-      Pose Style: Axes
-      Radius: 1
-      Shaft Diameter: 0.10000000149011612
-      Shaft Length: 0.10000000149011612
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        Filter size: 10
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /pose_fast_est
       Value: true
   Enabled: true
   Global Options:
@@ -210,7 +212,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 30.665372848510742
+      Distance: 13.809514999389648
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -225,10 +227,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.1697968244552612
+      Pitch: 0.9303982853889465
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 5.543576717376709
+      Yaw: 1.120397686958313
     Saved: ~
 Window Geometry:
   Displays:

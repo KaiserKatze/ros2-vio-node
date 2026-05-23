@@ -12,12 +12,12 @@ def generate_launch_description():
     logger = get_logger("euroc_vio")
     logger.info("Starting EuRoC trajectory launch ...")
 
-    sim_node = Node(
-        package="euroc_vio",
-        executable="VisualSim",
-        name="visual_slam_path_publisher",
-        output="screen",
-    )
+    # sim_node = Node(
+    #     package="euroc_vio",
+    #     executable="VisualSim",
+    #     name="visual_slam_path_publisher",
+    #     output="screen",
+    # )
 
     est_node = Node(
         package="euroc_vio",
@@ -36,7 +36,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             # 启动 IMU 仿真节点
-            sim_node,
+            # sim_node,
             est_node,
             # 启动 RViz2 并自动加载配置
             rviz_node,

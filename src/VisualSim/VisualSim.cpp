@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -10,6 +11,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <numbers>
 #include <print>
 #include <sstream>
 #include <stdexcept>
@@ -37,7 +39,7 @@ using namespace std::chrono_literals;
 #define PUBLISH_GT_PATH 1
 #define PUBLISH_EST_PATH 1
 #define PUBLISH_IMAGE 0
-#define OUTPUT_AS_INNOV 0
+#define OUTPUT_AS_INNOV 1
 #define OUTPUT_AS_EUROC 0
 
 #if ((PUBLISH_GT_PATH || PUBLISH_EST_PATH || PUBLISH_IMAGE)                    \
@@ -238,7 +240,10 @@ struct VisualSim
   using OrientationMode = Path<value_type>::OrientationMode;
   OrientationMode orientation_mode_{OrientationMode::LookAtCenter};
   Path<value_type> path_{};
-  value_type time_limit_simulation_{200.0};
+  value_type time_limit_simulation_{
+      // 计算匀速圆周运动恰好旋转一周所需的时间
+      std::round(1 + 2 * std::numbers::pi_v<value_type> / path_.omega_),
+  };
   // 时间步长 (单位: 秒)
   value_type step_{static_cast<value_type>(0.05)};
 
@@ -333,15 +338,16 @@ struct VisualSim
     cv::Mat cv_projection_matrix_right;
 
     // 全局状态
-    Quaternion attitude{
+    Quaternion estimated_current_attitude{
         Quaternion::Identity(),
     };
-    Point3 position{
+    Point3 estimated_current_position{
         Point3::Zero(),
     };
     // 位姿初始化
-    std::tie(position, attitude) = GetPose(static_cast<value_type>(0.0));
-    path_.print_debug_info_      = false;
+    std::tie(estimated_current_position, estimated_current_attitude)
+        = GetPose(static_cast<value_type>(0.0));
+    path_.print_debug_info_ = false;
     // 局部增量
     Quaternion delta_rotation{
         Quaternion::Identity(),
@@ -395,10 +401,18 @@ struct VisualSim
       std::print(stderr, "[ERROR] 工作目录创建失败!\n");
       return;
     }
-    std::ofstream fout_fake_data_csv(path_fake / "data.csv");
-    std::print(fout_fake_data_csv, "#timestamp [ns], "
-                                   "r_x [rad], r_y [rad], r_z [rad], "
-                                   "t_x, t_y, t_z\n");
+    std::ofstream fout_fake_data_in_camera_frame_csv(path_fake
+                                                     / "data_camera.csv");
+    std::print(fout_fake_data_in_camera_frame_csv,
+               "#timestamp [ns], "
+               "r_x [rad], r_y [rad], r_z [rad], "
+               "t_x, t_y, t_z\n");
+    std::ofstream fout_fake_data_in_world_frame_csv(path_fake
+                                                    / "data_world.csv");
+    std::print(fout_fake_data_in_world_frame_csv,
+               "#timestamp [ns], "
+               "r_x [rad], r_y [rad], r_z [rad], "
+               "t_x, t_y, t_z\n");
 #endif
 #if (OUTPUT_AS_EUROC)
     // 创建 mav0 目录
@@ -699,30 +713,54 @@ struct VisualSim
           }};
           cv::cv2eigen(tVec, delta_position);
           // 状态更新
-          attitude = (attitude * delta_rotation.conjugate()).normalized();
-          position = position - attitude * delta_position;
+          estimated_current_attitude
+              = (estimated_current_attitude * delta_rotation.conjugate())
+                    .normalized();
+          estimated_current_position
+              = estimated_current_position
+                - estimated_current_attitude * delta_position;
         }
 
-        Point3 true_position{Point3::Zero()};
-        Quaternion true_attitude{Quaternion::Identity()};
-        std::tie(true_position, true_attitude) = GetPose(time);
+        Point3 true_current_position{Point3::Zero()};
+        Quaternion true_current_attitude{Quaternion::Identity()};
+        std::tie(true_current_position, true_current_attitude) = GetPose(time);
 
 #if (OUTPUT_AS_INNOV)
-        // 向文件写入真值的旋转角度、单位化平移向量
+        // 计算真值的旋转角度、单位化平移向量
         Point3 true_prev_position{Point3::Zero()};
         Quaternion true_prev_attitude{Quaternion::Identity()};
         std::tie(true_prev_position, true_prev_attitude)
             = GetPose(time - step_);
         Point3 true_delta_position{
-            (true_position - true_prev_position).normalized(),
+            true_current_position - true_prev_position,
         };
         Quaternion true_delta_attitude{
-            (true_prev_attitude.conjugate() * true_attitude).normalized(),
+            // C_21 = F_2 F_1.transpose
+            true_current_attitude * true_prev_attitude.conjugate(),
         };
         Eigen::AngleAxis<value_type> true_rotation{true_delta_attitude};
         value_type true_rotation_angle{true_rotation.angle()};
         Eigen::Vector<value_type, 3> true_rotation_axis{true_rotation.axis()};
-        std::print(fout_fake_data_csv,
+        // 写入数据文件
+        std::print(fout_fake_data_in_world_frame_csv,
+                   // 时间戳
+                   "{:020d}, "
+                   // 旋转向量
+                   "{:.18f}, {:.18f}, {:.18f}, "
+                   // 平移方向
+                   "{:.18f}, {:.18f}, {:.18f}\n",
+                   timestamp_ns, true_rotation_angle * true_rotation_axis.x(),
+                   true_rotation_angle * true_rotation_axis.y(),
+                   true_rotation_angle * true_rotation_axis.z(),
+                   true_delta_position.x(), true_delta_position.y(),
+                   true_delta_position.z());
+        // 转换坐标系：从世界坐标系转为相机坐标系
+        true_delta_position
+            = true_prev_attitude.conjugate() * true_delta_position;
+        true_rotation_axis
+            = true_prev_attitude.conjugate() * true_rotation_axis;
+        // 写入数据文件
+        std::print(fout_fake_data_in_camera_frame_csv,
                    // 时间戳
                    "{:020d}, "
                    // 旋转向量
