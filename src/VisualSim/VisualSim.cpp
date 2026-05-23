@@ -39,8 +39,8 @@ using namespace std::chrono_literals;
 #define PUBLISH_GT_PATH 1
 #define PUBLISH_EST_PATH 1
 #define PUBLISH_IMAGE 0
-#define OUTPUT_AS_INNOV 1
-#define OUTPUT_AS_EUROC 0
+#define OUTPUT_AS_INNOV 0
+#define OUTPUT_AS_EUROC 1
 
 #if ((PUBLISH_GT_PATH || PUBLISH_EST_PATH || PUBLISH_IMAGE)                    \
      && !(OUTPUT_AS_EUROC || OUTPUT_AS_INNOV))
@@ -309,6 +309,40 @@ struct VisualSim
         camera.intrinsic_(0, 2), camera.intrinsic_(1, 2));
   }
 
+  void WriteImuConfig(const std::filesystem::path &path_imu) const
+  {
+    std::ofstream fout_imu(path_imu / "sensor.yaml");
+    std::print(fout_imu,
+               "sensor_type: imu\n\n"
+               "T_BS:\n"
+               "  cols: 4\n"
+               "  rows: 4\n"
+               "  data: [1.0, 0.0, 0.0, 0.0,\n"
+               "         0.0, 1.0, 0.0, 0.0,\n"
+               "         0.0, 0.0, 1.0, 0.0,\n"
+               "         0.0, 0.0, 0.0, 1.0]\n"
+               "rate_hz: {}\n\n"
+               "# inertial sensor noise model parameters (static)"
+               "gyroscope_noise_density:     {:.4e} "
+               "# [ rad / s / sqrt(Hz) ]   ( gyro \"white noise\" )\n"
+               "gyroscope_random_walk:       {:.4e} "
+               "# [ rad / s^2 / sqrt(Hz) ] ( gyro bias diffusion )\n"
+               "accelerometer_noise_density: {:.4e} "
+               "# [ m / s^2 / sqrt(Hz) ]   ( accel \"white noise\" )\n"
+               "accelerometer_random_walk:   {:.4e} "
+               "# [ m / s^3 / sqrt(Hz) ]   ( accel bias diffusion )\n",
+               // 采样频率
+               static_cast<value_type>(1.0) / step_,
+               // 陀螺仪白噪声功率密度
+               0.0,
+               // 陀螺仪随机游走
+               0.0,
+               // 加速度计白噪声功率密度
+               0.0,
+               // 加速度计随机游走
+               0.0);
+  }
+
   void
   WriteGroundTruthConfig(const std::filesystem::path &path_groundtruth) const
   {
@@ -465,6 +499,13 @@ struct VisualSim
       std::print(stderr, "[ERROR] 工作目录创建失败!\n");
       return;
     }
+    // 创建 mav0/imu0 目录
+    std::filesystem::path path_imu0{path_mav0 / "imu0"};
+    if (!std::filesystem::create_directories(path_imu0, ec))
+    {
+      std::print(stderr, "[ERROR] 工作目录创建失败!\n");
+      return;
+    }
 
     // 输出 mav0/cam0/sensor.yaml
     WriteCameraConfig(path_cam0, rig_.camera_left_);
@@ -472,6 +513,8 @@ struct VisualSim
     WriteCameraConfig(path_cam1, rig_.camera_right_);
     // 输出 mav0/state_groundtruth_estimate0/sensor.yaml
     WriteGroundTruthConfig(path_groundtruth);
+    // 输出 mav0/imu0/sensor.yaml
+    WriteImuConfig(path_imu0);
 
     // 输出 mav0/cam0/data.csv 表头
     std::ofstream fout_cam0_data_csv(path_cam0 / "data.csv");
@@ -491,9 +534,17 @@ struct VisualSim
                "{:.18f}, {:.18f}, {:.18f}, "
                // 朝向
                "{:.18f}, {:.18f}, {:.18f}, {:.18f}\n",
-               0,                                        //
-               position.x(), position.y(), position.z(), //
-               attitude.w(), attitude.x(), attitude.y(), attitude.z());
+               0, //
+               estimated_current_position.x(), estimated_current_position.y(),
+               estimated_current_position.z(), //
+               estimated_current_attitude.w(), estimated_current_attitude.x(),
+               estimated_current_attitude.y(), estimated_current_attitude.z());
+    // 输出 mav0/imu0/data.csv 表头
+    std::ofstream fout_imu0_data_csv(path_imu0 / "data.csv");
+    std::print(fout_imu0_data_csv,
+               "#timestamp [ns],"
+               "w_RS_S_x [rad s^-1],w_RS_S_y [rad s^-1],w_RS_S_z [rad s^-1],"
+               "a_RS_S_x [m s^-2],a_RS_S_y [m s^-2],a_RS_S_z [m s^-2]\n");
 #endif
 
     // 内参矩阵 K
@@ -725,7 +776,7 @@ struct VisualSim
         Quaternion true_current_attitude{Quaternion::Identity()};
         std::tie(true_current_position, true_current_attitude) = GetPose(time);
 
-#if (OUTPUT_AS_INNOV)
+#if (OUTPUT_AS_INNOV || OUTPUT_AS_EUROC)
         // 计算真值的旋转角度、单位化平移向量
         Point3 true_prev_position{Point3::Zero()};
         Quaternion true_prev_attitude{Quaternion::Identity()};
@@ -744,6 +795,8 @@ struct VisualSim
         Point3 true_rotation_vector{
             true_rotation_angle_axis.angle() * true_rotation_angle_axis.axis(),
         };
+#endif
+#if (OUTPUT_AS_INNOV)
         // 写入数据文件
         std::print(fout_fake_data_in_world_frame_csv,
                    // 时间戳
@@ -784,10 +837,46 @@ struct VisualSim
                    "{:.18f}, {:.18f}, {:.18f}, "
                    // 朝向
                    "{:.18f}, {:.18f}, {:.18f}, {:.18f}\n",
-                   timestamp_ns,                                            //
-                   true_position.x(), true_position.y(), true_position.z(), //
-                   true_attitude.w(), true_attitude.x(), true_attitude.y(),
-                   true_attitude.z());
+                   timestamp_ns, //
+                   true_current_position.x(), true_current_position.y(),
+                   true_current_position.z(), //
+                   true_current_attitude.w(), true_current_attitude.x(),
+                   true_current_attitude.y(), true_current_attitude.z());
+
+        {
+          Point3 true_current_angular_velocity{true_rotation_vector / step_};
+          Point3 current_relative_position_wrt_room_center{true_current_position
+                                                           - room_.center_};
+          Point3 true_current_linear_velocity{
+              // v_k = ω \times r_k
+              true_current_angular_velocity.cross(
+                  current_relative_position_wrt_room_center),
+          };
+          Point3 true_current_linear_acceleration{
+              // a_k = ω \times v_k
+              true_current_angular_velocity.cross(true_current_linear_velocity),
+          };
+          // 转换坐标系：从世界坐标系转为相机坐标系
+          true_current_linear_velocity
+              = true_prev_attitude.conjugate() * true_current_linear_velocity;
+          true_current_linear_acceleration = true_prev_attitude.conjugate()
+                                             * true_current_linear_acceleration;
+          // 写入数据文件
+          std::print(fout_imu0_data_csv,
+                     // 时间戳
+                     "{:020d}, "
+                     // 角速度
+                     "{:.18f}, {:.18f}, {:.18f}, "
+                     // 加速度
+                     "{:.18f}, {:.18f}, {:.18f}\n",
+                     timestamp_ns, //
+                     true_current_angular_velocity.x(),
+                     true_current_angular_velocity.y(),
+                     true_current_angular_velocity.z(), //
+                     true_current_linear_acceleration.x(),
+                     true_current_linear_acceleration.y(),
+                     true_current_linear_acceleration.z());
+        }
 #endif
 
         // std::print(stderr,
@@ -798,17 +887,17 @@ struct VisualSim
         //            "\t估计朝向: [{:.3f}, {:.3f}, {:.3f}, {:.3f}]\n"
         //            "\t位置误差: [{:.3f}, {:.3f}, {:.3f}];\n"
         //            "\t朝向误差: [{:.3f}, {:.3f}, {:.3f}, {:.3f}]\n",
-        //            true_position.x(), true_position.y(), true_position.z(),
-        //            true_attitude.w(), true_attitude.x(), true_attitude.y(),
-        //            true_attitude.z(), position.x(), position.y(), position.z(),
-        //            attitude.w(), attitude.x(), attitude.y(), attitude.z(),
-        //            std::abs(true_position.x() - position.x()),
-        //            std::abs(true_position.y() - position.y()),
-        //            std::abs(true_position.z() - position.z()),
-        //            std::abs(true_attitude.w() - attitude.w()),
-        //            std::abs(true_attitude.x() - attitude.x()),
-        //            std::abs(true_attitude.y() - attitude.y()),
-        //            std::abs(true_attitude.z() - attitude.z()));
+        //            true_current_position.x(), true_current_position.y(), true_current_position.z(),
+        //            true_current_attitude.w(), true_current_attitude.x(), true_current_attitude.y(),
+        //            true_current_attitude.z(), position.x(), position.y(), position.z(),
+        //            estimated_current_attitude.w(), estimated_current_attitude.x(), estimated_current_attitude.y(), estimated_current_attitude.z(),
+        //            std::abs(true_current_position.x() - estimated_current_position.x()),
+        //            std::abs(true_current_position.y() - estimated_current_position.y()),
+        //            std::abs(true_current_position.z() - estimated_current_position.z()),
+        //            std::abs(true_current_attitude.w() - estimated_current_attitude.w()),
+        //            std::abs(true_current_attitude.x() - estimated_current_attitude.x()),
+        //            std::abs(true_current_attitude.y() - estimated_current_attitude.y()),
+        //            std::abs(true_current_attitude.z() - estimated_current_attitude.z()));
       }
 
 #if (START_VISUALIZATION || PUBLISH_IMAGE || OUTPUT_AS_EUROC)
@@ -854,14 +943,15 @@ struct VisualSim
       // std::print(stderr, "[INFO] 尝试发布位姿 ...\n");
 #if (PUBLISH_GT_PATH)
       {
-        Point3 true_position{Point3::Zero()};
-        Quaternion true_attitude{Quaternion::Identity()};
-        std::tie(true_position, true_attitude) = GetPose(time);
-        PublishGroundTruthPath(true_attitude, true_position);
+        Point3 true_current_position{Point3::Zero()};
+        Quaternion true_current_attitude{Quaternion::Identity()};
+        std::tie(true_current_position, true_current_attitude) = GetPose(time);
+        PublishGroundTruthPath(true_current_attitude, true_current_position);
       }
 #endif
 #if (PUBLISH_EST_PATH)
-      PublishEstimatedPath(attitude, position);
+      PublishEstimatedPath(estimated_current_attitude,
+                           estimated_current_position);
 #endif
 #endif
 
