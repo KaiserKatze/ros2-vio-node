@@ -47,8 +47,8 @@ private:
       std::getenv("HOME"),
   };
   const std::filesystem::path path_estimation_csv{
-      // path_home / "vio_ws" / "fake" / "data_camera.csv",
-      path_home / "vio_ws" / "fake" / "data_world.csv",
+      path_home / "vio_ws" / "fake" / "data_camera.csv",
+      // path_home / "vio_ws" / "fake" / "data_world.csv",
       // path_home / "vio_ws" / "estimated_motion_Tangent.csv"
       // path_home / "vio_ws" / "estimated_motion_LookAtCenter.csv",
   };
@@ -158,15 +158,15 @@ public:
     // 位姿初始化
     std::tie(position, attitude) = GetPose(0.0f);
 
-    std::print(stderr,
-               "[DEBUG] 初始位姿 {{ "
-               "timestamp={:2.2f}, "
-               "attitude=[{:.4f}, {:.4f}, {:.4f}, {:.4f}], "
-               "position=[{:.4f}, {:.4f}, {:.4f}]"
-               " }}\n",
-               0.0,                                                    //
-               attitude.w(), attitude.x(), attitude.y(), attitude.z(), //
-               position.x(), position.y(), position.z());
+    // std::print(stderr,
+    //            "[DEBUG] 初始位姿 {{ "
+    //            "timestamp={:2.2f}, "
+    //            "attitude=[{:.4f}, {:.4f}, {:.4f}, {:.4f}], "
+    //            "position=[{:.4f}, {:.4f}, {:.4f}]"
+    //            " }}\n",
+    //            0.0,                                                    //
+    //            attitude.w(), attitude.x(), attitude.y(), attitude.z(), //
+    //            position.x(), position.y(), position.z());
 
     std::ifstream file(path_estimation_csv);
     std::string line;
@@ -176,6 +176,7 @@ public:
     std::getline(file, line);
     while (std::getline(file, line))
     {
+      ++line_num;
       // 引入 rclcpp::ok() 以响应 ROS 2 节点的关闭信号 (如 Ctrl+C)
       if (!rclcpp::ok())
       {
@@ -197,13 +198,14 @@ public:
       const float ty{get_item_as_float(ss)};
       const float tz{get_item_as_float(ss)};
 
-      std::print(stderr,
-                 "[DEBUG] 读取第 {} 行数据 {{ "
-                 "timestamp={:2.2f}, "
-                 "rotation=[{:.4f}, {:.4f}, {:.4f}], "
-                 "translation=[{:.4f}, {:.4f}, {:.4f}]"
-                 " }} ...\n",
-                 ++line_num, timestamp, wxt, wyt, wzt, tx, ty, tz);
+      (void) timestamp;
+      // std::print(stderr,
+      //            "[DEBUG] 读取第 {} 行数据 {{ "
+      //            "timestamp={:2.2f}, "
+      //            "rotation=[{:.4f}, {:.4f}, {:.4f}], "
+      //            "translation=[{:.4f}, {:.4f}, {:.4f}]"
+      //            " }} ...\n",
+      //            line_num, timestamp, wxt, wyt, wzt, tx, ty, tz);
       const Point3 delta_position{tx, ty, tz};
       const Point3 delta_rotation_vector{wxt, wyt, wzt};
       const Eigen::AngleAxisf delta_rotation_angle_axis{
@@ -214,12 +216,13 @@ public:
 
       // 如果数据集 path_estimation_csv 提供的旋转向量、平移向量是在相机坐标系下的表示
       // 那么应该使用以下状态更新方程
-      // TODO
+      position = position + attitude * delta_position;
+      attitude = (attitude * delta_rotation).normalized();
 
       // 如果数据集 path_estimation_csv 提供的旋转向量、平移向量是在世界坐标系下的表示
       // 那么应该使用以下状态更新方程
-      position = position + delta_position;
-      attitude = (delta_rotation * attitude).normalized();
+      // position = position + delta_position;
+      // attitude = (delta_rotation * attitude).normalized();
 
       // Point3 true_position{Point3::Zero()};
       // Quaternion true_attitude{Quaternion::Identity()};
@@ -246,11 +249,6 @@ public:
 
       PushPose(attitude, position);
     } // end while
-
-    if (msg_path_.poses.size() != line_num)
-    {
-      throw std::runtime_error{"Assertion Error!"};
-    }
 
     size_t counter{0};
     while (rclcpp::ok())
