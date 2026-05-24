@@ -266,6 +266,19 @@ target_link_libraries(SimpleDataLoader
   ${OpenCV_LIBS}
 )
 
+# ===== 目标： 融合数据 =====
+add_ros2_executable(FuseKalman src/VisualSim/FuseKalman.cpp)
+ament_target_dependencies(FuseKalman
+  rclcpp
+  nav_msgs
+  geometry_msgs
+  sensor_msgs
+)
+target_link_libraries(FuseKalman
+  Eigen3::Eigen
+  ${OpenCV_LIBS}
+)
+
 # --- 单元测试 ---
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

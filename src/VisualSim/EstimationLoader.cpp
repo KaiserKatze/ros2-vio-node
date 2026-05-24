@@ -36,6 +36,9 @@ using namespace std::chrono_literals;
 
 #include "euroc_vio/main.h"
 
+/**
+ * @brief 从指定文件中，读取角速度向量和单位化平移向量，通过一阶积分计算姿态、轨迹
+ */
 struct EstimationLoader : public rclcpp::Node
 {
   using Point3     = Eigen::Vector<float, 3>;
@@ -47,7 +50,8 @@ private:
       std::getenv("HOME"),
   };
   const std::filesystem::path path_estimation_csv{
-      path_home / "vio_ws" / "fake" / "data_camera.csv",
+      path_home / "vio_ws" / "estimated_motion.csv",
+      // path_home / "vio_ws" / "fake" / "data_camera.csv",
       // path_home / "vio_ws" / "fake" / "data_world.csv",
       // path_home / "vio_ws" / "estimated_motion_Tangent.csv"
       // path_home / "vio_ws" / "estimated_motion_LookAtCenter.csv",

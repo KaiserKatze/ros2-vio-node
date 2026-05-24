@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <fstream>
 #include <print>
 #include <string>
@@ -13,7 +14,9 @@
 
 struct Datum
 {
-  std::array<double, 8> value;
+  std::int64_t timestamp;
+  // px, py, pz, qw, qx, qy, qz
+  std::array<double, 7> value;
 
   static std::vector<Datum> ReadCsv(const std::string &filename,
                                     bool skip_header = true, char delim = ',')
@@ -29,7 +32,8 @@ struct Datum
     {
       std::stringstream ss(line);
       Datum datum;
-      for (size_t i = 0; i < 8; ++i)
+      datum.timestamp = AbstractLoader::get_item_as_int64(ss, delim);
+      for (size_t i = 0; i < datum.value.size(); ++i)
       {
         datum.value[i] = AbstractLoader::get_item_as_double(ss, delim);
       }
@@ -81,14 +85,15 @@ public:
     for (const auto &d : raw_data_)
     {
       geometry_msgs::msg::PoseStamped pose;
+      pose.header.stamp       = rclcpp::Time{d.timestamp};
       pose.header.frame_id    = DEFAULT_FRAME_ID;
-      pose.pose.position.x    = d.value[1];
-      pose.pose.position.y    = d.value[2];
-      pose.pose.position.z    = d.value[3];
-      pose.pose.orientation.w = d.value[4];
-      pose.pose.orientation.x = d.value[5];
-      pose.pose.orientation.y = d.value[6];
-      pose.pose.orientation.z = d.value[7];
+      pose.pose.position.x    = d.value[0];
+      pose.pose.position.y    = d.value[1];
+      pose.pose.position.z    = d.value[2];
+      pose.pose.orientation.w = d.value[3];
+      pose.pose.orientation.x = d.value[4];
+      pose.pose.orientation.y = d.value[5];
+      pose.pose.orientation.z = d.value[6];
       path_msg_.poses.push_back(pose);
     }
 
