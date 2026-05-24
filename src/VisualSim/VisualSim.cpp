@@ -240,12 +240,14 @@ struct VisualSim
   using OrientationMode = Path<value_type>::OrientationMode;
   OrientationMode orientation_mode_{OrientationMode::LookAtCenter};
   Path<value_type> path_{};
-  value_type time_limit_simulation_{
+  const value_type time_limit_simulation_{
       // 计算匀速圆周运动恰好旋转一周所需的时间
-      std::round(1 + 2 * std::numbers::pi_v<value_type> / path_.omega_),
+      std::round(2 * std::numbers::pi_v<value_type> / path_.omega_),
   };
-  // 时间步长 (单位: 秒)
-  value_type step_{static_cast<value_type>(0.05)};
+  // 时间步长 (单位: 秒) (采用 0.05 秒作为时间步长可以让仿真相机的采样率保持为 20 赫兹)
+  const value_type step_{static_cast<value_type>(0.05)};
+  // 仿真 IMU 与仿真相机的采样率之比
+  const int rate_ratio_{10};
 
   using Point3     = Eigen::Vector<value_type, 3>;
   using Point2     = Eigen::Vector<value_type, 2>;
@@ -322,7 +324,7 @@ struct VisualSim
                "         0.0, 0.0, 1.0, 0.0,\n"
                "         0.0, 0.0, 0.0, 1.0]\n"
                "rate_hz: {}\n\n"
-               "# inertial sensor noise model parameters (static)"
+               "# inertial sensor noise model parameters (static)\n"
                "gyroscope_noise_density:     {:.4e} "
                "# [ rad / s / sqrt(Hz) ]   ( gyro \"white noise\" )\n"
                "gyroscope_random_walk:       {:.4e} "
@@ -332,7 +334,7 @@ struct VisualSim
                "accelerometer_random_walk:   {:.4e} "
                "# [ m / s^3 / sqrt(Hz) ]   ( accel bias diffusion )\n",
                // 采样频率
-               static_cast<value_type>(1.0) / step_,
+               static_cast<value_type>(rate_ratio_) / step_,
                // 陀螺仪白噪声功率密度
                0.0,
                // 陀螺仪随机游走
@@ -830,6 +832,7 @@ struct VisualSim
                    true_delta_position.z());
 #endif
 #if (OUTPUT_AS_EUROC)
+        // 输出仿真 Ground Truth 数据
         std::print(fout_groundtruth_csv,
                    // 时间戳
                    "{:020d}, "
@@ -843,23 +846,44 @@ struct VisualSim
                    true_current_attitude.w(), true_current_attitude.x(),
                    true_current_attitude.y(), true_current_attitude.z());
 
+        // 输出仿真 IMU 数据
+        for (int i = 0; i < rate_ratio_; ++i)
         {
-          Point3 true_current_angular_velocity{true_rotation_vector / step_};
-          Point3 current_relative_position_wrt_room_center{true_current_position
-                                                           - room_.center_};
+          // IMU 的时间步长 (秒)
+          value_type imu_step{step_ / rate_ratio_};
+          // IMU 的当前时间戳
+          value_type imu_time{time + i * imu_step};
+          // 角速度矢量
+          Point3 true_current_angular_velocity{
+              true_rotation_vector / imu_step,
+          };
+          // IMU 在世界坐标系中的当前位置
+          Point3 imu_true_current_position{
+              std::get<0>(GetPose(imu_time)),
+          };
+          // IMU 在世界坐标系中前一帧朝向
+          Attitude imu_true_prev_attitude{
+              std::get<1>(GetPose(imu_time - imu_step)),
+          };
+          // 匀速圆周运动的半径矢量
+          Point3 current_relative_position_wrt_room_center{
+              imu_true_current_position - room_.center_,
+          };
+          // 线速度矢量
           Point3 true_current_linear_velocity{
               // v_k = ω \times r_k
               true_current_angular_velocity.cross(
                   current_relative_position_wrt_room_center),
           };
+          // 线加速度矢量
           Point3 true_current_linear_acceleration{
               // a_k = ω \times v_k
               true_current_angular_velocity.cross(true_current_linear_velocity),
           };
           // 转换坐标系：从世界坐标系转为相机坐标系
-          true_current_linear_velocity
-              = true_prev_attitude.conjugate() * true_current_linear_velocity;
-          true_current_linear_acceleration = true_prev_attitude.conjugate()
+          true_current_linear_velocity     = imu_true_prev_attitude.transpose()
+                                             * true_current_linear_velocity;
+          true_current_linear_acceleration = imu_true_prev_attitude.transpose()
                                              * true_current_linear_acceleration;
           // 写入数据文件
           std::print(fout_imu0_data_csv,

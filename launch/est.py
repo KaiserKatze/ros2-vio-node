@@ -15,14 +15,14 @@ def generate_launch_description():
     # sim_node = Node(
     #     package="euroc_vio",
     #     executable="VisualSim",
-    #     name="visual_slam_path_publisher",
+    #     name="VisualSim",
     #     output="screen",
     # )
 
     est_node = Node(
         package="euroc_vio",
         executable="EstimationLoader",
-        name="visual_slam_path_publisher",
+        name="EstimationLoader",
         output="screen",
     )
 
