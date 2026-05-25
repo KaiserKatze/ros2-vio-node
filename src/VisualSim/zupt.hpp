@@ -81,7 +81,7 @@ public:
     {
       // 当前状态被判断为非静止，无法可靠估计姿态
       throw std::runtime_error{
-          "Cannot estimate orientation reliably when not static.",
+          "[ERROR] Cannot estimate orientation reliably when not static.",
       };
     }
     // 计算平均加速度向量，作为重力方向的估计
@@ -90,7 +90,7 @@ public:
     {
       // 平均加速度不在重力范围内，无法可靠估计姿态
       throw std::runtime_error{std::format(
-          "Average acceleration norm {:.3f} "
+          "[ERROR] Average acceleration norm {:.3f} "
           "is out of expected gravity range ({:.3f}, {:.3f}). "
           "Cannot estimate orientation reliably.",
           acc_mean.norm(),
