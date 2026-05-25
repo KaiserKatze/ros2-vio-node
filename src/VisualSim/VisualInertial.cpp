@@ -19,7 +19,6 @@ using namespace std::chrono_literals;
 #include <opencv2/core/check.hpp>
 #include <opencv2/core/eigen.hpp>
 
-#include <cv_bridge/cv_bridge.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/publisher.hpp>
@@ -30,6 +29,7 @@ using namespace std::chrono_literals;
 #include "LinearKalmanFilter.hpp"
 #include "euroc_vio/AbstractLoader.hpp"
 #include "euroc_vio/main.h"
+#include "zupt.hpp"
 
 /**
  * @note
@@ -126,7 +126,14 @@ struct DatumImu
       const DatumImu datum_fast{
           timestamp,
           {gx, gy, gz},
-          {ax, ay, az},
+          // EuRoC MAV 数据集的特殊要求:
+          // 将 IMU 参考系的 X 轴映射为 Z 轴;
+          // 将 IMU 参考系的 Y 轴映射为 -Y 轴;
+          // 将 IMU 参考系的 Z 轴映射为 X 轴.
+          // 这是因为数据集的 ground truth 是由 VICON0 或 LEICA0 提供的,
+          // 而 IMU0 的三轴与 VICON0 或 LEICA0 的不同,
+          // 只有按上述方式重映射以后，双方的标架才近似重合.
+          {az, -ay, ax},
       };
       data.push_back(datum_fast);
     } // end while
@@ -148,6 +155,14 @@ private:
       create_publisher<nav_msgs::msg::Path>("/pose_fast_est", rclcpp::QoS{10}),
   };
 
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_imu_{
+      create_publisher<nav_msgs::msg::Path>("/path_imu_est", rclcpp::QoS{10}),
+  };
+  nav_msgs::msg::Path msg_path_imu_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_pose_imu_{
+      create_publisher<nav_msgs::msg::Path>("/pose_imu_est", rclcpp::QoS{10}),
+  };
+
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_fuse_{
       create_publisher<nav_msgs::msg::Path>("/path_fuse_est", rclcpp::QoS{10}),
   };
@@ -161,6 +176,7 @@ private:
 
   LinearKalmanFilter filter_;
 
+private:
   void PushPose(nav_msgs::msg::Path &msg_path, const std::int64_t timestamp,
                 const Eigen::Quaternionf &attitude,
                 const Eigen::Vector3f &position)
@@ -191,6 +207,16 @@ private:
     publisher_path_fast_->publish(msg_path_fast_);
   }
 
+  void PublishPathImu()
+  {
+    if (msg_path_imu_.poses.empty())
+    {
+      return;
+    }
+    msg_path_imu_.header.stamp = msg_path_imu_.poses.back().header.stamp;
+    publisher_path_imu_->publish(msg_path_imu_);
+  }
+
   void PublishPathFuse()
   {
     if (msg_path_fuse_.poses.empty())
@@ -211,6 +237,16 @@ private:
     publisher_pose_fast_->publish(msg_path_pose);
   }
 
+  void PublishPoseImu(size_t index)
+  {
+    const auto &msg_pose{msg_path_imu_.poses[index]};
+    nav_msgs::msg::Path msg_path_pose;
+    msg_path_pose.header.frame_id = DEFAULT_FRAME_ID;
+    msg_path_pose.header.stamp    = msg_pose.header.stamp;
+    msg_path_pose.poses.push_back(msg_pose);
+    publisher_pose_imu_->publish(msg_path_pose);
+  }
+
   void PublishPoseFuse(size_t index)
   {
     const auto &msg_pose{msg_path_fuse_.poses[index]};
@@ -221,6 +257,9 @@ private:
     publisher_pose_fuse_->publish(msg_path_pose);
   }
 
+  /**
+   * @brief 只靠单目相机提供的角位移向量和单位化平移向量估计位姿
+   */
   void EstimateFast()
   {
     // 初始状态
@@ -246,6 +285,111 @@ private:
 
       PushPose(msg_path_fast_, datum_fast.timestamp_, estimated_attitude_fast,
                estimated_position_fast);
+    } // end for
+  }
+
+  /**
+   * @brief 只靠 IMU 提供的角速度向量和加速度向量估计位姿
+   */
+  void EstimateImu()
+  {
+    // 世界坐标系下的重力加速度
+    const Eigen::Vector3f gravity_world{0.0f, 0.0f, -9.81f};
+
+    // 引入“零速更新”机制，检测起飞时刻
+    ZUPT<float> zupt{};
+
+    DatumImu datum_first;
+    DatumImu datum_last;
+    for (bool first_loop{true}; const DatumImu &datum_imu : data_imu_)
+    {
+      if (first_loop)
+      {
+        datum_first = datum_imu;
+        first_loop  = false;
+        continue;
+      }
+      if (!zupt.Update(std::make_pair(datum_imu.linear_acceleration_,
+                                      datum_imu.angular_velocity_)))
+      {
+        datum_last = datum_imu;
+        break;
+      }
+    } // end for
+    // 静止状态的时长
+    const float time_elapsed_before_takeoff{
+        1e-9f
+            * static_cast<float>(datum_last.timestamp_
+                                 - datum_first.timestamp_),
+    };
+    std::print(stderr, "静止时长: {:.4f} 秒.\n", time_elapsed_before_takeoff);
+    // 机体处于静止状态时，机体坐标系与世界坐标系不一定是重合的。
+    // 以 EuRoC MAV 数据集为例，无人机起飞前，
+    // 其机体坐标系（即 IMU 坐标系）的 X,Y,Z 三轴大致上
+    // 分别与世界坐标系的 Z,-Y,X 三轴对应
+
+    // 初始状态
+    Eigen::Vector3f estimated_position_imu{Eigen::Vector3f::Zero()};
+    Eigen::Quaternionf estimated_attitude_imu{Eigen::Quaternionf::Identity()};
+    Eigen::Vector3f estimated_linear_velocity_imu{Eigen::Vector3f::Zero()};
+    Eigen::Vector3f estimated_linear_acceleration_imu{Eigen::Vector3f::Zero()};
+    Eigen::Vector3f estimated_angular_velocity_imu{Eigen::Vector3f::Zero()};
+    Eigen::Vector3f estimated_angular_acceleration_imu{Eigen::Vector3f::Zero()};
+    estimated_attitude_imu = zupt.EstimateOrientation();
+
+    DatumImu datum_prev;
+    for (bool first_loop{true}; const DatumImu &datum_imu : data_imu_)
+    {
+      if (first_loop)
+      {
+        datum_prev = datum_imu;
+        first_loop = false;
+        continue;
+      }
+
+      // 时间步长
+      const float dt{
+          1e-9f
+              * static_cast<float>(datum_imu.timestamp_
+                                   - datum_prev.timestamp_),
+      };
+      // 传感器参考系下的平均线加速度
+      Eigen::Vector3f average_linear_acceleration_in_sensor_frame{
+          0.5
+              * (datum_prev.linear_acceleration_
+                 + datum_imu.linear_acceleration_),
+      };
+      // 惯性参考系下的平均线加速度
+      Eigen::Vector3f average_linear_acceleration_in_world_frame{
+          estimated_attitude_imu
+                  * average_linear_acceleration_in_sensor_frame //
+              + gravity_world,
+      };
+      Eigen::Vector3f delta_velocity{
+          average_linear_acceleration_in_world_frame * dt,
+      };
+      Eigen::Vector3f delta_position{
+          (estimated_linear_velocity_imu + 0.5f * delta_velocity) * dt,
+      };
+      estimated_position_imu += delta_position;
+      estimated_linear_velocity_imu += delta_velocity;
+
+      // 传感器参考系下的平均角速度
+      Eigen::Vector3f average_angular_velocity_in_sensor_frame{
+          0.5f * (datum_prev.angular_velocity_ + datum_imu.angular_velocity_),
+      };
+      // 传感器参考系下的旋转向量
+      Eigen::Vector3f rotation_vector_in_sensor_frame{
+          average_angular_velocity_in_sensor_frame * dt,
+      };
+      Eigen::Quaternionf delta_attitude(Eigen::AngleAxisf{
+          rotation_vector_in_sensor_frame.norm(),
+          rotation_vector_in_sensor_frame.normalized(),
+      });
+      estimated_attitude_imu = estimated_attitude_imu * delta_attitude;
+
+      PushPose(msg_path_imu_, datum_imu.timestamp_, estimated_attitude_imu,
+               estimated_position_imu);
     } // end for
   }
 
@@ -311,15 +455,8 @@ private:
     }
 
     // 针对混合时间轴事件根据时间戳升序排序，若时间戳相同则让 IMU 优先处理
-    std::sort(events.begin(), events.end(),
-              [](const TimelineEvent &a, const TimelineEvent &b)
-              {
-                if (a.timestamp == b.timestamp)
-                {
-                  return a.is_imu && !b.is_imu;
-                }
-                return a.timestamp < b.timestamp;
-              });
+    std::ranges::sort(events, std::less<>{}, [](const TimelineEvent &e)
+                      { return std::make_tuple(e.timestamp, !e.is_imu); });
 
     std::int64_t last_timestamp{-1};
     Eigen::Vector3f cam_position{Eigen::Vector3f::Zero()};
@@ -480,24 +617,30 @@ public:
   {
     std::print(stderr, "VisualInertial ready ...\n");
     msg_path_fast_.header.frame_id = DEFAULT_FRAME_ID;
+    msg_path_imu_.header.frame_id  = DEFAULT_FRAME_ID;
     msg_path_fuse_.header.frame_id = DEFAULT_FRAME_ID;
   }
 
   void Start()
   {
     EstimateFast();
+    EstimateImu();
     EstimateFuse();
 
     size_t index_fast{0};
+    size_t index_imu{0};
     size_t index_fuse{0};
     while (rclcpp::ok())
     {
       PublishPathFast();
       PublishPoseFast(index_fast);
+      PublishPathImu();
+      PublishPoseImu(index_imu);
       PublishPathFuse();
-      PublishPoseFuse(index_fast);
+      PublishPoseFuse(index_fuse);
 
       index_fast = (index_fast + 1) % msg_path_fast_.poses.size();
+      index_imu  = (index_imu + 1) % msg_path_imu_.poses.size();
       index_fuse = (index_fuse + 1) % msg_path_fuse_.poses.size();
 
       std::this_thread::sleep_for(50ms);

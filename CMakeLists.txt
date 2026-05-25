@@ -266,14 +266,14 @@ target_link_libraries(EstimationLoader
 # )
 
 # ===== 目标： 融合数据 =====
-add_ros2_executable(FuseKalman src/VisualSim/FuseKalman.cpp)
-ament_target_dependencies(FuseKalman
+add_ros2_executable(VisualInertial src/VisualSim/VisualInertial.cpp)
+ament_target_dependencies(VisualInertial
   rclcpp
   nav_msgs
   geometry_msgs
   sensor_msgs
 )
-target_link_libraries(FuseKalman
+target_link_libraries(VisualInertial
   Eigen3::Eigen
   ${OpenCV_LIBS}
 )
