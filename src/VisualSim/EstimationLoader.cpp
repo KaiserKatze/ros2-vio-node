@@ -36,8 +36,11 @@ using namespace std::chrono_literals;
 
 #include "euroc_vio/main.h"
 
+#define PUBLISH_STYLE_ALL_AT_ONCE 0
+#define PUBLISH_STYLE_STEP_BY_STEP 1
+
 /**
- * @brief 从指定文件中，读取角速度向量和单位化平移向量，通过一阶积分计算姿态、轨迹
+ * @brief 从指定文件中，读取角位移向量和单位化平移向量，通过一阶积分计算姿态、轨迹
  */
 struct EstimationLoader : public rclcpp::Node
 {
@@ -119,14 +122,14 @@ private:
   }
 
   template <typename value_type>
-  void PushPose(const Eigen::Quaternion<value_type> &attitude,
-                const Eigen::Vector<value_type, 3> &position)
+  geometry_msgs::msg::PoseStamped
+  PushPose(std::int64_t timestamp,
+           const Eigen::Quaternion<value_type> &attitude,
+           const Eigen::Vector<value_type, 3> &position)
   {
-    rclcpp::Time now{this->get_clock()->now()};
-
     geometry_msgs::msg::PoseStamped msg_pose;
     msg_pose.header.frame_id = DEFAULT_FRAME_ID;
-    msg_pose.header.stamp    = now;
+    msg_pose.header.stamp    = rclcpp::Time{timestamp};
 
     msg_pose.pose.position.x = position.x();
     msg_pose.pose.position.y = position.y();
@@ -138,14 +141,27 @@ private:
     msg_pose.pose.orientation.z = attitude.z();
 
     msg_path_.poses.push_back(msg_pose);
+    return msg_pose;
   }
 
   void PublishPath()
   {
-    rclcpp::Time now{this->get_clock()->now()};
-    msg_path_.header.stamp    = now;
+    if (msg_path_.poses.empty())
+    {
+      return;
+    }
+    msg_path_.header.stamp    = msg_path_.poses.back().header.stamp;
     msg_path_.header.frame_id = DEFAULT_FRAME_ID;
     publisher_path_->publish(msg_path_);
+  }
+
+  void PublishPose(const geometry_msgs::msg::PoseStamped &msg_pose)
+  {
+    nav_msgs::msg::Path msg_path_pose;
+    msg_path_pose.header.frame_id = DEFAULT_FRAME_ID;
+    msg_path_pose.header.stamp    = msg_pose.header.stamp;
+    msg_path_pose.poses.push_back(msg_pose);
+    publisher_pose_->publish(msg_path_pose);
   }
 
 public:
@@ -174,13 +190,17 @@ public:
 
     std::ifstream file(path_estimation_csv);
     std::string line;
+#if (PUBLISH_STYLE_ALL_AT_ONCE)
     size_t line_num{0};
+#endif
 
     // 跳过表头
     std::getline(file, line);
     while (std::getline(file, line))
     {
+#if (PUBLISH_STYLE_ALL_AT_ONCE)
       ++line_num;
+#endif
       // 引入 rclcpp::ok() 以响应 ROS 2 节点的关闭信号 (如 Ctrl+C)
       if (!rclcpp::ok())
       {
@@ -190,8 +210,8 @@ public:
       std::stringstream ss(line);
 
       // 读取时间戳
-      const float timestamp{
-          static_cast<float>(get_item_as_int64(ss) * 1e-9), // in nanoseconds
+      const std::int64_t timestamp{
+          get_item_as_int64(ss), // in nanoseconds
       };
       // 读取旋转角度
       const float wxt{get_item_as_float(ss)};
@@ -202,14 +222,6 @@ public:
       const float ty{get_item_as_float(ss)};
       const float tz{get_item_as_float(ss)};
 
-      (void) timestamp;
-      // std::print(stderr,
-      //            "[DEBUG] 读取第 {} 行数据 {{ "
-      //            "timestamp={:2.2f}, "
-      //            "rotation=[{:.4f}, {:.4f}, {:.4f}], "
-      //            "translation=[{:.4f}, {:.4f}, {:.4f}]"
-      //            " }} ...\n",
-      //            line_num, timestamp, wxt, wyt, wzt, tx, ty, tz);
       const Point3 delta_position{tx, ty, tz};
       const Point3 delta_rotation_vector{wxt, wyt, wzt};
       const Eigen::AngleAxisf delta_rotation_angle_axis{
@@ -228,48 +240,27 @@ public:
       // position = position + delta_position;
       // attitude = (delta_rotation * attitude).normalized();
 
-      // Point3 true_position{Point3::Zero()};
-      // Quaternion true_attitude{Quaternion::Identity()};
-      // std::tie(true_position, true_attitude) = GetPose(timestamp);
-      // std::print(stderr,
-      //            "\t===== 位姿估计误差 =====\n"
-      //            "\t真实位置: [{:.3f}, {:.3f}, {:.3f}];\n"
-      //            "\t真实朝向: [{:.3f}, {:.3f}, {:.3f}, {:.3f}]\n"
-      //            "\t估计位置: [{:.3f}, {:.3f}, {:.3f}];\n"
-      //            "\t估计朝向: [{:.3f}, {:.3f}, {:.3f}, {:.3f}]\n"
-      //            "\t位置误差: [{:.3f}, {:.3f}, {:.3f}];\n"
-      //            "\t朝向误差: [{:.3f}, {:.3f}, {:.3f}, {:.3f}]\n",
-      //            true_position.x(), true_position.y(), true_position.z(),
-      //            true_attitude.w(), true_attitude.x(), true_attitude.y(),
-      //            true_attitude.z(), position.x(), position.y(), position.z(),
-      //            attitude.w(), attitude.x(), attitude.y(), attitude.z(),
-      //            std::abs(true_position.x() - position.x()),
-      //            std::abs(true_position.y() - position.y()),
-      //            std::abs(true_position.z() - position.z()),
-      //            std::abs(true_attitude.w() - attitude.w()),
-      //            std::abs(true_attitude.x() - attitude.x()),
-      //            std::abs(true_attitude.y() - attitude.y()),
-      //            std::abs(true_attitude.z() - attitude.z()));
-
-      PushPose(attitude, position);
+#if (PUBLISH_STYLE_STEP_BY_STEP)
+      auto msg_pose{PushPose(timestamp, attitude, position)};
+      PublishPath();
+      PublishPose(msg_pose);
+      // 保持 20 Hz 的话题发布频率
+      std::this_thread::sleep_for(50ms);
+#else
+      PushPose(timestamp, attitude, position);
+#endif
     } // end while
 
-    size_t counter{0};
-    while (rclcpp::ok())
+#if (PUBLISH_STYLE_ALL_AT_ONCE)
+    for (size_t counter{0}; rclcpp::ok(); counter = (counter + 1) % line_num)
     {
       // std::print(stderr, "[DEBUG] 正在循环发布已有数据 (总计 {} 帧数据)!\n", line_num);
       PublishPath();
-
-      rclcpp::Time now{this->get_clock()->now()};
-      nav_msgs::msg::Path msg_path_pose;
-      msg_path_pose.header.frame_id = DEFAULT_FRAME_ID;
-      msg_path_pose.header.stamp    = now;
-      msg_path_pose.poses.push_back(msg_path_.poses[counter]);
-      publisher_pose_->publish(msg_path_pose);
-      counter = (counter + 1) % line_num;
+      PublishPose(msg_path_.poses[counter]);
 
       std::this_thread::sleep_for(50ms);
-    }
+    } // end for
+#endif
   }
 };
 

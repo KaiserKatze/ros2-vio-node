@@ -18,7 +18,6 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-add_compile_options(-Werror)
 add_compile_options(-Wshadow)
 add_compile_options(-Wuninitialized)
 add_compile_options(-Wno-maybe-uninitialized)
@@ -72,20 +71,20 @@ find_package(nav_msgs REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(Boost REQUIRED)
 find_package(Armadillo REQUIRED)
 
 # # --- ROS2 通信接口生成 ---
-# find_package(rosidl_default_generators REQUIRED)
-# rosidl_generate_interfaces(${PROJECT_NAME}
-#   "msg/Imu.msg"
-#   DEPENDENCIES
-#   std_msgs
-#   geometry_msgs
-# )
-# ament_export_dependencies(rosidl_default_runtime)
+rosidl_generate_interfaces(AngularDisplacementAndUnitTranslation
+  "msg/AngularDisplacementAndUnitTranslation.msg"
+  DEPENDENCIES
+  std_msgs
+  geometry_msgs
+)
+ament_export_dependencies(rosidl_default_runtime)
 
 # --- 辅助函数定义 ---
 function(add_ros2_executable node_name source_path)

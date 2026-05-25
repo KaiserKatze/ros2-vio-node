@@ -10,7 +10,7 @@ def generate_launch_description():
     logger = get_logger("euroc_vio")
     logger.info("Starting EuRoC trajectory launch ...")
 
-    bag_path = "/mnt/e/Documents/mav0/bag/V2_01_easy_ros2/V2_01_easy_ros2.db3"
+    bag_path = "/mnt/e/Documents/mav0/bag/V2_01_easy/V2_01_easy_ros2.db3"
 
     # 播放预先录制的 EuRoC MAV 数据集
     bag_play = ExecuteProcess(
@@ -25,7 +25,7 @@ def generate_launch_description():
         output="screen",
     )
 
-    # 输入: 角速度向量和单位化平移向量
+    # 输入: 角位移向量 (即角速度向量与时间步长的乘积) 和单位化平移向量 (即与平移向量同向的单位向量)
     # 输出: 轨迹话题 /path_fast_est
     # 输出: 轨迹话题 /pose_fast_est
     est_node = Node(
