@@ -21,7 +21,7 @@ using namespace std::chrono_literals;
 #include <sensor_msgs/msg/image.hpp>
 // #include <visualization_msgs/msg/Marker.hpp>
 
-#include "AbstractLoader.hpp"
+#include "euroc_vio/AbstractLoader.hpp"
 #include "euroc_vio/main.h"
 
 struct GroundTruthData

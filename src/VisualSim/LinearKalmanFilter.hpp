@@ -67,4 +67,44 @@ struct LinearKalmanFilter
     kf_.measurementMatrix.at<double>(4, 10) = 1; // pitch
     kf_.measurementMatrix.at<double>(5, 11) = 1; // yaw
   }
+
+  /**
+   * @brief 设置滤波器进入 IMU 测量模式
+   * 动态调整 measurementMatrix 以映射到线加速度 (ax, ay, az) 与 角速度 (wx, wy, wz) 的对应系统状态，并设定适合的测量噪声
+   */
+  void SetImuMeasurementModel()
+  {
+    kf_.measurementMatrix.setTo(0);
+    // 对应状态向量的线加速度
+    kf_.measurementMatrix.at<double>(0, 6) = 1; // ax
+    kf_.measurementMatrix.at<double>(1, 7) = 1; // ay
+    kf_.measurementMatrix.at<double>(2, 8) = 1; // az
+    // 对应状态向量的角速度
+    kf_.measurementMatrix.at<double>(3, 12) = 1; // wx
+    kf_.measurementMatrix.at<double>(4, 13) = 1; // wy
+    kf_.measurementMatrix.at<double>(5, 14) = 1; // wz
+
+    // 设置针对高频传感器的测量协方差噪声
+    cv::setIdentity(kf_.measurementNoiseCov, cv::Scalar::all(1e-2));
+  }
+
+  /**
+   * @brief 设置滤波器进入相机测量模式
+   * 动态调整 measurementMatrix 以映射到空间位置 (x, y, z) 与 欧拉角朝向 (roll, pitch, yaw) 的对应系统状态，并设定适合的测量噪声
+   */
+  void SetCamMeasurementModel()
+  {
+    kf_.measurementMatrix.setTo(0);
+    // 对应状态向量的全局位置
+    kf_.measurementMatrix.at<double>(0, 0) = 1; // x
+    kf_.measurementMatrix.at<double>(1, 1) = 1; // y
+    kf_.measurementMatrix.at<double>(2, 2) = 1; // z
+    // 对应状态向量的姿态角
+    kf_.measurementMatrix.at<double>(3, 9)  = 1; // roll
+    kf_.measurementMatrix.at<double>(4, 10) = 1; // pitch
+    kf_.measurementMatrix.at<double>(5, 11) = 1; // yaw
+
+    // 设置针对视觉估计的高精度传感器测量协方差噪声 (噪声相比 IMU 更小)
+    cv::setIdentity(kf_.measurementNoiseCov, cv::Scalar::all(1e-4));
+  }
 };

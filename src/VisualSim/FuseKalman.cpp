@@ -24,10 +24,10 @@ struct FuseKalman : public rclcpp::Node
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr subscriber_imu_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr subscriber_pose_cam_;
 
-  nav_msgs::msg::Path path_msg_;
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_est_;
-  nav_msgs::msg::Path pose_msg_;
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_pose_est_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_fuse_;
+  nav_msgs::msg::Path msg_path_fuse_;
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_pose_fuse_;
+  nav_msgs::msg::Path msg_pose_fuse_;
 
   rclcpp::TimerBase::SharedPtr timer_;
 
@@ -39,9 +39,9 @@ struct FuseKalman : public rclcpp::Node
     using std::placeholders::_1;
     const rclcpp::QoS qos(10);
 
-    publisher_path_est_
+    publisher_path_fuse_
         = create_publisher<nav_msgs::msg::Path>(est_path_topic_name_, qos);
-    publisher_pose_est_
+    publisher_pose_fuse_
         = create_publisher<nav_msgs::msg::Path>(est_pose_topic_name_, qos);
 
     subscriber_imu_ = create_subscription<sensor_msgs::msg::Imu>(
@@ -53,8 +53,8 @@ struct FuseKalman : public rclcpp::Node
     timer_ = create_wall_timer(std::chrono::seconds(1), // 1 Hz 发布
                                std::bind(&FuseKalman::PublishTrajectory, this));
 
-    path_msg_.header.frame_id = DEFAULT_FRAME_ID;
-    pose_msg_.header.frame_id = DEFAULT_FRAME_ID;
+    msg_path_fuse_.header.frame_id = DEFAULT_FRAME_ID;
+    msg_pose_fuse_.header.frame_id = DEFAULT_FRAME_ID;
   }
 
   /**
@@ -87,46 +87,6 @@ struct FuseKalman : public rclcpp::Node
     angles.z() = std::atan2(siny_cosp, cosy_cosp);
 
     return angles;
-  }
-
-  /**
-   * @brief 设置滤波器进入 IMU 测量模式
-   * 动态调整 measurementMatrix 以映射到线加速度 (ax, ay, az) 与 角速度 (wx, wy, wz) 的对应系统状态，并设定适合的测量噪声
-   */
-  void SetImuMeasurementModel()
-  {
-    filter_.kf_.measurementMatrix.setTo(0);
-    // 对应状态向量的线加速度
-    filter_.kf_.measurementMatrix.at<double>(0, 6) = 1; // ax
-    filter_.kf_.measurementMatrix.at<double>(1, 7) = 1; // ay
-    filter_.kf_.measurementMatrix.at<double>(2, 8) = 1; // az
-    // 对应状态向量的角速度
-    filter_.kf_.measurementMatrix.at<double>(3, 12) = 1; // wx
-    filter_.kf_.measurementMatrix.at<double>(4, 13) = 1; // wy
-    filter_.kf_.measurementMatrix.at<double>(5, 14) = 1; // wz
-
-    // 设置针对高频传感器的测量协方差噪声
-    cv::setIdentity(filter_.kf_.measurementNoiseCov, cv::Scalar::all(1e-2));
-  }
-
-  /**
-   * @brief 设置滤波器进入相机测量模式
-   * 动态调整 measurementMatrix 以映射到空间位置 (x, y, z) 与 欧拉角朝向 (roll, pitch, yaw) 的对应系统状态，并设定适合的测量噪声
-   */
-  void SetCamMeasurementModel()
-  {
-    filter_.kf_.measurementMatrix.setTo(0);
-    // 对应状态向量的全局位置
-    filter_.kf_.measurementMatrix.at<double>(0, 0) = 1; // x
-    filter_.kf_.measurementMatrix.at<double>(1, 1) = 1; // y
-    filter_.kf_.measurementMatrix.at<double>(2, 2) = 1; // z
-    // 对应状态向量的姿态角
-    filter_.kf_.measurementMatrix.at<double>(3, 9)  = 1; // roll
-    filter_.kf_.measurementMatrix.at<double>(4, 10) = 1; // pitch
-    filter_.kf_.measurementMatrix.at<double>(5, 11) = 1; // yaw
-
-    // 设置针对视觉估计的高精度传感器测量协方差噪声 (噪声相比 IMU 更小)
-    cv::setIdentity(filter_.kf_.measurementNoiseCov, cv::Scalar::all(1e-4));
   }
 
   /**
@@ -176,7 +136,7 @@ struct FuseKalman : public rclcpp::Node
     Eigen::Vector3d euler_rates{T * w_body};
 
     // 2. 将测量矩阵和噪声重配置到 IMU 维度
-    SetImuMeasurementModel();
+    filter_.SetImuMeasurementModel();
     cv::Mat measurement{cv::Mat::zeros(6, 1, CV_64F)};
     measurement.at<double>(0) = a_world.x();
     measurement.at<double>(1) = a_world.y();
@@ -234,7 +194,7 @@ struct FuseKalman : public rclcpp::Node
     filter_.kf_.errorCovPre = filter_.kf_.errorCovPost.clone();
 
     // 将测量模型适配至低频相机格式
-    SetCamMeasurementModel();
+    filter_.SetCamMeasurementModel();
     cv::Mat measurement{cv::Mat::zeros(6, 1, CV_64F)};
     measurement.at<double>(0) = x;
     measurement.at<double>(1) = y;
@@ -258,20 +218,20 @@ struct FuseKalman : public rclcpp::Node
   void PublishTrajectory()
   {
     const auto timestamp{now()};
-    path_msg_.header.stamp = timestamp;
-    publisher_path_est_->publish(path_msg_);
+    msg_path_fuse_.header.stamp = timestamp;
+    publisher_path_fuse_->publish(msg_path_fuse_);
 
     static size_t index{0};
-    if (path_msg_.poses.empty())
+    if (msg_path_fuse_.poses.empty())
     {
       return;
     }
-    const auto &pose{path_msg_.poses[index]};
-    pose_msg_.header.stamp = pose.header.stamp;
-    pose_msg_.poses.clear();
-    pose_msg_.poses.push_back(pose);
-    index = (index + 1) % path_msg_.poses.size();
-    publisher_pose_est_->publish(pose_msg_);
+    const auto &pose{msg_path_fuse_.poses[index]};
+    msg_pose_fuse_.header.stamp = pose.header.stamp;
+    msg_pose_fuse_.poses.clear();
+    msg_pose_fuse_.poses.push_back(pose);
+    index = (index + 1) % msg_path_fuse_.poses.size();
+    publisher_pose_fuse_->publish(msg_pose_fuse_);
   }
 
   geometry_msgs::msg::PoseStamped
@@ -288,7 +248,7 @@ struct FuseKalman : public rclcpp::Node
     msg.pose.orientation.x = attitude.x();
     msg.pose.orientation.y = attitude.y();
     msg.pose.orientation.z = attitude.z();
-    path_msg_.poses.push_back(msg);
+    msg_path_fuse_.poses.push_back(msg);
     return msg;
   }
 };

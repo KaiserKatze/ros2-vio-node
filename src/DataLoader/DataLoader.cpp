@@ -9,7 +9,7 @@
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/rclcpp.hpp>
 
-#include "AbstractLoader.hpp"
+#include "euroc_vio/AbstractLoader.hpp"
 #include "euroc_vio/main.h"
 
 struct Datum
