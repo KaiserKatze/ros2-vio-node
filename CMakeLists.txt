@@ -108,20 +108,20 @@ function(add_ros2_executable node_name source_path)
   )
 endfunction()
 
-# --- 编译 IMU 结点：预处理惯性测量单元数据 ---
-add_ros2_executable(euroc_imu src/imu.cpp)
-ament_target_dependencies(euroc_imu
-  rclcpp
-  std_msgs
-  sensor_msgs
-  geometry_msgs
-  nav_msgs
-)
-target_link_libraries(euroc_imu
-  Eigen3::Eigen
-  Boost::boost
-  ${OpenCV_LIBS}
-)
+# # --- 编译 IMU 结点：预处理惯性测量单元数据 ---
+# add_ros2_executable(euroc_imu src/imu.cpp)
+# ament_target_dependencies(euroc_imu
+#   rclcpp
+#   std_msgs
+#   sensor_msgs
+#   geometry_msgs
+#   nav_msgs
+# )
+# target_link_libraries(euroc_imu
+#   Eigen3::Eigen
+#   Boost::boost
+#   ${OpenCV_LIBS}
+# )
 
 # add_ros2_executable(imu_sim src/sim.cpp)
 # ament_target_dependencies(imu_sim
@@ -169,47 +169,47 @@ install(DIRECTORY launch/
   DESTINATION share/${PROJECT_NAME}/launch
 )
 
-# ===== 目标： 误差分析 CSV 生产 =====
-add_executable(euroc_rk4_eval src/euroc_rk4_eval.cpp)
-target_include_directories(euroc_rk4_eval PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
-install(TARGETS euroc_rk4_eval
-  DESTINATION debug/euroc_rk4_eval
-)
-target_link_libraries(euroc_rk4_eval
-  Eigen3::Eigen
-  Boost::boost
-  ${OpenCV_LIBS}
-)
+# # ===== 目标： 误差分析 CSV 生产 =====
+# add_executable(euroc_rk4_eval src/euroc_rk4_eval.cpp)
+# target_include_directories(euroc_rk4_eval PUBLIC
+#   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+#   $<INSTALL_INTERFACE:include>
+# )
+# install(TARGETS euroc_rk4_eval
+#   DESTINATION debug/euroc_rk4_eval
+# )
+# target_link_libraries(euroc_rk4_eval
+#   Eigen3::Eigen
+#   Boost::boost
+#   ${OpenCV_LIBS}
+# )
 
-# ===== 目标： CSV 拟合与绘图 =====
-add_executable(csv_polyfit_plot src/csv_polyfit_plot.cpp)
+# # ===== 目标： CSV 拟合与绘图 =====
+# add_executable(csv_polyfit_plot src/csv_polyfit_plot.cpp)
 
-target_include_directories(csv_polyfit_plot PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
-install(TARGETS csv_polyfit_plot
-  DESTINATION lib/${PROJECT_NAME}
-)
-target_link_libraries(csv_polyfit_plot
-  Eigen3::Eigen
-  ${OpenCV_LIBS}
-)
+# target_include_directories(csv_polyfit_plot PUBLIC
+#   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+#   $<INSTALL_INTERFACE:include>
+# )
+# install(TARGETS csv_polyfit_plot
+#   DESTINATION lib/${PROJECT_NAME}
+# )
+# target_link_libraries(csv_polyfit_plot
+#   Eigen3::Eigen
+#   ${OpenCV_LIBS}
+# )
 
-# ===== 目标： 纯视觉 SLAM =====
-add_ros2_executable(StereoSlam src/VisualSlam/VisualSlam.cpp)
-ament_target_dependencies(StereoSlam
-  rclcpp
-  geometry_msgs
-  nav_msgs
-)
-target_link_libraries(StereoSlam
-  Eigen3::Eigen
-  ${OpenCV_LIBS}
-)
+# # ===== 目标： 纯视觉 SLAM =====
+# add_ros2_executable(StereoSlam src/VisualSlam/VisualSlam.cpp)
+# ament_target_dependencies(StereoSlam
+#   rclcpp
+#   geometry_msgs
+#   nav_msgs
+# )
+# target_link_libraries(StereoSlam
+#   Eigen3::Eigen
+#   ${OpenCV_LIBS}
+# )
 
 # ===== 目标： 纯视觉 SLAM 仿真 =====
 add_ros2_executable(VisualSim src/VisualSim/VisualSim.cpp)
@@ -239,31 +239,31 @@ target_link_libraries(EstimationLoader
   ${OpenCV_LIBS}
 )
 
-# ===== 目标： 加载 EuRoC 数据集 (V2_01_easy) 的真值 =====
-add_ros2_executable(EuRoC_DataLoader src/EuRoC/DataLoader.cpp)
-ament_target_dependencies(EuRoC_DataLoader
-  rclcpp
-  geometry_msgs
-  nav_msgs
-  sensor_msgs
-  cv_bridge
-  # visualization_msgs
-)
-target_link_libraries(EuRoC_DataLoader
-  Eigen3::Eigen
-  ${OpenCV_LIBS}
-)
+# # ===== 目标： 加载 EuRoC 数据集 (V2_01_easy) 的真值 =====
+# add_ros2_executable(EuRoC_DataLoader src/EuRoC/DataLoader.cpp)
+# ament_target_dependencies(EuRoC_DataLoader
+#   rclcpp
+#   geometry_msgs
+#   nav_msgs
+#   sensor_msgs
+#   cv_bridge
+#   # visualization_msgs
+# )
+# target_link_libraries(EuRoC_DataLoader
+#   Eigen3::Eigen
+#   ${OpenCV_LIBS}
+# )
 
-# ===== 目标： 加载任意数据集 =====
-add_ros2_executable(SimpleDataLoader src/DataLoader/DataLoader.cpp)
-ament_target_dependencies(SimpleDataLoader
-  rclcpp
-  nav_msgs
-)
-target_link_libraries(SimpleDataLoader
-  Eigen3::Eigen
-  ${OpenCV_LIBS}
-)
+# # ===== 目标： 加载任意数据集 =====
+# add_ros2_executable(SimpleDataLoader src/DataLoader/DataLoader.cpp)
+# ament_target_dependencies(SimpleDataLoader
+#   rclcpp
+#   nav_msgs
+# )
+# target_link_libraries(SimpleDataLoader
+#   Eigen3::Eigen
+#   ${OpenCV_LIBS}
+# )
 
 # ===== 目标： 融合数据 =====
 add_ros2_executable(FuseKalman src/VisualSim/FuseKalman.cpp)
