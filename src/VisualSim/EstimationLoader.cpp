@@ -34,6 +34,7 @@ using namespace std::chrono_literals;
 #include <rclcpp/time.hpp>
 #include <sensor_msgs/msg/image.hpp>
 
+#include "euroc_vio/AbstractLoader.hpp"
 #include "euroc_vio/main.h"
 
 #define PUBLISH_STYLE_ALL_AT_ONCE 0
@@ -67,50 +68,6 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_pose_{
       create_publisher<nav_msgs::msg::Path>("/pose_fast_est", rclcpp::QoS{10}),
   };
-
-  static std::string_view trim(std::string_view str)
-  {
-    const auto first = str.find_first_not_of(" \t\n\r\v\f");
-    if (first == std::string_view::npos)
-    {
-      return {};
-    }
-
-    const auto last = str.find_last_not_of(" \t\n\r\v\f");
-    return str.substr(first, last - first + 1);
-  }
-
-  static std::int64_t get_item_as_int64(std::stringstream &ss)
-  {
-    std::string item;
-    std::getline(ss, item, ',');
-    auto sv{trim(item)};
-    std::int64_t result{0};
-    const char *first{sv.data()};
-    const char *last{first + sv.size()};
-    auto [ptr, ec] = std::from_chars(first, last, result);
-    if (ec != std::errc())
-    {
-      throw std::runtime_error{"Failed to parse int64: " + std::string(sv)};
-    }
-    return result;
-  }
-
-  static float get_item_as_float(std::stringstream &ss)
-  {
-    std::string item;
-    std::getline(ss, item, ',');
-    auto sv{trim(item)};
-    float result{0.0f};
-    const char *first{sv.data()};
-    const char *last{first + sv.size()};
-    auto [ptr, ec] = std::from_chars(first, last, result);
-    if (ec != std::errc())
-    {
-      throw std::runtime_error{std::format("Failed to parse float: '{}'.", sv)};
-    }
-    return result;
-  }
 
   Room<float> room_{};
   Path<float> path_{};
@@ -211,16 +168,16 @@ public:
 
       // 读取时间戳
       const std::int64_t timestamp{
-          get_item_as_int64(ss), // in nanoseconds
+          AbstractLoader::get_item_as_int64(ss), // in nanoseconds
       };
       // 读取旋转角度
-      const float wxt{get_item_as_float(ss)};
-      const float wyt{get_item_as_float(ss)};
-      const float wzt{get_item_as_float(ss)};
+      const float wxt{AbstractLoader::get_item_as_float(ss)};
+      const float wyt{AbstractLoader::get_item_as_float(ss)};
+      const float wzt{AbstractLoader::get_item_as_float(ss)};
       // 读取位移方向
-      const float tx{get_item_as_float(ss)};
-      const float ty{get_item_as_float(ss)};
-      const float tz{get_item_as_float(ss)};
+      const float tx{AbstractLoader::get_item_as_float(ss)};
+      const float ty{AbstractLoader::get_item_as_float(ss)};
+      const float tz{AbstractLoader::get_item_as_float(ss)};
 
       const Point3 delta_position{tx, ty, tz};
       const Point3 delta_rotation_vector{wxt, wyt, wzt};

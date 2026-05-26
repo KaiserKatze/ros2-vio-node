@@ -196,19 +196,19 @@ install(DIRECTORY launch/
 #   ${OpenCV_LIBS}
 # )
 
-# # ===== 目标： 纯视觉仿真数据的朝向估计 =====
-# add_ros2_executable(EstimationLoader src/VisualSim/EstimationLoader.cpp)
-# ament_target_dependencies(EstimationLoader
-#   rclcpp
-#   geometry_msgs
-#   nav_msgs
-#   sensor_msgs
-#   cv_bridge
-# )
-# target_link_libraries(EstimationLoader
-#   Eigen3::Eigen
-#   ${OpenCV_LIBS}
-# )
+# ===== 目标： 纯视觉仿真数据的朝向估计 =====
+add_ros2_executable(EstimationLoader src/VisualSim/EstimationLoader.cpp)
+ament_target_dependencies(EstimationLoader
+  rclcpp
+  geometry_msgs
+  nav_msgs
+  sensor_msgs
+  cv_bridge
+)
+target_link_libraries(EstimationLoader
+  Eigen3::Eigen
+  ${OpenCV_LIBS}
+)
 
 # # ===== 目标： 加载 EuRoC 数据集 (V2_01_easy) 的真值 =====
 # add_ros2_executable(EuRoC_DataLoader src/EuRoC/DataLoader.cpp)
