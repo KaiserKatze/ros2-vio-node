@@ -4,10 +4,12 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdio>
 #include <format>
-#include <stdexcept>
+#include <print>
 
 #include "euroc_vio/CircularBuffer.hpp"
+#include "euroc_vio/IQR.hpp"
 
 /**
  * @brief 零速更新（ZUPT）
@@ -56,15 +58,6 @@ private:
     return GetGyro(e).norm();
   }
 
-  chunk_type GetAverageAccel() const
-  {
-    if (window_.size() == 0)
-    {
-      return chunk_type::Zero();
-    }
-    return accel_sum_ / static_cast<value_type>(window_.size());
-  }
-
 public:
   /**
    * @brief 估计当前姿态四元数（仅在静止时可靠）
@@ -80,22 +73,30 @@ public:
     if (!this->is_static_)
     {
       // 当前状态被判断为非静止，无法可靠估计姿态
-      throw std::runtime_error{
-          "[ERROR] Cannot estimate orientation reliably when not static.",
-      };
+      std::print(
+          stderr,
+          "[WARN] Cannot estimate orientation reliably when not static.\n");
     }
-    // 计算平均加速度向量，作为重力方向的估计
-    const chunk_type acc_mean{GetAverageAccel()};
+    // 使用 IQR 方法，去除外点，计算平均加速度向量，作为重力方向的估计
+    std::vector<std::pair<chunk_type, value_type>> points;
+    points.reserve(window_.size());
+    std::transform(window_.cbegin(), window_.cend(), std::back_inserter(points),
+                   [](const chunk_type &vec)
+                   {
+                     // 返回一个 pair，second 存储 norm()
+                     return std::make_pair(vec, vec.norm());
+                   });
+    const chunk_type acc_mean{GetAverage_IQR(points)};
     if (!config_.IsAccelWithinGravityRange(acc_mean))
     {
       // 平均加速度不在重力范围内，无法可靠估计姿态
-      throw std::runtime_error{std::format(
-          "[ERROR] Average acceleration norm {:.3f} "
-          "is out of expected gravity range ({:.3f}, {:.3f}). "
-          "Cannot estimate orientation reliably.",
-          acc_mean.norm(),
-          (this->config_.local_gravity - this->config_.g_tolerance),
-          (this->config_.local_gravity + this->config_.g_tolerance))};
+      std::print(stderr,
+                 "[WARN] Average acceleration norm {:.3f} "
+                 "is out of expected gravity range ({:.3f}, {:.3f}). "
+                 "Cannot estimate orientation reliably.",
+                 acc_mean.norm(),
+                 (this->config_.local_gravity - this->config_.g_tolerance),
+                 (this->config_.local_gravity + this->config_.g_tolerance));
     }
     const chunk_type gravity_sensor{-acc_mean.normalized()};
     const chunk_type gravity_world{chunk_type::UnitX()};
