@@ -34,7 +34,11 @@ using namespace std::chrono_literals;
 #include "zupt.hpp"
 
 #define PUBLISH_POSE 0
-#define USE_TRUE_SCALE_IN_FAST 1
+#define USE_TRUE_SCALE_IN_FAST 0
+
+#define DATASOURCE_EUROC 0x01
+#define DATASOURCE_SIM 0x10
+#define DATASOURCE DATASOURCE_SIM
 
 // 辅助工具：判断一个反射类型是否是特定的 Eigen 类型
 template <typename T> consteval bool is_type_of(std::meta::info member_reflect)
@@ -121,11 +125,9 @@ struct DatumFast
 
   static std::vector<DatumFast> Load()
   {
-    static const std::filesystem::path path_home{
-        std::getenv("HOME"),
-    };
     static const std::filesystem::path path_estimation_csv{
-        path_home / "vio_ws" / "estimated_motion.csv",
+        std::filesystem::path{std::getenv("HOME")} / "vio_ws"
+            / "estimated_motion.csv",
     };
     std::vector<DatumFast> data;
 
@@ -134,29 +136,42 @@ struct DatumFast
 
     // 跳过表头
     std::getline(file, line);
+    size_t line_num{0};
     while (std::getline(file, line))
     {
+      ++line_num;
       std::stringstream ss(line);
+      try
+      {
+        // 读取时间戳
+        const std::int64_t timestamp{
+            AbstractLoader::get_item_as_int64(ss), // in nanoseconds
+        };
+        // 读取旋转角度
+        const float wxt{AbstractLoader::get_item_as_float(ss)};
+        const float wyt{AbstractLoader::get_item_as_float(ss)};
+        const float wzt{AbstractLoader::get_item_as_float(ss)};
+        // 读取位移方向
+        const float tx{AbstractLoader::get_item_as_float(ss)};
+        const float ty{AbstractLoader::get_item_as_float(ss)};
+        const float tz{AbstractLoader::get_item_as_float(ss)};
 
-      // 读取时间戳
-      const std::int64_t timestamp{
-          AbstractLoader::get_item_as_int64(ss), // in nanoseconds
-      };
-      // 读取旋转角度
-      const float wxt{AbstractLoader::get_item_as_float(ss)};
-      const float wyt{AbstractLoader::get_item_as_float(ss)};
-      const float wzt{AbstractLoader::get_item_as_float(ss)};
-      // 读取位移方向
-      const float tx{AbstractLoader::get_item_as_float(ss)};
-      const float ty{AbstractLoader::get_item_as_float(ss)};
-      const float tz{AbstractLoader::get_item_as_float(ss)};
-
-      const DatumFast datum_fast{
-          timestamp,
-          {wxt, wyt, wzt},
-          {tx, ty, tz},
-      };
-      data.push_back(datum_fast);
+        const DatumFast datum_fast{
+            timestamp,
+            {wxt, wyt, wzt},
+            {tx, ty, tz},
+        };
+        data.push_back(datum_fast);
+      }
+      catch (const std::runtime_error &ex)
+      {
+        throw std::runtime_error{
+            std::format("Fail to parse line #{} of file '{}':\n{}.\n"
+                        "Triggered by:\n{}",
+                        line_num, path_estimation_csv.string(), line, //
+                        ex.what()),
+        };
+      }
     } // end while
     return data;
   }
@@ -171,45 +186,63 @@ struct DatumImu
   static std::vector<DatumImu> Load()
   {
     static const std::filesystem::path path_imu_csv{
+#if (DATASOURCE == DATASOURCE_EUROC)
         "/mnt/e/Documents/mav0/imu0/data.csv",
+#elif (DATASOURCE == DATASOURCE_SIM)
+        std::filesystem::path{std::getenv("HOME")} / "vio_ws" / "mav0" / "imu0"
+        / "data.csv"
+#endif
     };
     std::vector<DatumImu> data;
 
     std::ifstream file(path_imu_csv);
     std::string line;
+    size_t line_num{0};
 
     // 跳过表头
     std::getline(file, line);
     while (std::getline(file, line))
     {
+      ++line_num;
       std::stringstream ss(line);
+      try
+      {
+        // 读取时间戳
+        const std::int64_t timestamp{
+            AbstractLoader::get_item_as_int64(ss), // in nanoseconds
+        };
+        // 读取旋转角度
+        const float gx{AbstractLoader::get_item_as_float(ss)};
+        const float gy{AbstractLoader::get_item_as_float(ss)};
+        const float gz{AbstractLoader::get_item_as_float(ss)};
+        // 读取位移方向
+        const float ax{AbstractLoader::get_item_as_float(ss)};
+        const float ay{AbstractLoader::get_item_as_float(ss)};
+        const float az{AbstractLoader::get_item_as_float(ss)};
 
-      // 读取时间戳
-      const std::int64_t timestamp{
-          AbstractLoader::get_item_as_int64(ss), // in nanoseconds
-      };
-      // 读取旋转角度
-      const float gx{AbstractLoader::get_item_as_float(ss)};
-      const float gy{AbstractLoader::get_item_as_float(ss)};
-      const float gz{AbstractLoader::get_item_as_float(ss)};
-      // 读取位移方向
-      const float ax{AbstractLoader::get_item_as_float(ss)};
-      const float ay{AbstractLoader::get_item_as_float(ss)};
-      const float az{AbstractLoader::get_item_as_float(ss)};
-
-      const DatumImu datum_fast{
-          timestamp,
-          {gx, gy, gz},
-          // EuRoC MAV 数据集的特殊要求:
-          // 将 IMU 参考系的 X 轴映射为 Z 轴;
-          // 将 IMU 参考系的 Y 轴映射为 -Y 轴;
-          // 将 IMU 参考系的 Z 轴映射为 X 轴.
-          // 这是因为数据集的 ground truth 是由 VICON0 或 LEICA0 提供的,
-          // 而 IMU0 的三轴与 VICON0 或 LEICA0 的不同,
-          // 只有按上述方式重映射以后，双方的标架才近似重合.
-          {az, -ay, ax},
-      };
-      data.push_back(datum_fast);
+        const DatumImu datum_fast{
+            timestamp,
+            {gx, gy, gz},
+            // EuRoC MAV 数据集的特殊要求:
+            // 将 IMU 参考系的 X 轴映射为 Z 轴;
+            // 将 IMU 参考系的 Y 轴映射为 -Y 轴;
+            // 将 IMU 参考系的 Z 轴映射为 X 轴.
+            // 这是因为数据集的 ground truth 是由 VICON0 或 LEICA0 提供的,
+            // 而 IMU0 的三轴与 VICON0 或 LEICA0 的不同,
+            // 只有按上述方式重映射以后，双方的标架才近似重合.
+            {az, -ay, ax},
+        };
+        data.push_back(datum_fast);
+      }
+      catch (const std::runtime_error &ex)
+      {
+        throw std::runtime_error{
+            std::format("Fail to parse line #{} of file '{}':\n{}.\n"
+                        "Triggered by:\n{}",
+                        line_num, path_imu_csv.string(), line, //
+                        ex.what()),
+        };
+      }
     } // end while
     return data;
   }
@@ -226,55 +259,88 @@ struct DatumTruth
 
   static std::vector<DatumTruth> Load()
   {
-    static const std::filesystem::path path_imu_csv{
+    static const std::filesystem::path path_truth_csv{
+#if (DATASOURCE == DATASOURCE_EUROC)
         "/mnt/e/Documents/mav0/state_groundtruth_estimate0/data.csv",
+#elif (DATASOURCE == DATASOURCE_SIM)
+        std::filesystem::path{std::getenv("HOME")} / "vio_ws" / "mav0"
+        / "state_groundtruth_estimate0" / "data.csv"
+#endif
     };
     std::vector<DatumTruth> data;
 
-    std::ifstream file(path_imu_csv);
+    std::ifstream file(path_truth_csv);
     std::string line;
+    size_t line_num{0};
 
     // 跳过表头
     std::getline(file, line);
     while (std::getline(file, line))
     {
+      ++line_num;
       std::stringstream ss(line);
+      try
+      {
+        // 读取时间戳
+        const std::int64_t timestamp{
+            AbstractLoader::get_item_as_int64(ss), // in nanoseconds
+        };
+        // 读取位置 (m)
+        const float px{AbstractLoader::get_item_as_float(ss)};
+        const float py{AbstractLoader::get_item_as_float(ss)};
+        const float pz{AbstractLoader::get_item_as_float(ss)};
+        // 读取朝向
+        const float qw{AbstractLoader::get_item_as_float(ss)};
+        const float qx{AbstractLoader::get_item_as_float(ss)};
+        const float qy{AbstractLoader::get_item_as_float(ss)};
+        const float qz{AbstractLoader::get_item_as_float(ss)};
+#if (DATASOURCE == DATASOURCE_EUROC)
+        // 读取速度 (m s^-1)
+        const float vx{AbstractLoader::get_item_as_float(ss)};
+        const float vy{AbstractLoader::get_item_as_float(ss)};
+        const float vz{AbstractLoader::get_item_as_float(ss)};
+        // 读取陀螺仪偏差 (rad s^-1)
+        const float bwx{AbstractLoader::get_item_as_float(ss)};
+        const float bwy{AbstractLoader::get_item_as_float(ss)};
+        const float bwz{AbstractLoader::get_item_as_float(ss)};
+        // 读取加速度计偏差 (m s^-2)
+        const float bax{AbstractLoader::get_item_as_float(ss)};
+        const float bay{AbstractLoader::get_item_as_float(ss)};
+        const float baz{AbstractLoader::get_item_as_float(ss)};
+#elif (DATASOURCE == DATASOURCE_SIM)
+        // 读取速度 (m s^-1)
+        const float vx{0.0f};
+        const float vy{0.0f};
+        const float vz{0.0f};
+        // 读取陀螺仪偏差 (rad s^-1)
+        const float bwx{0.0f};
+        const float bwy{0.0f};
+        const float bwz{0.0f};
+        // 读取加速度计偏差 (m s^-2)
+        const float bax{0.0f};
+        const float bay{0.0f};
+        const float baz{0.0f};
+#endif
 
-      // 读取时间戳
-      const std::int64_t timestamp{
-          AbstractLoader::get_item_as_int64(ss), // in nanoseconds
-      };
-      // 读取位置 (m)
-      const float px{AbstractLoader::get_item_as_float(ss)};
-      const float py{AbstractLoader::get_item_as_float(ss)};
-      const float pz{AbstractLoader::get_item_as_float(ss)};
-      // 读取朝向
-      const float qw{AbstractLoader::get_item_as_float(ss)};
-      const float qx{AbstractLoader::get_item_as_float(ss)};
-      const float qy{AbstractLoader::get_item_as_float(ss)};
-      const float qz{AbstractLoader::get_item_as_float(ss)};
-      // 读取速度 (m s^-1)
-      const float vx{AbstractLoader::get_item_as_float(ss)};
-      const float vy{AbstractLoader::get_item_as_float(ss)};
-      const float vz{AbstractLoader::get_item_as_float(ss)};
-      // 读取陀螺仪偏差 (rad s^-1)
-      const float bwx{AbstractLoader::get_item_as_float(ss)};
-      const float bwy{AbstractLoader::get_item_as_float(ss)};
-      const float bwz{AbstractLoader::get_item_as_float(ss)};
-      // 读取加速度计偏差 (m s^-2)
-      const float bax{AbstractLoader::get_item_as_float(ss)};
-      const float bay{AbstractLoader::get_item_as_float(ss)};
-      const float baz{AbstractLoader::get_item_as_float(ss)};
-
-      const DatumTruth datum_truth{
-          timestamp,        //
-          {px, py, pz},     //
-          {qw, qx, qy, qz}, //
-          {vx, vy, vz},     //
-          {bwx, bwy, bwz},  //
-          {bax, bay, baz},  //
-      };
-      data.push_back(datum_truth);
+        const DatumTruth datum_truth{
+            timestamp,        //
+            {px, py, pz},     //
+            {qw, qx, qy, qz}, //
+            {vx, vy, vz},     //
+            {bwx, bwy, bwz},  //
+            {bax, bay, baz},  //
+        };
+        data.push_back(datum_truth);
+      }
+      catch (const std::runtime_error &ex)
+      {
+        throw std::runtime_error{
+            std::format("Fail to parse line #{} of file '{}':\n{}.\n"
+                        "Triggered by:\n{}",
+                        line_num, path_truth_csv.string(), line, //
+                        ex.what()),
+        };
+      }
     } // end while
     return data;
   }
@@ -440,7 +506,9 @@ private:
     for (size_t i = 0; i + 1 < data_fast_.size(); ++i)
     {
       const DatumFast &datum_fast{data_fast_[i]};
+#if (USE_TRUE_SCALE_IN_FAST)
       const DatumFast &datum_fast_next{data_fast_[i + 1]};
+#endif
       const Eigen::Quaternionf delta_rotation{
           Eigen::AngleAxisf{
               datum_fast.angular_displacement_.norm(),
@@ -497,27 +565,41 @@ private:
 
     std::ifstream fin_fast(path_file);
     std::string line;
+    size_t line_num{0};
     while (std::getline(fin_fast, line))
     {
+      ++line_num;
       std::stringstream ss(line);
-      // 读取时间戳
-      const std::int64_t timestamp{
-          static_cast<std::int64_t>(
-              AbstractLoader::get_item_as_float(ss, ' ')), // in nanoseconds
-      };
-      // 读取位置
-      const float px{AbstractLoader::get_item_as_float(ss, ' ')};
-      const float py{AbstractLoader::get_item_as_float(ss, ' ')};
-      const float pz{AbstractLoader::get_item_as_float(ss, ' ')};
-      // 读取朝向
-      const float qw{AbstractLoader::get_item_as_float(ss, ' ')};
-      const float qx{AbstractLoader::get_item_as_float(ss, ' ')};
-      const float qy{AbstractLoader::get_item_as_float(ss, ' ')};
-      const float qz{AbstractLoader::get_item_as_float(ss, ' ')};
-      estimated_attitude_fast = Eigen::Quaternionf{qw, qx, qy, qz};
-      estimated_position_fast = Eigen::Vector3f{px, py, pz};
-      PushPose(msg_path_fast_, timestamp, estimated_attitude_fast,
-               estimated_position_fast);
+      try
+      {
+        // 读取时间戳
+        const std::int64_t timestamp{
+            static_cast<std::int64_t>(
+                AbstractLoader::get_item_as_float(ss, ' ')), // in nanoseconds
+        };
+        // 读取位置
+        const float px{AbstractLoader::get_item_as_float(ss, ' ')};
+        const float py{AbstractLoader::get_item_as_float(ss, ' ')};
+        const float pz{AbstractLoader::get_item_as_float(ss, ' ')};
+        // 读取朝向
+        const float qw{AbstractLoader::get_item_as_float(ss, ' ')};
+        const float qx{AbstractLoader::get_item_as_float(ss, ' ')};
+        const float qy{AbstractLoader::get_item_as_float(ss, ' ')};
+        const float qz{AbstractLoader::get_item_as_float(ss, ' ')};
+        estimated_attitude_fast = Eigen::Quaternionf{qw, qx, qy, qz};
+        estimated_position_fast = Eigen::Vector3f{px, py, pz};
+        PushPose(msg_path_fast_, timestamp, estimated_attitude_fast,
+                 estimated_position_fast);
+      }
+      catch (const std::runtime_error &ex)
+      {
+        throw std::runtime_error{
+            std::format("Fail to parse line #{} of file '{}':\n{}.\n"
+                        "Triggered by:\n{}",
+                        line_num, path_file.string(), line, //
+                        ex.what()),
+        };
+      }
     } // end while
     std::print(stderr, "[INFO] 估计轨迹已缩放.\n");
   }
