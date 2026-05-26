@@ -81,8 +81,9 @@ public:
     std::vector<std::pair<chunk_type, value_type>> points;
     points.reserve(window_.size());
     std::transform(window_.cbegin(), window_.cend(), std::back_inserter(points),
-                   [](const chunk_type &vec)
+                   [](const data_type &e)
                    {
+                     const chunk_type &vec{GetAccel(e)};
                      // 返回一个 pair，second 存储 norm()
                      return std::make_pair(vec, vec.norm());
                    });
