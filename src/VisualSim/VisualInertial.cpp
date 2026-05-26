@@ -425,14 +425,22 @@ private:
    */
   void EstimateFast()
   {
-    std::ofstream fout_fast("fuse/path_fast_est.tum");
+    const std::filesystem::path path_home{
+        std::getenv("HOME"),
+    };
+    const std::filesystem::path path_file{
+        path_home / "vio_ws" / "path_fast_est.tum",
+    };
+    std::ofstream fout_fast(path_file);
 
     // 初始状态
     Eigen::Vector3f estimated_position_fast{Eigen::Vector3f::Zero()};
     Eigen::Quaternionf estimated_attitude_fast{Eigen::Quaternionf::Identity()};
 
-    for (const DatumFast &datum_fast : data_fast_)
+    for (size_t i = 0; i + 1 < data_fast_.size(); ++i)
     {
+      const DatumFast &datum_fast{data_fast_[i]};
+      const DatumFast &datum_fast_next{data_fast_[i + 1]};
       const Eigen::Quaternionf delta_rotation{
           Eigen::AngleAxisf{
               datum_fast.angular_displacement_.norm(),
@@ -448,7 +456,7 @@ private:
       };
       Eigen::Vector3f true_new_position{
           // 时间戳 + 50 毫秒
-          Interpolate(data_truth_, datum_fast.timestamp_ + 50000000).position_,
+          Interpolate(data_truth_, datum_fast_next.timestamp_).position_,
       };
       delta_position
           = (true_new_position - true_old_position).norm() * delta_position;
@@ -461,8 +469,6 @@ private:
       estimated_attitude_fast
           = (estimated_attitude_fast * delta_rotation).normalized();
 
-      PushPose(msg_path_fast_, datum_fast.timestamp_, estimated_attitude_fast,
-               estimated_position_fast);
       std::print(fout_fast,
                  // 时间戳
                  "{:020d}, "
@@ -475,6 +481,45 @@ private:
                  estimated_attitude_fast.w(), estimated_attitude_fast.x(),
                  estimated_attitude_fast.y(), estimated_attitude_fast.z());
     } // end for
+
+    std::print(stderr, "[INFO] 估计轨迹已写入 {}.\n",
+               std::filesystem::absolute(path_file).string());
+    // 利用 evo 提供的 SIM(3) 变换调整轨迹
+    std::system(std::format("bash -c '"
+                            "source .venv/bin/activate && "
+                            "yes 'y' | evo_traj euroc {} --ref={} "
+                            "--align --correct_scale --save_as_tum'",
+                            std::filesystem::absolute(path_file).string(),
+                            std::filesystem::absolute(path_home / "vio_ws"
+                                                      / "truth_data.csv")
+                                .string())
+                    .c_str());
+
+    std::ifstream fin_fast(path_file);
+    std::string line;
+    while (std::getline(fin_fast, line))
+    {
+      std::stringstream ss(line);
+      // 读取时间戳
+      const std::int64_t timestamp{
+          static_cast<std::int64_t>(
+              AbstractLoader::get_item_as_float(ss, ' ')), // in nanoseconds
+      };
+      // 读取位置
+      const float px{AbstractLoader::get_item_as_float(ss, ' ')};
+      const float py{AbstractLoader::get_item_as_float(ss, ' ')};
+      const float pz{AbstractLoader::get_item_as_float(ss, ' ')};
+      // 读取朝向
+      const float qw{AbstractLoader::get_item_as_float(ss, ' ')};
+      const float qx{AbstractLoader::get_item_as_float(ss, ' ')};
+      const float qy{AbstractLoader::get_item_as_float(ss, ' ')};
+      const float qz{AbstractLoader::get_item_as_float(ss, ' ')};
+      estimated_attitude_fast = Eigen::Quaternionf{qw, qx, qy, qz};
+      estimated_position_fast = Eigen::Vector3f{px, py, pz};
+      PushPose(msg_path_fast_, timestamp, estimated_attitude_fast,
+               estimated_position_fast);
+    } // end while
+    std::print(stderr, "[INFO] 估计轨迹已缩放.\n");
   }
 
   /**
