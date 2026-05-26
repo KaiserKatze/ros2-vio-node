@@ -85,16 +85,10 @@ static DataType Interpolate(const std::vector<DataType> &data,
                          1.0)
             : 0.0;
 
-  // 创建返回对象，并先填入目标时间戳
   DataType interp;
-
-  // 2. 核心修复：C++26 标准成员包展开语法 (template for) 或者 expand 拼接语句。
-  // 在当前 GCC 16 实验性反射中，最完美的标准展开写法是使用 template for 配合成员数组，
-  // 或者利用标准 splice 关键字。为了最大程度兼容你的初衷，使用标准编译期循环：
-  // 传入第二个参数：std::meta::current_access_context()
-constexpr auto members = std::meta::nonstatic_data_members_of(^^DataType, std::meta::access_context::current());
-
-  template for (constexpr auto member : members)
+  template for (constexpr auto member :
+                std::define_static_array(std::meta::nonstatic_data_members_of(
+                    ^^DataType, std::meta::access_context::current())))
   {
     // 如果成员是时间戳本身，直接赋值为目标时间戳
     if constexpr (std::meta::identifier_of(member) == "timestamp_")
@@ -119,14 +113,6 @@ constexpr auto members = std::meta::nonstatic_data_members_of(^^DataType, std::m
   return interp;
 }
 
-/**
- * @note
-      因为数据集 path_estimation_csv 提供的旋转向量、平移向量是在相机坐标系下的表示
-      所以应该使用以下状态更新方程:
-
-      position = position + attitude * delta_position;
-      attitude = (attitude * delta_rotation).normalized();
- */
 struct DatumFast
 {
   std::int64_t timestamp_;
@@ -452,11 +438,24 @@ private:
           },
       };
 
+      Eigen::Vector3f delta_position{datum_fast.normalized_translation_};
+#if (USE_TRUE_SCALE_IN_FAST)
+      // TODO 利用插值查找函数 Interpolate 获取 delta_position 对应的真值的范数
+      Eigen::Vector3f true_old_position{
+          Interpolate(data_truth_, datum_fast.timestamp_).position_,
+      };
+      Eigen::Vector3f true_new_position{
+          // 时间戳 + 50 毫秒
+          Interpolate(data_truth_, datum_fast.timestamp_ + 50000000).position_,
+      };
+      delta_position
+          = (true_new_position - true_old_position).norm() * delta_position;
+#endif
+
       // 因为数据集 path_estimation_csv 提供的旋转向量、平移向量是在相机坐标系下的表示
       // 所以应该使用以下状态更新方程
       estimated_position_fast
-          = estimated_position_fast
-            + estimated_attitude_fast * datum_fast.normalized_translation_;
+          = estimated_position_fast + estimated_attitude_fast * delta_position;
       estimated_attitude_fast
           = (estimated_attitude_fast * delta_rotation).normalized();
 
