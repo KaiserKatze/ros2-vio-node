@@ -425,6 +425,8 @@ private:
    */
   void EstimateFast()
   {
+    std::ofstream fout_fast("fuse/path_fast_est.tum");
+
     // 初始状态
     Eigen::Vector3f estimated_position_fast{Eigen::Vector3f::Zero()};
     Eigen::Quaternionf estimated_attitude_fast{Eigen::Quaternionf::Identity()};
@@ -461,6 +463,17 @@ private:
 
       PushPose(msg_path_fast_, datum_fast.timestamp_, estimated_attitude_fast,
                estimated_position_fast);
+      std::print(fout_fast,
+                 // 时间戳
+                 "{:020d}, "
+                 // 位置
+                 "{:.18f}, {:.18f}, {:.18f}, "
+                 // 朝向
+                 "{:.18f}, {:.18f}, {:.18f}, {:.18f}\n",
+                 datum_fast.timestamp_, estimated_position_fast.x(),
+                 estimated_position_fast.y(), estimated_position_fast.z(),
+                 estimated_attitude_fast.w(), estimated_attitude_fast.x(),
+                 estimated_attitude_fast.y(), estimated_attitude_fast.z());
     } // end for
   }
 
