@@ -27,6 +27,11 @@ if(MSVC)
   add_compile_options(/utf-8)
 endif()
 
+# 启用 C++26 反射机制
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16.0")
+    add_compile_options(-freflection)
+endif()
+
 # --- 查找依赖 ---
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -243,6 +248,7 @@ target_link_libraries(VisualInertial
   Eigen3::Eigen
   ${OpenCV_LIBS}
 )
+target_compile_options(VisualInertial PRIVATE -std=c++26 -freflection)
 
 # --- 单元测试 ---
 if(BUILD_TESTING)

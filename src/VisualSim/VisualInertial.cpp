@@ -6,8 +6,10 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <meta>
 #include <print>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 
@@ -32,6 +34,90 @@ using namespace std::chrono_literals;
 #include "zupt.hpp"
 
 #define PUBLISH_POSE 0
+#define USE_TRUE_SCALE_IN_FAST 1
+
+// 辅助工具：判断一个反射类型是否是特定的 Eigen 类型
+template <typename T> consteval bool is_type_of(std::meta::info member_reflect)
+{
+  return std::meta::type_of(member_reflect) == ^^T;
+}
+
+// 插值查找时间戳最近的数据（C++26 反射全自动化版）
+template <typename DataType>
+static DataType Interpolate(const std::vector<DataType> &data,
+                            const std::int64_t timestamp)
+{
+  if (data.empty())
+  {
+    throw std::runtime_error("数据为空!");
+  }
+  if (timestamp <= data.front().timestamp_)
+  {
+    return data.front();
+  }
+  if (timestamp >= data.back().timestamp_)
+  {
+    return data.back();
+  }
+
+  // 标准二分查找定位左右区间
+  size_t left{0}, right{data.size() - 1};
+  while (left + 1 < right)
+  {
+    size_t mid{(left + right) / 2};
+    if (data[mid].timestamp_ < timestamp)
+    {
+      left = mid;
+    }
+    else
+    {
+      right = mid;
+    }
+  }
+
+  const auto &datum0{data[left]};
+  const auto &datum1{data[right]};
+  const double t0 = static_cast<double>(datum0.timestamp_);
+  const double t1 = static_cast<double>(datum1.timestamp_);
+  const double alpha
+      = (t1 > t0)
+            ? std::clamp((static_cast<double>(timestamp) - t0) / (t1 - t0), 0.0,
+                         1.0)
+            : 0.0;
+
+  // 创建返回对象，并先填入目标时间戳
+  DataType interp;
+
+  // 2. 核心修复：C++26 标准成员包展开语法 (template for) 或者 expand 拼接语句。
+  // 在当前 GCC 16 实验性反射中，最完美的标准展开写法是使用 template for 配合成员数组，
+  // 或者利用标准 splice 关键字。为了最大程度兼容你的初衷，使用标准编译期循环：
+  // 传入第二个参数：std::meta::current_access_context()
+constexpr auto members = std::meta::nonstatic_data_members_of(^^DataType, std::meta::access_context::current());
+
+  template for (constexpr auto member : members)
+  {
+    // 如果成员是时间戳本身，直接赋值为目标时间戳
+    if constexpr (std::meta::identifier_of(member) == "timestamp_")
+    {
+      interp.[:member:] = timestamp;
+    }
+    // 如果成员是 Eigen::Vector3f，执行线性插值 (LERP)
+    else if constexpr (is_type_of<Eigen::Vector3f>(member))
+    {
+      interp.[:member:] = datum0.[:member:]
+          * (1.0f - static_cast<float>(alpha)) + datum1.[:member:]
+          * static_cast<float>(alpha);
+    }
+    // 如果成员是 Eigen::Quaternionf，执行球面线性插值 (SLERP)
+    else if constexpr (is_type_of<Eigen::Quaternionf>(member))
+    {
+      interp.[:member:] = datum0.[:member:].slerp(static_cast<float>(alpha),
+                                                  datum1.[:member:]);
+    }
+  }
+
+  return interp;
+}
 
 /**
  * @note
