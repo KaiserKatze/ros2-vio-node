@@ -31,6 +31,8 @@ using namespace std::chrono_literals;
 #include "euroc_vio/main.h"
 #include "zupt.hpp"
 
+#define PUBLISH_POSE 0
+
 /**
  * @note
       因为数据集 path_estimation_csv 提供的旋转向量、平移向量是在相机坐标系下的表示
@@ -141,6 +143,71 @@ struct DatumImu
   }
 };
 
+struct DatumTruth
+{
+  std::int64_t timestamp_;
+  Eigen::Vector3f position_;
+  Eigen::Quaternionf attitude_;
+  Eigen::Vector3f velocity_;
+  Eigen::Vector3f bias_gyro_;
+  Eigen::Vector3f bias_accel_;
+
+  static std::vector<DatumTruth> Load()
+  {
+    static const std::filesystem::path path_imu_csv{
+        "/mnt/e/Documents/mav0/state_groundtruth_estimate0/data.csv",
+    };
+    std::vector<DatumTruth> data;
+
+    std::ifstream file(path_imu_csv);
+    std::string line;
+
+    // 跳过表头
+    std::getline(file, line);
+    while (std::getline(file, line))
+    {
+      std::stringstream ss(line);
+
+      // 读取时间戳
+      const std::int64_t timestamp{
+          AbstractLoader::get_item_as_int64(ss), // in nanoseconds
+      };
+      // 读取位置 (m)
+      const float px{AbstractLoader::get_item_as_float(ss)};
+      const float py{AbstractLoader::get_item_as_float(ss)};
+      const float pz{AbstractLoader::get_item_as_float(ss)};
+      // 读取朝向
+      const float qw{AbstractLoader::get_item_as_float(ss)};
+      const float qx{AbstractLoader::get_item_as_float(ss)};
+      const float qy{AbstractLoader::get_item_as_float(ss)};
+      const float qz{AbstractLoader::get_item_as_float(ss)};
+      // 读取速度 (m s^-1)
+      const float vx{AbstractLoader::get_item_as_float(ss)};
+      const float vy{AbstractLoader::get_item_as_float(ss)};
+      const float vz{AbstractLoader::get_item_as_float(ss)};
+      // 读取陀螺仪偏差 (rad s^-1)
+      const float bwx{AbstractLoader::get_item_as_float(ss)};
+      const float bwy{AbstractLoader::get_item_as_float(ss)};
+      const float bwz{AbstractLoader::get_item_as_float(ss)};
+      // 读取加速度计偏差 (m s^-2)
+      const float bax{AbstractLoader::get_item_as_float(ss)};
+      const float bay{AbstractLoader::get_item_as_float(ss)};
+      const float baz{AbstractLoader::get_item_as_float(ss)};
+
+      const DatumTruth datum_truth{
+          timestamp,        //
+          {px, py, pz},     //
+          {qw, qx, qy, qz}, //
+          {vx, vy, vz},     //
+          {bwx, bwy, bwz},  //
+          {bax, bay, baz},  //
+      };
+      data.push_back(datum_truth);
+    } // end while
+    return data;
+  }
+};
+
 /**
  * @brief 从指定文件中，读取角位移向量和单位化平移向量，通过一阶积分计算姿态、轨迹
  */
@@ -151,28 +218,45 @@ private:
       create_publisher<nav_msgs::msg::Path>("/path_fast_est", rclcpp::QoS{10}),
   };
   nav_msgs::msg::Path msg_path_fast_;
+#if (PUBLISH_POSE)
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_pose_fast_{
       create_publisher<nav_msgs::msg::Path>("/pose_fast_est", rclcpp::QoS{10}),
   };
+#endif
 
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_imu_{
       create_publisher<nav_msgs::msg::Path>("/path_imu_est", rclcpp::QoS{10}),
   };
   nav_msgs::msg::Path msg_path_imu_;
+#if (PUBLISH_POSE)
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_pose_imu_{
       create_publisher<nav_msgs::msg::Path>("/pose_imu_est", rclcpp::QoS{10}),
   };
+#endif
 
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_fuse_{
       create_publisher<nav_msgs::msg::Path>("/path_fuse_est", rclcpp::QoS{10}),
   };
   nav_msgs::msg::Path msg_path_fuse_;
+#if (PUBLISH_POSE)
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_pose_fuse_{
       create_publisher<nav_msgs::msg::Path>("/pose_fuse_est", rclcpp::QoS{10}),
   };
+#endif
+
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_truth_{
+      create_publisher<nav_msgs::msg::Path>("/path_truth", rclcpp::QoS{10}),
+  };
+  nav_msgs::msg::Path msg_path_truth_;
+#if (PUBLISH_POSE)
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_pose_truth_{
+      create_publisher<nav_msgs::msg::Path>("/pose_truth", rclcpp::QoS{10}),
+  };
+#endif
 
   std::vector<DatumFast> data_fast_{DatumFast::Load()};
   std::vector<DatumImu> data_imu_{DatumImu::Load()};
+  std::vector<DatumTruth> data_truth_{DatumTruth::Load()};
 
   LinearKalmanFilter filter_;
 
@@ -227,6 +311,12 @@ private:
     publisher_path_fuse_->publish(msg_path_fuse_);
   }
 
+  void PublishPathTruth()
+  {
+    publisher_path_truth_->publish(msg_path_truth_);
+  }
+
+#if (PUBLISH_POSE)
   void PublishPoseFast(size_t index)
   {
     const auto &msg_pose{msg_path_fast_.poses[index]};
@@ -256,6 +346,7 @@ private:
     msg_path_pose.poses.push_back(msg_pose);
     publisher_pose_fuse_->publish(msg_path_pose);
   }
+#endif /* PUBLISH_POSE */
 
   /**
    * @brief 只靠单目相机提供的角位移向量和单位化平移向量估计位姿
@@ -616,9 +707,15 @@ public:
   VisualInertial() : Node("StereoSlam1")
   {
     std::print(stderr, "VisualInertial ready ...\n");
-    msg_path_fast_.header.frame_id = DEFAULT_FRAME_ID;
-    msg_path_imu_.header.frame_id  = DEFAULT_FRAME_ID;
-    msg_path_fuse_.header.frame_id = DEFAULT_FRAME_ID;
+    msg_path_fast_.header.frame_id  = DEFAULT_FRAME_ID;
+    msg_path_imu_.header.frame_id   = DEFAULT_FRAME_ID;
+    msg_path_fuse_.header.frame_id  = DEFAULT_FRAME_ID;
+    msg_path_truth_.header.frame_id = DEFAULT_FRAME_ID;
+    for (const DatumTruth &datum_truth : data_truth_)
+    {
+      PushPose(msg_path_truth_, datum_truth.timestamp_, datum_truth.attitude_,
+               datum_truth.position_);
+    } // end for
   }
 
   void Start()
@@ -627,21 +724,28 @@ public:
     EstimateImu();
     EstimateFuse();
 
+#if (PUBLISH_POSE)
     size_t index_fast{0};
     size_t index_imu{0};
     size_t index_fuse{0};
+#endif
+
     while (rclcpp::ok())
     {
       PublishPathFast();
-      PublishPoseFast(index_fast);
       PublishPathImu();
-      PublishPoseImu(index_imu);
       PublishPathFuse();
+      PublishPathTruth();
+
+#if (PUBLISH_POSE)
+      PublishPoseFast(index_fast);
+      PublishPoseImu(index_imu);
       PublishPoseFuse(index_fuse);
 
       index_fast = (index_fast + 1) % msg_path_fast_.poses.size();
       index_imu  = (index_imu + 1) % msg_path_imu_.poses.size();
       index_fuse = (index_fuse + 1) % msg_path_fuse_.poses.size();
+#endif
 
       std::this_thread::sleep_for(50ms);
     } // end while
