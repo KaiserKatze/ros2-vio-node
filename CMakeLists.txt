@@ -1,11 +1,10 @@
-cmake_minimum_required(VERSION 3.28.3)
+cmake_minimum_required(VERSION 4.3.2)
 project(euroc_vio)
 
 # --- 编译选项设置 ---
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CXX_MODULE_STD ON)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -26,39 +25,6 @@ add_compile_options(-march=native)
 
 if(MSVC)
   add_compile_options(/utf-8)
-endif()
-
-# 自动检测 C++ 标准（支持草案和正式标准）
-include(CheckCXXCompilerFlag)
-check_cxx_compiler_flag("-std=c++2c" HAS_CXX26_DRAFT)
-check_cxx_compiler_flag("-std=c++26" HAS_CXX26_FINAL)
-check_cxx_compiler_flag("-std=c++2b" HAS_CXX23_DRAFT)
-check_cxx_compiler_flag("-std=c++23" HAS_CXX23_FINAL)
-
-if(HAS_CXX26_FINAL)
-  message(STATUS "Using C++26 (final)")
-  add_compile_options(-std=c++26)
-  set(DETECTED_CXX_STD 26)
-elseif(HAS_CXX26_DRAFT)
-  message(STATUS "Using C++26 (draft: c++2c)")
-  add_compile_options(-std=c++2c)
-  set(DETECTED_CXX_STD 26)
-elseif(HAS_CXX23_FINAL)
-  message(STATUS "Using C++23 (final)")
-  add_compile_options(-std=c++23)
-  set(DETECTED_CXX_STD 23)
-elseif(HAS_CXX23_DRAFT)
-  message(STATUS "Using C++23 (draft: c++2b)")
-  add_compile_options(-std=c++2b)
-  set(DETECTED_CXX_STD 23)
-else()
-  message(WARNING "Falling back to C++20")
-  add_compile_options(-std=c++20)
-  set(DETECTED_CXX_STD 20)
-endif()
-
-if (DETECTED_CXX_STD LESS 26)
-  message(WARNING "Requested C++26, but falling back to C++${DETECTED_CXX_STD}")
 endif()
 
 # --- 查找依赖 ---
@@ -211,33 +177,33 @@ install(DIRECTORY launch/
 #   ${OpenCV_LIBS}
 # )
 
-# ===== 目标： 纯视觉 SLAM 仿真 =====
-add_ros2_executable(VisualSim src/VisualSim/VisualSim.cpp)
-ament_target_dependencies(VisualSim
-  rclcpp
-  geometry_msgs
-  nav_msgs
-  sensor_msgs
-  cv_bridge
-)
-target_link_libraries(VisualSim
-  Eigen3::Eigen
-  ${OpenCV_LIBS}
-)
+# # ===== 目标： 纯视觉 SLAM 仿真 =====
+# add_ros2_executable(VisualSim src/VisualSim/VisualSim.cpp)
+# ament_target_dependencies(VisualSim
+#   rclcpp
+#   geometry_msgs
+#   nav_msgs
+#   sensor_msgs
+#   cv_bridge
+# )
+# target_link_libraries(VisualSim
+#   Eigen3::Eigen
+#   ${OpenCV_LIBS}
+# )
 
-# ===== 目标： 纯视觉仿真数据的朝向估计 =====
-add_ros2_executable(EstimationLoader src/VisualSim/EstimationLoader.cpp)
-ament_target_dependencies(EstimationLoader
-  rclcpp
-  geometry_msgs
-  nav_msgs
-  sensor_msgs
-  cv_bridge
-)
-target_link_libraries(EstimationLoader
-  Eigen3::Eigen
-  ${OpenCV_LIBS}
-)
+# # ===== 目标： 纯视觉仿真数据的朝向估计 =====
+# add_ros2_executable(EstimationLoader src/VisualSim/EstimationLoader.cpp)
+# ament_target_dependencies(EstimationLoader
+#   rclcpp
+#   geometry_msgs
+#   nav_msgs
+#   sensor_msgs
+#   cv_bridge
+# )
+# target_link_libraries(EstimationLoader
+#   Eigen3::Eigen
+#   ${OpenCV_LIBS}
+# )
 
 # # ===== 目标： 加载 EuRoC 数据集 (V2_01_easy) 的真值 =====
 # add_ros2_executable(EuRoC_DataLoader src/EuRoC/DataLoader.cpp)
