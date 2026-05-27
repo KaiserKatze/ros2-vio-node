@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -352,6 +354,13 @@ private:
   };
 #endif
 
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr
+      publisher_path_preintegrate_{
+          create_publisher<nav_msgs::msg::Path>("/path_preintegrate",
+                                                rclcpp::QoS{10}),
+      };
+  nav_msgs::msg::Path msg_path_preintegrate_;
+
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_fuse_{
       create_publisher<nav_msgs::msg::Path>("/path_fuse_est", rclcpp::QoS{10}),
   };
@@ -421,6 +430,17 @@ private:
     }
     msg_path_imu_.header.stamp = msg_path_imu_.poses.back().header.stamp;
     publisher_path_imu_->publish(msg_path_imu_);
+  }
+
+  void PublishPathPreintegrate()
+  {
+    if (msg_path_preintegrate_.poses.empty())
+    {
+      return;
+    }
+    msg_path_preintegrate_.header.stamp
+        = msg_path_preintegrate_.poses.back().header.stamp;
+    publisher_path_preintegrate_->publish(msg_path_preintegrate_);
   }
 
   void PublishPathFuse()
@@ -638,6 +658,9 @@ private:
     Eigen::Vector3f estimated_angular_acceleration_imu{Eigen::Vector3f::Zero()};
     estimated_attitude_imu = zupt.EstimateOrientation();
 
+    // 统计信息
+    Eigen::Vector3f bound_imu{Eigen::Vector3f::Zero()};
+
     DatumImu datum_prev;
     for (bool first_loop{true}; const DatumImu &datum_imu : data_imu_)
     {
@@ -691,7 +714,18 @@ private:
 
       PushPose(msg_path_imu_, datum_imu.timestamp_, estimated_attitude_imu,
                estimated_position_imu);
+
+      // 更新统计信息
+      bound_imu.x()
+          = std::max(bound_imu.x(), std::abs(estimated_position_imu.x()));
+      bound_imu.y()
+          = std::max(bound_imu.y(), std::abs(estimated_position_imu.y()));
+      bound_imu.z()
+          = std::max(bound_imu.z(), std::abs(estimated_position_imu.z()));
     } // end for
+
+    std::print(stderr, "\nBoundary[IMU]: [x: {:.4e}, y: {:.4e}, z: {:.4e}]\n",
+               bound_imu.x(), bound_imu.y(), bound_imu.z());
   }
 
   void PreintegrateImu()
@@ -708,6 +742,9 @@ private:
     Eigen::Vector3f delta_v{Eigen::Vector3f::Zero()};
     float delta_t{0};
     float t_prev{0};
+
+    // 统计信息
+    Eigen::Vector3f bound_pi{Eigen::Vector3f::Zero()};
 
     for (bool first_loop{true}; const DatumImu &datum_imu : data_imu_)
     {
@@ -744,9 +781,20 @@ private:
                               + estimated_attitude_pi * delta_v;
       estimated_attitude_pi = estimated_attitude_pi * delta_R;
 
-      // PushPose(msg_path_imu_, datum_imu.timestamp_, estimated_attitude_imu,
-      //          estimated_position_imu);
+      PushPose(msg_path_preintegrate_, datum_imu.timestamp_,
+               estimated_attitude_pi, estimated_position_pi);
+
+      // 更新统计信息
+      bound_pi.x()
+          = std::max(bound_pi.x(), std::abs(estimated_position_pi.x()));
+      bound_pi.y()
+          = std::max(bound_pi.y(), std::abs(estimated_position_pi.y()));
+      bound_pi.z()
+          = std::max(bound_pi.z(), std::abs(estimated_position_pi.z()));
     } // end for
+
+    std::print(stderr, "\nBoundary[PI]: [x: {:.4e}, y: {:.4e}, z: {:.4e}]\n",
+               bound_pi.x(), bound_pi.y(), bound_pi.z());
   }
 
   /**
@@ -1009,10 +1057,11 @@ public:
     data_truth_ = DatumTruth::Load(path_truth_csv);
 
     std::print(stderr, "VisualInertial ready ...\n");
-    msg_path_fast_.header.frame_id  = DEFAULT_FRAME_ID;
-    msg_path_imu_.header.frame_id   = DEFAULT_FRAME_ID;
-    msg_path_fuse_.header.frame_id  = DEFAULT_FRAME_ID;
-    msg_path_truth_.header.frame_id = DEFAULT_FRAME_ID;
+    msg_path_fast_.header.frame_id         = DEFAULT_FRAME_ID;
+    msg_path_imu_.header.frame_id          = DEFAULT_FRAME_ID;
+    msg_path_preintegrate_.header.frame_id = DEFAULT_FRAME_ID;
+    msg_path_fuse_.header.frame_id         = DEFAULT_FRAME_ID;
+    msg_path_truth_.header.frame_id        = DEFAULT_FRAME_ID;
     for (const DatumTruth &datum_truth : data_truth_)
     {
       PushPose(msg_path_truth_, datum_truth.timestamp_, datum_truth.attitude_,
@@ -1024,6 +1073,7 @@ public:
   {
     EstimateFast();
     EstimateImu();
+    PreintegrateImu();
     EstimateFuse();
 
 #if (PUBLISH_POSE)
@@ -1036,6 +1086,7 @@ public:
     {
       PublishPathFast();
       PublishPathImu();
+      PublishPathPreintegrate();
       PublishPathFuse();
       PublishPathTruth();
 
