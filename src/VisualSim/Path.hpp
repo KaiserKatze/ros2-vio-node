@@ -27,7 +27,7 @@ template <typename value_type> struct Path
     BackToCenter, // 背对圆心
     Tangent,      // 沿切线方向 (线速度方向)
     Upward,       // 朝向天花板 (垂直向上)
-    StraightLine, // 直线段 (经过房间中心，平行于 x 轴)
+    StraightLine, // 在直线段 (经过房间中心，平行于 x 轴) 上进行变速直线运动
   };
 
   /**
@@ -119,6 +119,13 @@ template <typename value_type> struct Path
       basis_y = basis_z.cross(basis_x).normalized(); // 朝向运动的反方向
       break;
     }
+    case OrientationMode::StraightLine:
+    {
+      basis_x = {1.0, 0.0, 0.0};
+      basis_y = {0.0, 1.0, 0.0};
+      basis_z = {0.0, 0.0, 1.0};
+      break;
+    }
     }
 
     Attitude att_body;
@@ -140,7 +147,23 @@ template <typename value_type> struct Path
     auto &&[position, attitude] = GetPose(room, time, mode);
     if (mode == OrientationMode::StraightLine)
     {
-      // TODO
+      const value_type radius{
+          // 下面的系数必须小于 0.5
+          static_cast<value_type>(mode == OrientationMode::LookAtCenter ? 0.4
+                                                                        : 0.45)
+              * std::min<value_type>(room.depth_, room.width_),
+      }; // 运动半径（留在房间内）
+      angular_velocity = Point3::Zero();
+      linear_velocity  = {
+          -radius * omega_ * std::sin(omega_ * time),
+          0.0,
+          0.0,
+      };
+      linear_acceleration = {
+          -radius * omega_ * omega_ * std::cos(omega_ * time),
+          0.0,
+          0.0,
+      };
     }
     else
     {
