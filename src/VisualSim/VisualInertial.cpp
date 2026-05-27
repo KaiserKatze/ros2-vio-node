@@ -90,7 +90,7 @@ static DataType Interpolate(const std::vector<DataType> &data,
             : 0.0;
 
   DataType interp;
-  template for (constexpr auto member :
+  template for (constexpr auto /* std::meta::info */ member :
                 std::define_static_array(std::meta::nonstatic_data_members_of(
                     ^^DataType, std::meta::access_context::current())))
   {
@@ -123,12 +123,8 @@ struct DatumFast
   Eigen::Vector3f angular_displacement_;
   Eigen::Vector3f normalized_translation_;
 
-  static std::vector<DatumFast> Load()
+  static std::vector<DatumFast> Load(const std::string &path_estimation_csv)
   {
-    static const std::filesystem::path path_estimation_csv{
-        std::filesystem::path{std::getenv("HOME")} / "vio_ws"
-            / "estimated_motion.csv",
-    };
     std::vector<DatumFast> data;
 
     std::ifstream file(path_estimation_csv);
@@ -168,7 +164,7 @@ struct DatumFast
         throw std::runtime_error{
             std::format("Fail to parse line #{} of file '{}':\n{}.\n"
                         "Triggered by:\n{}",
-                        line_num, path_estimation_csv.string(), line, //
+                        line_num, path_estimation_csv, line, //
                         ex.what()),
         };
       }
@@ -183,16 +179,8 @@ struct DatumImu
   Eigen::Vector3f angular_velocity_;
   Eigen::Vector3f linear_acceleration_;
 
-  static std::vector<DatumImu> Load()
+  static std::vector<DatumImu> Load(const std::string &path_imu_csv)
   {
-    static const std::filesystem::path path_imu_csv{
-#if (DATASOURCE == DATASOURCE_EUROC)
-        "/mnt/e/Documents/mav0/imu0/data.csv",
-#elif (DATASOURCE == DATASOURCE_SIM)
-        std::filesystem::path{std::getenv("HOME")} / "vio_ws" / "mav0" / "imu0"
-        / "data.csv"
-#endif
-    };
     std::vector<DatumImu> data;
 
     std::ifstream file(path_imu_csv);
@@ -239,7 +227,7 @@ struct DatumImu
         throw std::runtime_error{
             std::format("Fail to parse line #{} of file '{}':\n{}.\n"
                         "Triggered by:\n{}",
-                        line_num, path_imu_csv.string(), line, //
+                        line_num, path_imu_csv, line, //
                         ex.what()),
         };
       }
@@ -257,16 +245,8 @@ struct DatumTruth
   Eigen::Vector3f bias_gyro_;
   Eigen::Vector3f bias_accel_;
 
-  static std::vector<DatumTruth> Load()
+  static std::vector<DatumTruth> Load(const std::string &path_truth_csv)
   {
-    static const std::filesystem::path path_truth_csv{
-#if (DATASOURCE == DATASOURCE_EUROC)
-        "/mnt/e/Documents/mav0/state_groundtruth_estimate0/data.csv",
-#elif (DATASOURCE == DATASOURCE_SIM)
-        std::filesystem::path{std::getenv("HOME")} / "vio_ws" / "mav0"
-        / "state_groundtruth_estimate0" / "data.csv"
-#endif
-    };
     std::vector<DatumTruth> data;
 
     std::ifstream file(path_truth_csv);
@@ -337,7 +317,7 @@ struct DatumTruth
         throw std::runtime_error{
             std::format("Fail to parse line #{} of file '{}':\n{}.\n"
                         "Triggered by:\n{}",
-                        line_num, path_truth_csv.string(), line, //
+                        line_num, path_truth_csv, line, //
                         ex.what()),
         };
       }
@@ -392,9 +372,13 @@ private:
   };
 #endif
 
-  std::vector<DatumFast> data_fast_{DatumFast::Load()};
-  std::vector<DatumImu> data_imu_{DatumImu::Load()};
-  std::vector<DatumTruth> data_truth_{DatumTruth::Load()};
+  std::string path_estimation_csv_;
+  std::string path_imu_csv_;
+  std::string path_truth_csv_;
+
+  std::vector<DatumFast> data_fast_{};
+  std::vector<DatumImu> data_imu_{};
+  std::vector<DatumTruth> data_truth_{};
 
   LinearKalmanFilter filter_;
 
@@ -491,13 +475,12 @@ private:
    */
   void EstimateFast()
   {
-    const std::filesystem::path path_home{
-        std::getenv("HOME"),
+    // 在工作目录下，用临时文件 path_fast_est.tum 存储 TUM 格式的数据
+    // 它是利用 python 模块 evo，经过 SIM(3) 变换得到的相机轨迹数据
+    const std::filesystem::path path_temp_tum_file{
+        "path_fast_est.tum",
     };
-    const std::filesystem::path path_file{
-        path_home / "vio_ws" / "path_fast_est.tum",
-    };
-    std::ofstream fout_fast(path_file);
+    std::ofstream fout_fast(path_temp_tum_file);
 
     // 初始状态
     Eigen::Vector3f estimated_position_fast{Eigen::Vector3f::Zero()};
@@ -551,19 +534,18 @@ private:
     } // end for
 
     std::print(stderr, "[INFO] 估计轨迹已写入 {}.\n",
-               std::filesystem::absolute(path_file).string());
+               std::filesystem::absolute(path_temp_tum_file).string());
     // 利用 evo 提供的 SIM(3) 变换调整轨迹
-    std::system(std::format("bash -c '"
-                            "source .venv/bin/activate && "
-                            "yes 'y' | evo_traj euroc {} --ref={} "
-                            "--align --correct_scale --save_as_tum'",
-                            std::filesystem::absolute(path_file).string(),
-                            std::filesystem::absolute(path_home / "vio_ws"
-                                                      / "truth_data.csv")
-                                .string())
-                    .c_str());
+    std::system(
+        std::format("bash -c '"
+                    "source .venv/bin/activate && "
+                    "yes 'y' | evo_traj euroc {} --ref={} "
+                    "--align --correct_scale --save_as_tum'",
+                    std::filesystem::absolute(path_temp_tum_file).string(),
+                    std::filesystem::absolute(path_truth_csv_).string())
+            .c_str());
 
-    std::ifstream fin_fast(path_file);
+    std::ifstream fin_fast(path_temp_tum_file);
     std::string line;
     size_t line_num{0};
     while (std::getline(fin_fast, line))
@@ -596,12 +578,15 @@ private:
         throw std::runtime_error{
             std::format("Fail to parse line #{} of file '{}':\n{}.\n"
                         "Triggered by:\n{}",
-                        line_num, path_file.string(), line, //
+                        line_num, path_temp_tum_file.string(), line, //
                         ex.what()),
         };
       }
     } // end while
     std::print(stderr, "[INFO] 估计轨迹已缩放.\n");
+    // 删除临时文件
+    std::error_code ec;
+    std::filesystem::remove(path_temp_tum_file, ec);
   }
 
   /**
@@ -706,6 +691,61 @@ private:
 
       PushPose(msg_path_imu_, datum_imu.timestamp_, estimated_attitude_imu,
                estimated_position_imu);
+    } // end for
+  }
+
+  void PreintegrateImu()
+  {
+    // 世界坐标系下的重力加速度
+    const Eigen::Vector3f gravity_world{0.0f, 0.0f, -9.81f};
+
+    // 初始状态
+    Eigen::Vector3f estimated_position_pi{Eigen::Vector3f::Zero()};
+    Eigen::Vector3f estimated_velocity_pi{Eigen::Vector3f::Zero()};
+    Eigen::Quaternionf estimated_attitude_pi{Eigen::Quaternionf::Identity()};
+    Eigen::Quaternionf delta_R{Eigen::Quaternionf::Identity()};
+    Eigen::Vector3f delta_p{Eigen::Vector3f::Zero()};
+    Eigen::Vector3f delta_v{Eigen::Vector3f::Zero()};
+    float delta_t{0};
+    float t_prev{0};
+
+    for (bool first_loop{true}; const DatumImu &datum_imu : data_imu_)
+    {
+      float t_samp{1e-9f * static_cast<float>(datum_imu.timestamp_)};
+      if (first_loop)
+      {
+        first_loop = false;
+        t_prev     = t_samp;
+        continue;
+      }
+
+      // 时间步长
+      const float dt{t_samp - t_prev};
+      auto drotvec{dt * datum_imu.angular_velocity_};
+      Eigen::Quaternionf dR{
+          Eigen::AngleAxisf{
+              drotvec.norm(),
+              drotvec.normalized(),
+          },
+      };
+      auto dv{dt * datum_imu.linear_acceleration_};
+      auto dp{0.5f * dt * dv};
+      delta_t += dt;
+      delta_p += delta_v * dt + delta_R * dp;
+      delta_v += delta_R * dv;
+      delta_R = delta_R * dR;
+      t_prev  = t_samp;
+
+      estimated_position_pi = estimated_position_pi
+                              + delta_t * estimated_velocity_pi
+                              + 0.5f * delta_t * delta_t * gravity_world
+                              + estimated_attitude_pi * delta_p;
+      estimated_velocity_pi = estimated_velocity_pi + delta_t * gravity_world
+                              + estimated_attitude_pi * delta_v;
+      estimated_attitude_pi = estimated_attitude_pi * delta_R;
+
+      // PushPose(msg_path_imu_, datum_imu.timestamp_, estimated_attitude_imu,
+      //          estimated_position_imu);
     } // end for
   }
 
@@ -931,6 +971,43 @@ private:
 public:
   VisualInertial() : Node("StereoSlam1")
   {
+    // std::filesystem::path{std::getenv("HOME")} / "vio_ws" / "estimated_motion.csv"
+    this->declare_parameter("path_estimation_csv", "estimated_motion.csv");
+    const std::string path_estimation_csv{
+        this->get_parameter("path_estimation_csv").as_string(),
+    };
+    path_estimation_csv_ = path_estimation_csv;
+
+    // "/mnt/e/Documents/mav0/imu0/data.csv"
+    // std::filesystem::path{std::getenv("HOME")} / "vio_ws" / "mav0" / "imu0" / "data.csv"
+    this->declare_parameter("path_imu_csv", "");
+    const std::string path_imu_csv{
+        this->get_parameter("path_imu_csv").as_string(),
+    };
+    path_imu_csv_ = path_imu_csv;
+
+    // "/mnt/e/Documents/mav0/state_groundtruth_estimate0/data.csv"
+    // std::filesystem::path{std::getenv("HOME")} / "vio_ws" / "mav0" / "state_groundtruth_estimate0" / "data.csv"
+    this->declare_parameter("path_truth_csv", "");
+    const std::string path_truth_csv{
+        this->get_parameter("path_truth_csv").as_string(),
+    };
+    path_truth_csv_ = path_truth_csv;
+
+    for (auto path_obj : {path_estimation_csv, path_imu_csv, path_truth_csv})
+    {
+      std::error_code ec;
+      if (std::filesystem::is_regular_file(path_obj, ec))
+      {
+        continue;
+      }
+      throw std::runtime_error{std::format("FileNotFound: {}!", path_obj)};
+    }
+
+    data_fast_  = DatumFast::Load(path_estimation_csv);
+    data_imu_   = DatumImu::Load(path_imu_csv);
+    data_truth_ = DatumTruth::Load(path_truth_csv);
+
     std::print(stderr, "VisualInertial ready ...\n");
     msg_path_fast_.header.frame_id  = DEFAULT_FRAME_ID;
     msg_path_imu_.header.frame_id   = DEFAULT_FRAME_ID;
