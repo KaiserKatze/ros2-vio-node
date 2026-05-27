@@ -1,0 +1,6 @@
+{
+  "clangd.arguments": [
+    "-std=c++26",
+    "-freflection"
+  ]
+}
