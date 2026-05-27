@@ -15,7 +15,7 @@ template <typename value_type> struct Path
   using Point3   = Eigen::Vector<value_type, 3>;
   using Attitude = Eigen::Matrix<value_type, 3, 3>;
 
-  const value_type omega_{0.5}; // 角速度 (rad/s)
+  const value_type omega_{0.5}; // 角速率 (rad/s)
   bool print_debug_info_{true};
 
   /**
@@ -30,6 +30,9 @@ template <typename value_type> struct Path
     StraightLine, // 直线段 (经过房间中心，平行于 x 轴)
   };
 
+  /**
+   * @brief 获取世界坐标系下的位姿参数 (位置、朝向)
+   */
   std::pair<Point3, Attitude>
   GetPose(const Room<value_type> &room, value_type time,
           OrientationMode mode = OrientationMode::LookAtCenter) const
@@ -125,6 +128,32 @@ template <typename value_type> struct Path
     att_body.col(2) = basis_z;
 
     return {pos_body, att_body};
+  }
+
+  /**
+   * @brief 获取世界坐标系下的动力学参数 (线速度、角速度、线加速度)
+   */
+  void GetKinematics(const Room<value_type> &room, value_type time,
+                     OrientationMode mode, Point3 &linear_velocity,
+                     Point3 &angular_velocity, Point3 &linear_acceleration)
+  {
+    auto &&[position, attitude] = GetPose(room, time, mode);
+    if (mode == OrientationMode::StraightLine)
+    {
+      // TODO
+    }
+    else
+    {
+      angular_velocity = omega_ * Point3{0.0, 0.0, 1.0};
+      // 匀速圆周运动的半径矢量 (当前位置点与房间中心点的差向量)
+      const Point3 relative_position{position - room.center_};
+      // 线速度矢量
+      // v_k = ω \times r_k
+      linear_velocity = angular_velocity.cross(relative_position);
+      // 线加速度矢量
+      // a_k = ω \times v_k
+      linear_acceleration = angular_velocity.cross(linear_velocity);
+    }
   }
 
   /**

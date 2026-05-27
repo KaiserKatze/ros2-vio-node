@@ -854,37 +854,28 @@ struct VisualSim
           // IMU 的当前时间戳
           value_type imu_time{time + i * imu_step};
           // 角速度矢量
-          Point3 true_current_angular_velocity{
-              true_rotation_vector / imu_step,
-          };
-          // IMU 在世界坐标系中的当前位置
-          Point3 imu_true_current_position{
-              std::get<0>(GetPose(imu_time)),
-          };
-          // IMU 在世界坐标系中前一帧朝向
-          Attitude imu_true_prev_attitude{
-              std::get<1>(GetPose(imu_time - imu_step)),
-          };
-          // 匀速圆周运动的半径矢量
-          Point3 current_relative_position_wrt_room_center{
-              imu_true_current_position - room_.center_,
-          };
+          Point3 true_current_angular_velocity{Point3::Zero()};
           // 线速度矢量
-          Point3 true_current_linear_velocity{
-              // v_k = ω \times r_k
-              true_current_angular_velocity.cross(
-                  current_relative_position_wrt_room_center),
-          };
+          Point3 true_current_linear_velocity{Point3::Zero()};
           // 线加速度矢量
-          Point3 true_current_linear_acceleration{
-              // a_k = ω \times v_k
-              true_current_angular_velocity.cross(true_current_linear_velocity),
+          Point3 true_current_linear_acceleration{Point3::Zero()};
+          // 获取 IMU 在世界坐标系下的线速度、角速度、线加速度
+          path_.GetKinematics(
+              room_, imu_time, orientation_mode_, true_current_linear_velocity,
+              true_current_angular_velocity, true_current_linear_acceleration);
+
+          // IMU 在世界坐标系下当前帧的朝向
+          Attitude imu_true_current_attitude{
+              std::get<1>(GetPose(imu_time)),
           };
           // 转换坐标系：从世界坐标系转为相机坐标系
-          true_current_linear_velocity     = imu_true_prev_attitude.transpose()
-                                             * true_current_linear_velocity;
-          true_current_linear_acceleration = imu_true_prev_attitude.transpose()
-                                             * true_current_linear_acceleration;
+          true_current_angular_velocity = imu_true_current_attitude.transpose()
+                                          * true_current_angular_velocity;
+          true_current_linear_velocity  = imu_true_current_attitude.transpose()
+                                          * true_current_linear_velocity;
+          true_current_linear_acceleration
+              = imu_true_current_attitude.transpose()
+                * true_current_linear_acceleration;
           // 写入数据文件
           std::print(fout_imu0_data_csv,
                      // 时间戳
