@@ -26,7 +26,8 @@ template <typename value_type> struct Path
     LookAtCenter, // 朝向圆心 (原逻辑)
     BackToCenter, // 背对圆心
     Tangent,      // 沿切线方向 (线速度方向)
-    Upward        // 朝向天花板 (垂直向上)
+    Upward,       // 朝向天花板 (垂直向上)
+    StraightLine, // 直线段 (经过房间中心，平行于 x 轴)
   };
 
   std::pair<Point3, Attitude>
@@ -47,14 +48,23 @@ template <typename value_type> struct Path
 
     // 3. 计算相机本体 (Body/Base) 在世界坐标系下的位置
     // 在平行于地板的平面内运动，Z 轴高度保持在房间中心高度
-    Point3 pos_body{
-        center.x() + radius * std::cos(angle),
-        center.y() + radius * std::sin(angle),
-        center.z()
-            + static_cast<value_type>(mode == OrientationMode::LookAtCenter
-                                          ? 0.0
-                                          : -0.3 * room.height_),
-    };
+    Point3 pos_body{Point3::Zero()};
+
+    pos_body.x() = center.x() + radius * std::cos(angle);
+    pos_body.z() = center.z();
+    if (mode == OrientationMode::StraightLine)
+    {
+      pos_body.y() = center.y();
+    }
+    else
+    {
+      pos_body.y() = center.y() + radius * std::sin(angle);
+      if (mode != OrientationMode::LookAtCenter)
+      {
+        pos_body.z() -= static_cast<value_type>(0.3 * room.height_);
+      }
+    }
+
     // 初始位置: [cx+r,cy,cz]
 
     if (print_debug_info_)
