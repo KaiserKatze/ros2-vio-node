@@ -144,6 +144,7 @@ template <typename value_type> struct Path
                      OrientationMode mode, Point3 &linear_velocity,
                      Point3 &angular_velocity, Point3 &linear_acceleration)
   {
+    const value_type gravity_world_norm{9.81}; // m s^-2
     auto &&[position, attitude] = GetPose(room, time, mode);
     if (mode == OrientationMode::StraightLine)
     {
@@ -162,7 +163,7 @@ template <typename value_type> struct Path
       linear_acceleration = {
           -radius * omega_ * omega_ * std::cos(omega_ * time),
           0.0,
-          0.0,
+          gravity_world_norm,
       };
     }
     else
