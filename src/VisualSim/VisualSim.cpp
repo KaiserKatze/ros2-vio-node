@@ -32,6 +32,7 @@
 #include "Path.hpp"
 #include "Room.hpp"
 #include "StereoRig.hpp"
+#include "euroc_vio/Reflect.hpp"
 
 using namespace std::chrono_literals;
 
@@ -517,6 +518,17 @@ struct VisualSim
     WriteGroundTruthConfig(path_groundtruth);
     // 输出 mav0/imu0/sensor.yaml
     WriteImuConfig(path_imu0);
+
+    // 输出 mav0/README.md 说明文件
+    std::ofstream fout_readme(path_mav0 / "README.md");
+    std::print(fout_readme,
+               "Room:\n"
+               "\tWidth:  {:.2f}\n"
+               "\tDepth:  {:.2f}\n"
+               "\tHeight: {:.2f}\n"
+               "OrientationMode: {}\n",
+               room_.width_, room_.depth_, room_.height_,
+               enum_to_string(orientation_mode_));
 
     // 输出 mav0/cam0/data.csv 表头
     std::ofstream fout_cam0_data_csv(path_cam0 / "data.csv");
