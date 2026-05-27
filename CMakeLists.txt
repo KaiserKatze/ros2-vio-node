@@ -182,19 +182,19 @@ install(DIRECTORY launch/
 #   ${OpenCV_LIBS}
 # )
 
-# # ===== 目标： 纯视觉 SLAM 仿真 =====
-# add_ros2_executable(VisualSim src/VisualSim/VisualSim.cpp)
-# ament_target_dependencies(VisualSim
-#   rclcpp
-#   geometry_msgs
-#   nav_msgs
-#   sensor_msgs
-#   cv_bridge
-# )
-# target_link_libraries(VisualSim
-#   Eigen3::Eigen
-#   ${OpenCV_LIBS}
-# )
+# ===== 目标： SLAM 仿真数据集生成器 =====
+add_ros2_executable(VisualSim src/VisualSim/VisualSim.cpp)
+ament_target_dependencies(VisualSim
+  rclcpp
+  geometry_msgs
+  nav_msgs
+  sensor_msgs
+  cv_bridge
+)
+target_link_libraries(VisualSim
+  Eigen3::Eigen
+  ${OpenCV_LIBS}
+)
 
 # ===== 目标： 纯视觉仿真数据的朝向估计 =====
 add_ros2_executable(EstimationLoader src/VisualSim/EstimationLoader.cpp)
