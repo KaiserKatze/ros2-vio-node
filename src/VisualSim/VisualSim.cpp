@@ -238,11 +238,11 @@ struct VisualSim
   StereoRig<value_type> rig_{};
   // 仿真双目相机运动路径
   using OrientationMode = Path<value_type>::OrientationMode;
-  OrientationMode orientation_mode_{OrientationMode::LookAtCenter};
+  OrientationMode orientation_mode_{OrientationMode::StraightLine};
   Path<value_type> path_{};
   const value_type time_limit_simulation_{
-      // 计算匀速圆周运动恰好旋转一周所需的时间
-      std::round(2 * std::numbers::pi_v<value_type> / path_.omega_),
+      // 计算匀速圆周运动恰好旋转两周所需的时间
+      std::round(4 * std::numbers::pi_v<value_type> / path_.omega_),
   };
   // 时间步长 (单位: 秒) (采用 0.05 秒作为时间步长可以让仿真相机的采样率保持为 20 赫兹)
   const value_type step_{static_cast<value_type>(0.05)};
