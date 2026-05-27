@@ -5,10 +5,15 @@ from launch.actions import ExecuteProcess
 from launch_ros.actions import Node
 from launch.logging import get_logger
 
+import pathlib
+import os
+
 
 def generate_launch_description():
     logger = get_logger("euroc_vio")
     logger.info("Starting EuRoC trajectory launch ...")
+
+    home_path = pathlib.PosixPath(os.path.expanduser("~"))
 
     # 输出: 轨迹话题 /path_fast_est
     # 输出: 轨迹话题 /pose_fast_est
@@ -19,6 +24,25 @@ def generate_launch_description():
         executable="VisualInertial",
         name="VisualInertial",
         output="screen",
+        parameters=[
+            {
+                "path_estimation_csv": str(
+                    home_path / "vio_ws" / "estimated_motion.csv"
+                ),
+                # "path_imu_csv": "/mnt/e/Documents/mav0/imu0/data.csv",
+                "path_imu_csv": str(
+                    home_path / "vio_ws" / "mav0" / "imu0" / "data.csv"
+                ),
+                # "path_truth_csv": "/mnt/e/Documents/mav0/state_groundtruth_estimate0/data.csv",
+                "path_truth_csv": str(
+                    home_path
+                    / "vio_ws"
+                    / "mav0"
+                    / "state_groundtruth_estimate0"
+                    / "data.csv"
+                ),
+            }
+        ],
     )
 
     rviz_node = Node(
