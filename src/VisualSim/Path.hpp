@@ -6,6 +6,8 @@
 #include "Room.hpp"
 #include "StereoRig.hpp"
 
+#define ENABLE_ZUPT 1
+
 /**
  * @brief 真实轨迹
  */
@@ -14,6 +16,9 @@ template <typename value_type> struct Path
   using Point2   = Eigen::Vector<value_type, 2>;
   using Point3   = Eigen::Vector<value_type, 3>;
   using Attitude = Eigen::Matrix<value_type, 3, 3>;
+
+  // 如果启用 ZUPT 机制，那么在最初的几秒内，输出静止状态对应的动力学参数
+  static constexpr value_type time_static_{1.0};
 
   const value_type omega_{0.5}; // 角速率 (rad/s)
   bool print_debug_info_{true};
@@ -30,6 +35,22 @@ template <typename value_type> struct Path
     StraightLine, // 在直线段 (经过房间中心，平行于 x 轴) 上进行变速直线运动
   };
 
+private:
+  static inline void CheckTime(value_type &time)
+  {
+#if (ENABLE_ZUPT)
+    if (time < time_static_)
+    {
+      time = static_cast<value_type>(0.0);
+    }
+    else
+    {
+      time -= time_static_;
+    }
+#endif
+  }
+
+public:
   /**
    * @brief 获取世界坐标系下的位姿参数 (位置、朝向)
    */
@@ -37,6 +58,8 @@ template <typename value_type> struct Path
   GetPose(const Room<value_type> &room, value_type time,
           OrientationMode mode = OrientationMode::LookAtCenter) const
   {
+    CheckTime(time);
+
     // 1. 计算房间几何中心
     const Point3 center{room.center_};
 
@@ -144,6 +167,8 @@ template <typename value_type> struct Path
                      OrientationMode mode, Point3 &linear_velocity,
                      Point3 &angular_velocity, Point3 &linear_acceleration)
   {
+    CheckTime(time);
+
     const value_type gravity_world_norm{9.81}; // m s^-2
     auto &&[position, attitude] = GetPose(room, time, mode);
     if (mode == OrientationMode::StraightLine)
@@ -187,6 +212,8 @@ template <typename value_type> struct Path
                 const Room<value_type> &room,
                 OrientationMode mode = OrientationMode::LookAtCenter) const
   {
+    // 这里不能调用 CheckTime(time)
+    // 否则会和下面的函数调用 GetPose 发生冲突
     const Point3 center{room.center_};
     const auto &&[pos_body, att_body] = GetPose(room, time, mode);
 
