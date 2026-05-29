@@ -169,7 +169,7 @@ public:
     {
       linear_velocity     = Point3::Zero();
       angular_velocity    = Point3::Zero();
-      linear_acceleration = {0.0, 0.0, -gravity_world_norm};
+      linear_acceleration = {0.0, 0.0, gravity_world_norm};
       return;
     }
     else
@@ -196,7 +196,7 @@ public:
       linear_acceleration = {
           -radius * omega_ * omega_ * std::cos(omega_ * time),
           0.0,
-          -gravity_world_norm,
+          gravity_world_norm,
       };
     }
     else

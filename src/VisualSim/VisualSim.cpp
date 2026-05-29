@@ -246,10 +246,12 @@ struct VisualSim
       std::round(4 * std::numbers::pi_v<value_type> / path_.omega_
                  + path_.time_static_),
   };
-  // 时间步长 (单位: 秒) (采用 0.05 秒作为时间步长可以让仿真相机的采样率保持为 20 赫兹)
+  // 相机的时间步长 (单位: 秒) (采用 0.05 秒作为时间步长可以让仿真相机的采样率保持为 20 赫兹)
   const value_type step_{static_cast<value_type>(0.05)};
   // 仿真 IMU 与仿真相机的采样率之比
   const int rate_ratio_{10};
+  // 真值和 IMU 的时间步长 (单位: 秒)
+  const value_type imu_step_{step_ / rate_ratio_};
 
   using Point3     = Eigen::Vector<value_type, 3>;
   using Point2     = Eigen::Vector<value_type, 2>;
@@ -283,34 +285,35 @@ struct VisualSim
                          const Camera<value_type> &camera) const
   {
     std::ofstream fout_cam(path_cam / "sensor.yaml");
-    std::print(
-        fout_cam,
-        "sensor_type: camera\n\n"
-        "T_BS:\n"
-        "  cols: 4\n"
-        "  rows: 4\n"
-        "  data: [{:.4f}, {:.4f}, {:.4f}, {:.4f},\n"
-        "         {:.4f}, {:.4f}, {:.4f}, {:.4f},\n"
-        "         {:.4f}, {:.4f}, {:.4f}, {:.4f},\n"
-        "         0.0, 0.0, 0.0, 1.0]\n\n"
-        "rate_hz: {}\n"
-        "resolution: [{}, {}]\n"
-        "camera_model: pinhole\n"
-        "intrinsics: [{:.3f}, {:.3f}, {:.3f}, {:.3f}] # fu, fv, cu, cv\n"
-        "distortion_model: radial-tangential\n"
-        "distortion_coefficients: [0.0, 0.0, 0.0, 0.0]\n",
-        // 空间变换的齐次矩阵形式
-        camera.rotation_(0, 0), camera.rotation_(0, 1), camera.rotation_(0, 2),
-        camera.translation_(0), camera.rotation_(1, 0), camera.rotation_(1, 1),
-        camera.rotation_(1, 2), camera.translation_(1), camera.rotation_(2, 0),
-        camera.rotation_(2, 1), camera.rotation_(2, 2), camera.translation_(2),
-        // 采样频率
-        static_cast<value_type>(1.0) / step_,
-        // 分辨率
-        camera.width_, camera.height_,
-        // 相机内参
-        camera.intrinsic_(0, 0), camera.intrinsic_(1, 1),
-        camera.intrinsic_(0, 2), camera.intrinsic_(1, 2));
+    std::print(fout_cam,
+               "sensor_type: camera\n\n"
+               "T_BS:\n"
+               "  cols: 4\n"
+               "  rows: 4\n"
+               "  data: [{:.4f}, {:.4f}, {:.4f}, {:.4f},\n"
+               "         {:.4f}, {:.4f}, {:.4f}, {:.4f},\n"
+               "         {:.4f}, {:.4f}, {:.4f}, {:.4f},\n"
+               "         0.0, 0.0, 0.0, 1.0]\n\n"
+               "rate_hz: {}\n"
+               "resolution: [{}, {}]\n"
+               "camera_model: pinhole\n"
+               "intrinsics: [{:.3f}, {:.3f}, {:.3f}, {:.3f}] # fu, fv, cu, cv\n"
+               "distortion_model: radial-tangential\n"
+               "distortion_coefficients: [0.0, 0.0, 0.0, 0.0]\n",
+               // 空间变换的齐次矩阵形式
+               camera.rotation_(0, 0), camera.rotation_(0, 1),
+               camera.rotation_(0, 2), camera.translation_(0),
+               camera.rotation_(1, 0), camera.rotation_(1, 1),
+               camera.rotation_(1, 2), camera.translation_(1),
+               camera.rotation_(2, 0), camera.rotation_(2, 1),
+               camera.rotation_(2, 2), camera.translation_(2),
+               // 采样频率
+               static_cast<value_type>(1.0) / step_,
+               // 分辨率
+               camera.width_, camera.height_,
+               // 相机内参
+               camera.intrinsic_(0, 0), camera.intrinsic_(1, 1),
+               camera.intrinsic_(0, 2), camera.intrinsic_(1, 2));
   }
 
   void WriteImuConfig(const std::filesystem::path &path_imu) const
@@ -544,19 +547,8 @@ struct VisualSim
     std::ofstream fout_groundtruth_csv(path_groundtruth / "data.csv");
     std::print(fout_groundtruth_csv,
                "#timestamp [ns], p_RS_R_x [m], p_RS_R_y [m], p_RS_R_z [m], "
-               "q_RS_w [], q_RS_x [], q_RS_y [], q_RS_z []\n");
-    std::print(fout_groundtruth_csv,
-               // 时间戳
-               "{:020d}, "
-               // 位置
-               "{:.18f}, {:.18f}, {:.18f}, "
-               // 朝向
-               "{:.18f}, {:.18f}, {:.18f}, {:.18f}\n",
-               0, //
-               estimated_current_position.x(), estimated_current_position.y(),
-               estimated_current_position.z(), //
-               estimated_current_attitude.w(), estimated_current_attitude.x(),
-               estimated_current_attitude.y(), estimated_current_attitude.z());
+               "q_RS_w [], q_RS_x [], q_RS_y [], q_RS_z [], "
+               "v_RS_R_x [m s^-1], v_RS_R_y [m s^-1], v_RS_R_z [m s^-1]\n");
     // 输出 mav0/imu0/data.csv 表头
     std::ofstream fout_imu0_data_csv(path_imu0 / "data.csv");
     std::print(fout_imu0_data_csv,
@@ -566,8 +558,8 @@ struct VisualSim
 #endif
 
     // 内参矩阵 K
-    const auto cv_camera_matrix{
-        cv_projection_matrix_left(cv::Range(0, 3), cv::Range(0, 3))};
+    const auto cv_camera_matrix{cv_projection_matrix_left(cv::Range(0, 3),
+                                                          cv::Range(0, 3))};
 
     bool first_loop{true};
     Frame prev_frame;
@@ -848,51 +840,68 @@ struct VisualSim
                    true_delta_position.z());
 #endif
 #if (OUTPUT_AS_EUROC)
-        // 输出仿真 Ground Truth 数据
-        std::print(fout_groundtruth_csv,
-                   // 时间戳
-                   "{:020d}, "
-                   // 位置
-                   "{:.18f}, {:.18f}, {:.18f}, "
-                   // 朝向
-                   "{:.18f}, {:.18f}, {:.18f}, {:.18f}\n",
-                   timestamp_ns, //
-                   true_current_position.x(), true_current_position.y(),
-                   true_current_position.z(), //
-                   true_current_attitude.w(), true_current_attitude.x(),
-                   true_current_attitude.y(), true_current_attitude.z());
-
-        // 输出仿真 IMU 数据
+        // 保证 IMU 与 Ground Truth 的数据帧率相同
         for (int i = 0; i < rate_ratio_; ++i)
         {
           // IMU 的时间步长 (秒)
-          value_type imu_step{step_ / rate_ratio_};
           // IMU 的当前时间戳
-          value_type imu_time{time + i * imu_step};
-          // 角速度矢量
-          Point3 true_current_angular_velocity{Point3::Zero()};
-          // 线速度矢量
-          Point3 true_current_linear_velocity{Point3::Zero()};
-          // 线加速度矢量
-          Point3 true_current_linear_acceleration{Point3::Zero()};
-          // 获取 IMU 在世界坐标系下的线速度、角速度、线加速度
-          path_.GetKinematics(
-              room_, imu_time, orientation_mode_, true_current_linear_velocity,
-              true_current_angular_velocity, true_current_linear_acceleration);
-
-          // IMU 在世界坐标系下当前帧的朝向
-          Attitude imu_true_current_attitude{
-              std::get<1>(GetPose(imu_time)),
+          const value_type imu_time{time + i * imu_step_};
+          const auto imu_timestamp_ns{
+              static_cast<std::int64_t>(imu_time * 1e9),
           };
+          // 角速度矢量
+          Point3 imu_true_current_angular_velocity{Point3::Zero()};
+          // 线速度矢量
+          Point3 imu_true_current_linear_velocity{Point3::Zero()};
+          // 线加速度矢量
+          Point3 imu_true_current_linear_acceleration{Point3::Zero()};
+          // 获取 IMU 在世界坐标系下的线速度、角速度、线加速度
+          path_.GetKinematics(room_, imu_time, orientation_mode_,
+                              imu_true_current_linear_velocity,
+                              imu_true_current_angular_velocity,
+                              imu_true_current_linear_acceleration);
+
+          // IMU 在世界坐标系下当前帧的位置
+          Point3 imu_true_current_position{Point3::Zero()};
+          // IMU 在世界坐标系下当前帧的朝向
+          Attitude imu_true_current_attitude{Quaternion::Identity()};
+          std::tie(imu_true_current_position, imu_true_current_attitude)
+              = GetPose(imu_time);
+          Quaternion imu_true_current_quaternion{imu_true_current_attitude};
+
+          // 输出仿真 Ground Truth 数据
+          std::print(
+              fout_groundtruth_csv,
+              // 时间戳
+              "{:020d}, "
+              // 位置
+              "{:.18f}, {:.18f}, {:.18f}, "
+              // 朝向
+              "{:.18f}, {:.18f}, {:.18f}, {:.18f}, "
+              // 速度
+              "{:.18f}, {:.18f}, {:.18f}\n",
+              imu_timestamp_ns, //
+              imu_true_current_position.x(), imu_true_current_position.y(),
+              imu_true_current_position.z(), //
+              imu_true_current_quaternion.w(), imu_true_current_quaternion.x(),
+              imu_true_current_quaternion.y(),
+              imu_true_current_quaternion.z(), //
+              imu_true_current_linear_velocity.x(),
+              imu_true_current_linear_velocity.y(),
+              imu_true_current_linear_velocity.z() //
+          );
+
           // 转换坐标系：从世界坐标系转为相机坐标系
-          true_current_angular_velocity = imu_true_current_attitude.transpose()
-                                          * true_current_angular_velocity;
-          true_current_linear_velocity  = imu_true_current_attitude.transpose()
-                                          * true_current_linear_velocity;
-          true_current_linear_acceleration
+          imu_true_current_angular_velocity
               = imu_true_current_attitude.transpose()
-                * true_current_linear_acceleration;
-          // 写入数据文件
+                * imu_true_current_angular_velocity;
+          imu_true_current_linear_velocity
+              = imu_true_current_attitude.transpose()
+                * imu_true_current_linear_velocity;
+          imu_true_current_linear_acceleration
+              = imu_true_current_attitude.transpose()
+                * imu_true_current_linear_acceleration;
+          // 输出仿真 IMU 数据
           std::print(fout_imu0_data_csv,
                      // 时间戳
                      "{:020d}, "
@@ -900,13 +909,13 @@ struct VisualSim
                      "{:.18f}, {:.18f}, {:.18f}, "
                      // 加速度
                      "{:.18f}, {:.18f}, {:.18f}\n",
-                     timestamp_ns, //
-                     true_current_angular_velocity.x(),
-                     true_current_angular_velocity.y(),
-                     true_current_angular_velocity.z(), //
-                     true_current_linear_acceleration.x(),
-                     true_current_linear_acceleration.y(),
-                     true_current_linear_acceleration.z());
+                     imu_timestamp_ns, //
+                     imu_true_current_angular_velocity.x(),
+                     imu_true_current_angular_velocity.y(),
+                     imu_true_current_angular_velocity.z(), //
+                     imu_true_current_linear_acceleration.x(),
+                     imu_true_current_linear_acceleration.y(),
+                     imu_true_current_linear_acceleration.z());
         }
 #endif
 

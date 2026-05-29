@@ -60,3 +60,10 @@ BreakBeforeTemplateCloser: true
 BreakBeforeTernaryOperators: true
 BreakTemplateDeclarations: Yes
 IndentRequiresClause: true
+
+AlignAfterOpenBracket: true
+BreakBeforeCloseBracketBracedList: true
+BreakBeforeCloseBracketFunction: true
+BreakBeforeCloseBracketIf: true
+BreakBeforeCloseBracketLoop: true
+BreakBeforeCloseBracketSwitch: true
