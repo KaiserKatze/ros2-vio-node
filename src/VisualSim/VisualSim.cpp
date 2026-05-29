@@ -243,7 +243,8 @@ struct VisualSim
   Path<value_type> path_{};
   const value_type time_limit_simulation_{
       // 计算匀速圆周运动恰好旋转两周所需的时间
-      std::round(4 * std::numbers::pi_v<value_type> / path_.omega_),
+      std::round(4 * std::numbers::pi_v<value_type> / path_.omega_
+                 + path_.time_static_),
   };
   // 时间步长 (单位: 秒) (采用 0.05 秒作为时间步长可以让仿真相机的采样率保持为 20 赫兹)
   const value_type step_{static_cast<value_type>(0.05)};
@@ -523,11 +524,14 @@ struct VisualSim
     std::ofstream fout_readme(path_mav0 / "README.md");
     std::print(fout_readme,
                "Room:\n"
-               "\tWidth:  {:.2f}\n"
-               "\tDepth:  {:.2f}\n"
-               "\tHeight: {:.2f}\n"
-               "OrientationMode: {}\n",
-               room_.width_, room_.depth_, room_.height_,
+               "\tWidth:  {:.2f}  <!-- 房间开间 -->\n"
+               "\tDepth:  {:.2f}  <!-- 房间进深 -->\n"
+               "\tHeight: {:.2f}  <!-- 房间层高 -->\n"
+               "Time Length Before Takeoff: {:.2f} seconds  "
+               "<!-- 无人机起飞前处于静止状态的时间长度 (单位: 秒) -->\n"
+               "Movement Paradigm: {}  <!-- 无人机的运动范式 -->\n",
+               room_.width_, room_.depth_, room_.height_, //
+               path_.time_static_,                        //
                enum_to_string(orientation_mode_));
 
     // 输出 mav0/cam0/data.csv 表头
@@ -732,11 +736,11 @@ struct VisualSim
 
         PrintInfo(cv_reproj_left);
 
-        static_assert(
-            std::is_same_v<typename std::remove_cvref_t<
-                               decltype(image_points_left)>::value_type,
-                           Point2>,
-            "变量 `image_points_left` 类型错误!");
+        static_assert(std::is_same_v<typename std::remove_cvref_t<
+                                         decltype(image_points_left)
+                                     >::value_type,
+                                     Point2>,
+                      "变量 `image_points_left` 类型错误!");
         if (cv_reproj_left.total() * cv_reproj_left.channels()
             != image_points_left.size() * Point2::RowsAtCompileTime)
         {

@@ -609,7 +609,7 @@ private:
       };
       // 惯性参考系下的平均线加速度
       Eigen::Vector3f average_linear_acceleration_in_world_frame{
-          estimated_attitude_imu
+          estimated_attitude_imu.conjugate()
                   * average_linear_acceleration_in_sensor_frame //
               + gravity_world,
       };
