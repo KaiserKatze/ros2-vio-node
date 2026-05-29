@@ -36,7 +36,7 @@ using namespace std::chrono_literals;
 #include "euroc_vio/main.h"
 #include "zupt.hpp"
 
-#define PUBLISH_POSE 0
+#define PUBLISH_POSE 1
 #define USE_TRUE_SCALE_IN_FAST 0
 
 #define DATASOURCE_EUROC 0x01
@@ -280,10 +280,17 @@ private:
 
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr
       publisher_path_preintegrate_{
-          create_publisher<nav_msgs::msg::Path>("/path_preintegrate",
+          create_publisher<nav_msgs::msg::Path>("/path_preintegrate_est",
                                                 rclcpp::QoS{10}),
       };
   nav_msgs::msg::Path msg_path_preintegrate_;
+#if (PUBLISH_POSE)
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr
+      publisher_pose_preintegrate_{
+          create_publisher<nav_msgs::msg::Path>("/pose_preintegrate_est",
+                                                rclcpp::QoS{10}),
+      };
+#endif
 
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_fuse_{
       create_publisher<nav_msgs::msg::Path>("/path_fuse_est", rclcpp::QoS{10}),
@@ -403,6 +410,16 @@ private:
     publisher_pose_imu_->publish(msg_path_pose);
   }
 
+  void PublishPosePreintegrate(size_t index)
+  {
+    const auto &msg_pose{msg_path_preintegrate_.poses[index]};
+    nav_msgs::msg::Path msg_path_pose;
+    msg_path_pose.header.frame_id = DEFAULT_FRAME_ID;
+    msg_path_pose.header.stamp    = msg_pose.header.stamp;
+    msg_path_pose.poses.push_back(msg_pose);
+    publisher_pose_preintegrate_->publish(msg_path_pose);
+  }
+
   void PublishPoseFuse(size_t index)
   {
     const auto &msg_pose{msg_path_fuse_.poses[index]};
@@ -411,6 +428,16 @@ private:
     msg_path_pose.header.stamp    = msg_pose.header.stamp;
     msg_path_pose.poses.push_back(msg_pose);
     publisher_pose_fuse_->publish(msg_path_pose);
+  }
+
+  void PublishPoseTruth(size_t index)
+  {
+    const auto &msg_pose{msg_path_truth_.poses[index]};
+    nav_msgs::msg::Path msg_path_pose;
+    msg_path_pose.header.frame_id = DEFAULT_FRAME_ID;
+    msg_path_pose.header.stamp    = msg_pose.header.stamp;
+    msg_path_pose.poses.push_back(msg_pose);
+    publisher_pose_truth_->publish(msg_path_pose);
   }
 #endif /* PUBLISH_POSE */
 
@@ -487,7 +514,8 @@ private:
                     "--align --correct_scale --save_as_tum'",
                     std::filesystem::absolute(path_temp_tum_file).string(),
                     std::filesystem::absolute(path_truth_csv_).string())
-            .c_str());
+            .c_str()
+    );
 
     std::ifstream fin_fast(path_temp_tum_file);
     std::string line;
@@ -501,7 +529,8 @@ private:
         // 读取时间戳
         const std::int64_t timestamp{
             static_cast<std::int64_t>(
-                AbstractLoader::get_item_as_float(ss, ' ')), // in nanoseconds
+                AbstractLoader::get_item_as_float(ss, ' ')
+            ), // in nanoseconds
         };
         // 读取位置
         const float px{AbstractLoader::get_item_as_float(ss, ' ')};
@@ -1003,7 +1032,9 @@ public:
 #if (PUBLISH_POSE)
     size_t index_fast{0};
     size_t index_imu{0};
+    size_t index_preintegrate{0};
     size_t index_fuse{0};
+    size_t index_truth{0};
 #endif
 
     while (rclcpp::ok())
@@ -1017,11 +1048,16 @@ public:
 #if (PUBLISH_POSE)
       PublishPoseFast(index_fast);
       PublishPoseImu(index_imu);
+      PublishPosePreintegrate(index_preintegrate);
       PublishPoseFuse(index_fuse);
+      PublishPoseTruth(index_truth);
 
       index_fast = (index_fast + 1) % msg_path_fast_.poses.size();
       index_imu  = (index_imu + 1) % msg_path_imu_.poses.size();
-      index_fuse = (index_fuse + 1) % msg_path_fuse_.poses.size();
+      index_preintegrate
+          = (index_preintegrate + 1) % msg_path_preintegrate_.poses.size();
+      index_fuse  = (index_fuse + 1) % msg_path_fuse_.poses.size();
+      index_truth = (index_truth + 1) % msg_path_truth_.poses.size();
 #endif
 
       std::this_thread::sleep_for(50ms);

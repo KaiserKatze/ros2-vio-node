@@ -49,7 +49,7 @@ Visualization Manager:
       Buffer Length: 1
       Class: rviz_default_plugins/Path
       Color: 255; 25; 0
-      Enabled: true
+      Enabled: false
       Head Diameter: 0.30000001192092896
       Head Length: 0.20000000298023224
       Length: 0.30000001192092896
@@ -72,12 +72,12 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /path_fast_est
-      Value: true
+      Value: false
     - Alpha: 1
       Buffer Length: 1
       Class: rviz_default_plugins/Path
       Color: 255; 255; 0
-      Enabled: true
+      Enabled: false
       Head Diameter: 0.30000001192092896
       Head Length: 0.20000000298023224
       Length: 0.30000001192092896
@@ -100,7 +100,7 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /path_fuse_est
-      Value: true
+      Value: false
     - Alpha: 1
       Buffer Length: 1
       Class: rviz_default_plugins/Path
@@ -183,7 +183,7 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /path_preintegrate
+        Value: /path_preintegrate_est
       Value: true
   Enabled: true
   Global Options:
@@ -231,7 +231,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 200
+      Distance: 25
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -267,5 +267,5 @@ Window Geometry:
   Views:
     collapsed: false
   Width: 1354
-  X: -32
-  Y: -32
+  X: -26
+  Y: -5
