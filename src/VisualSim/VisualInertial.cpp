@@ -675,6 +675,8 @@ private:
           = std::max(bound_imu.y(), std::abs(estimated_position_imu.y()));
       bound_imu.z()
           = std::max(bound_imu.z(), std::abs(estimated_position_imu.z()));
+
+      datum_prev = datum_imu;
     } // end for
 
     std::print(stderr, "\nBoundary[IMU]: [x: {:.4e}, y: {:.4e}, z: {:.4e}]\n",

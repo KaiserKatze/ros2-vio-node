@@ -864,7 +864,7 @@ struct VisualSim
           // IMU 在世界坐标系下当前帧的位置
           Point3 imu_true_current_position{Point3::Zero()};
           // IMU 在世界坐标系下当前帧的朝向
-          Attitude imu_true_current_attitude{Quaternion::Identity()};
+          Attitude imu_true_current_attitude{Attitude::Identity()};
           std::tie(imu_true_current_position, imu_true_current_attitude)
               = GetPose(imu_time);
           Quaternion imu_true_current_quaternion{imu_true_current_attitude};
@@ -893,13 +893,11 @@ struct VisualSim
 
           // 转换坐标系：从世界坐标系转为相机坐标系
           imu_true_current_angular_velocity
-              = imu_true_current_attitude.transpose()
-                * imu_true_current_angular_velocity;
+              = imu_true_current_attitude * imu_true_current_angular_velocity;
           imu_true_current_linear_velocity
-              = imu_true_current_attitude.transpose()
-                * imu_true_current_linear_velocity;
+              = imu_true_current_attitude * imu_true_current_linear_velocity;
           imu_true_current_linear_acceleration
-              = imu_true_current_attitude.transpose()
+              = imu_true_current_attitude
                 * imu_true_current_linear_acceleration;
           // 输出仿真 IMU 数据
           std::print(fout_imu0_data_csv,
