@@ -52,3 +52,11 @@ SortIncludes: true
 
 # 对齐连续的赋值语句中的等号
 AlignConsecutiveAssignments: true
+
+# 在 concept 关键字之前换行
+BreakBeforeConceptDeclarations: Always
+
+BreakBeforeTemplateCloser: true
+BreakBeforeTernaryOperators: true
+BreakTemplateDeclarations: Yes
+IndentRequiresClause: true

@@ -1,5 +1,2 @@
 # THIS IS A YAML FILE FOR CLANGD CONFIGURATION
 # @see: https://clangd.llvm.org/config.html
-
-CompileFlags:
-  Add: [-std=c++26]
