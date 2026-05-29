@@ -162,14 +162,12 @@ public:
                      OrientationMode mode, Point3 &linear_velocity,
                      Point3 &angular_velocity, Point3 &linear_acceleration)
   {
-    const value_type gravity_world_norm{9.81}; // m s^-2
-
 #if (ENABLE_ZUPT)
     if (time < time_static_)
     {
       linear_velocity     = Point3::Zero();
       angular_velocity    = Point3::Zero();
-      linear_acceleration = {0.0, 0.0, gravity_world_norm};
+      linear_acceleration = Point3::Zero();
       return;
     }
     else
@@ -196,7 +194,7 @@ public:
       linear_acceleration = {
           -radius * omega_ * omega_ * std::cos(omega_ * time),
           0.0,
-          gravity_world_norm,
+          0.0,
       };
     }
     else

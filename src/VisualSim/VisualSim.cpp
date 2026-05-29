@@ -896,6 +896,8 @@ struct VisualSim
               = imu_true_current_attitude * imu_true_current_angular_velocity;
           imu_true_current_linear_velocity
               = imu_true_current_attitude * imu_true_current_linear_velocity;
+          const value_type gravity_world_norm{9.81}; // m s^-2
+          imu_true_current_linear_acceleration.z() += gravity_world_norm;
           imu_true_current_linear_acceleration
               = imu_true_current_attitude
                 * imu_true_current_linear_acceleration;
