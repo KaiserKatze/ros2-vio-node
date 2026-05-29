@@ -613,6 +613,8 @@ private:
     std::print(fout_imu_euler_estimation_error,
                "time [s],x [m],y [m],z [m],"
                "vx [m s^-1],vy [m s^-1],vz [m s^-1],"
+               "dvx [m s^-1],dvy [m s^-1],dvz [m s^-1],"
+               "dx [m s^-1],dy [m s^-1],dz [m s^-1],"
                "err(x) [m],err(y) [m],err(z) [m],"
                "err(vx) [m s^-1],err(vy) [m s^-1],err(vz) [m s^-1]\n");
 
@@ -682,14 +684,27 @@ private:
           "{:.18f},{:.18f},{:.18f},"
           // 线速度
           "{:.18f},{:.18f},{:.18f},"
+          // 线速度变化量
+          "{:.18f},{:.18f},{:.18f},"
+          // 位置变化量
+          "{:.18f},{:.18f},{:.18f},"
           // 位置绝对误差
           "{:.18f},{:.18f},{:.18f},"
           // 线速度绝对误差
           "{:.18f},{:.18f},{:.18f}\n",
-          datum_imu.timestamp_, estimated_position_imu.x(),
-          estimated_position_imu.y(), estimated_position_imu.z(),
-          estimated_linear_velocity_imu.x(), estimated_linear_velocity_imu.y(),
-          estimated_linear_velocity_imu.z(),
+          datum_imu.timestamp_,              //
+          estimated_position_imu.x(),        //
+          estimated_position_imu.y(),        //
+          estimated_position_imu.z(),        //
+          estimated_linear_velocity_imu.x(), //
+          estimated_linear_velocity_imu.y(), //
+          estimated_linear_velocity_imu.z(), //
+          delta_velocity.x(),                //
+          delta_velocity.y(),                //
+          delta_velocity.z(),                //
+          delta_position.x(),                //
+          delta_position.y(),                //
+          delta_position.z(),                //
           std::abs(estimated_position_imu.x() - true_position.x()),
           std::abs(estimated_position_imu.y() - true_position.y()),
           std::abs(estimated_position_imu.z() - true_position.z()),
