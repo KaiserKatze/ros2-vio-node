@@ -200,11 +200,11 @@ struct DatumTruth
         const float qx{AbstractLoader::get_item_as_float(ss)};
         const float qy{AbstractLoader::get_item_as_float(ss)};
         const float qz{AbstractLoader::get_item_as_float(ss)};
-#if (DATASOURCE == DATASOURCE_EUROC)
         // 读取速度 (m s^-1)
         const float vx{AbstractLoader::get_item_as_float(ss)};
         const float vy{AbstractLoader::get_item_as_float(ss)};
         const float vz{AbstractLoader::get_item_as_float(ss)};
+#if (DATASOURCE == DATASOURCE_EUROC)
         // 读取陀螺仪偏差 (rad s^-1)
         const float bwx{AbstractLoader::get_item_as_float(ss)};
         const float bwy{AbstractLoader::get_item_as_float(ss)};
@@ -214,10 +214,6 @@ struct DatumTruth
         const float bay{AbstractLoader::get_item_as_float(ss)};
         const float baz{AbstractLoader::get_item_as_float(ss)};
 #elif (DATASOURCE == DATASOURCE_SIM)
-        // 读取速度 (m s^-1)
-        const float vx{0.0f};
-        const float vy{0.0f};
-        const float vz{0.0f};
         // 读取陀螺仪偏差 (rad s^-1)
         const float bwx{0.0f};
         const float bwy{0.0f};
@@ -504,7 +500,7 @@ private:
                  estimated_attitude_fast.y(), estimated_attitude_fast.z());
     } // end for
 
-    std::print(stderr, "[INFO] 估计轨迹已写入 {}.\n",
+    std::print(stderr, "[INFO] 估计轨迹已写入 {}\n",
                std::filesystem::absolute(path_temp_tum_file).string());
     // 利用 evo 提供的 SIM(3) 变换调整轨迹
     std::system(
@@ -611,8 +607,14 @@ private:
     Eigen::Vector3f estimated_angular_acceleration_imu{Eigen::Vector3f::Zero()};
     estimated_attitude_imu = zupt.EstimateOrientation();
 
-    // 统计信息
-    Eigen::Vector3f bound_imu{Eigen::Vector3f::Zero()};
+    // 统计信息 (记录使用欧拉法估计位置、线速度产生的绝对误差)
+    std::filesystem::path path_estimation_error{"VisualInertial-Imu-Error.csv"};
+    std::ofstream fout_imu_euler_estimation_error(path_estimation_error);
+    std::print(fout_imu_euler_estimation_error,
+               "time [s],x [m],y [m],z [m],"
+               "vx [m s^-1],vy [m s^-1],vz [m s^-1],"
+               "err(x) [m],err(y) [m],err(z) [m],"
+               "err(vx) [m s^-1],err(vy) [m s^-1],err(vz) [m s^-1]\n");
 
     DatumImu datum_prev;
     for (bool first_loop{true}; const DatumImu &datum_imu : data_imu_)
@@ -668,19 +670,40 @@ private:
       PushPose(msg_path_imu_, datum_imu.timestamp_, estimated_attitude_imu,
                estimated_position_imu);
 
+      const auto datum_true{Interpolate(data_truth_, datum_imu.timestamp_)};
+      Eigen::Vector3f true_position{datum_true.position_};
+      Eigen::Vector3f true_velocity{datum_true.velocity_};
       // 更新统计信息
-      bound_imu.x()
-          = std::max(bound_imu.x(), std::abs(estimated_position_imu.x()));
-      bound_imu.y()
-          = std::max(bound_imu.y(), std::abs(estimated_position_imu.y()));
-      bound_imu.z()
-          = std::max(bound_imu.z(), std::abs(estimated_position_imu.z()));
+      std::print(
+          fout_imu_euler_estimation_error,
+          // 时间戳
+          "{:020d}, "
+          // 位置
+          "{:.18f},{:.18f},{:.18f},"
+          // 线速度
+          "{:.18f},{:.18f},{:.18f},"
+          // 位置绝对误差
+          "{:.18f},{:.18f},{:.18f},"
+          // 线速度绝对误差
+          "{:.18f},{:.18f},{:.18f}\n",
+          datum_imu.timestamp_, estimated_position_imu.x(),
+          estimated_position_imu.y(), estimated_position_imu.z(),
+          estimated_linear_velocity_imu.x(), estimated_linear_velocity_imu.y(),
+          estimated_linear_velocity_imu.z(),
+          std::abs(estimated_position_imu.x() - true_position.x()),
+          std::abs(estimated_position_imu.y() - true_position.y()),
+          std::abs(estimated_position_imu.z() - true_position.z()),
+          std::abs(estimated_linear_velocity_imu.x() - true_velocity.x()),
+          std::abs(estimated_linear_velocity_imu.y() - true_velocity.y()),
+          std::abs(estimated_linear_velocity_imu.z() - true_velocity.z())
+      );
 
       datum_prev = datum_imu;
     } // end for
 
-    std::print(stderr, "\nBoundary[IMU]: [x: {:.4e}, y: {:.4e}, z: {:.4e}]\n",
-               bound_imu.x(), bound_imu.y(), bound_imu.z());
+    fout_imu_euler_estimation_error.flush();
+    std::print(stderr, "误差评估文件已写入 {}\n",
+               std::filesystem::absolute(path_estimation_error).string());
   }
 
   void PreintegrateImu()
