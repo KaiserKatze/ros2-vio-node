@@ -18,7 +18,8 @@
  * - 维护滑动窗口的增量统计（O(1) 更新）
  * - 移除不必要的数据遍历，利用线性系统更新期望与方差
  */
-template <typename value_type, std::size_t WindowSize = 64> class ZUPT
+template <typename value_type, std::size_t WindowSize = 64>
+class ZUPT
 {
 public:
   using chunk_type  = Eigen::Vector<value_type, 3>;
@@ -75,7 +76,8 @@ public:
       // 当前状态被判断为非静止，无法可靠估计姿态
       std::print(
           stderr,
-          "[WARN] Cannot estimate orientation reliably when not static.\n");
+          "[WARN] Cannot estimate orientation reliably when not static.\n"
+      );
     }
     // 使用 IQR 方法，去除外点，计算平均加速度向量，作为重力方向的估计
     std::vector<std::pair<chunk_type, value_type>> points;
@@ -87,7 +89,18 @@ public:
                      // 返回一个 pair，second 存储 norm()
                      return std::make_pair(vec, vec.norm());
                    });
+    // std::print(stderr, "[INFO] ZUPT 缓存池 (大小: {}) 加速度向量及其范数 =\n",
+    //            points.size());
+    // for (auto &[vec, vec_norm] : points)
+    // {
+    //   std::print(stderr, "\t[{:.4f}, {:.4f}, {:.4f}]; {:.4f}\n", //
+    //              vec.x(), vec.y(), vec.z(), vec_norm);
+    // }
     const chunk_type acc_mean{GetAverage_IQR(points)};
+    std::print(stderr,
+               "[INFO] 利用 IQR 方法计算得出 ZUPT 缓存池的平均比力 =\n"
+               "\t[{:.4f}, {:.4f}, {:.4f}]\n",
+               acc_mean.x(), acc_mean.y(), acc_mean.z());
     if (!config_.IsAccelWithinGravityRange(acc_mean))
     {
       // 平均加速度不在重力范围内，无法可靠估计姿态
@@ -100,7 +113,7 @@ public:
                  (this->config_.local_gravity + this->config_.g_tolerance));
     }
     const chunk_type gravity_sensor{-acc_mean.normalized()};
-    const chunk_type gravity_world{chunk_type::UnitX()};
+    const chunk_type gravity_world{-chunk_type::UnitZ()};
 
     // https://runebook.dev/en/docs/eigen3/classeigen_1_1quaternion/acdb1eb44eb733b24749bc7892badde64
     const value_type dot_product{gravity_world.dot(gravity_sensor)};
@@ -125,8 +138,19 @@ public:
    * @brief 更新一帧 IMU 数据并判断是否静止
    * @return 当前是否被判断为静止状态
    */
-  bool Update(const data_type &imu_data)
+  bool Update(const chunk_type &linear_acceleration,
+              const chunk_type &angular_velocity)
   {
+    // std::print(stderr,
+    //            "ZUPT 缓存池新增数据:\n"
+    //            "\t加速度 = [{:.4f}, {:.4f}, {:.4f}]\n"
+    //            "\t角速度 = [{:.4f}, {:.4f}, {:.4f}]\n",
+    //            linear_acceleration.x(), linear_acceleration.y(),
+    //            linear_acceleration.z(), angular_velocity.x(),
+    //            angular_velocity.y(), angular_velocity.z());
+    const data_type imu_data{
+        std::make_pair(linear_acceleration, angular_velocity),
+    };
     // 记录推送前的状态，决定是否需要从统计量中“减去”被挤出的旧数据
     const bool was_full{window_.full()};
 
@@ -137,7 +161,8 @@ public:
     const value_type new_gyro_norm{ZUPT::GetGyroNorm(imu_data)};
     const chunk_type new_acc{ZUPT::GetAccel(imu_data)};
     const chunk_type new_acc_sq{
-        new_acc.array().square().matrix()}; // 逐元素平方
+        new_acc.array().square().matrix()
+    }; // 逐元素平方
 
     // === 统计量加上新数据 ===
     gyro_norm_sum_ += new_gyro_norm;
@@ -189,11 +214,13 @@ public:
      * 加速度各分量方差判断 (D(X) = E(X^2) - [E(X)]^2)
      * ========================= */
     const chunk_type acc_mean_sq{
-        acc_mean.array().square().matrix()}; // 逐元素平方
+        acc_mean.array().square().matrix()
+    }; // 逐元素平方
     chunk_type acc_variance{accel_sq_sum_ * denom - acc_mean_sq};
     // 抵消由于浮点数精度累积误差可能导致的极微小负数
-    value_type acc_total_variance{std::max(
-        static_cast<value_type>(0.0), acc_variance.sum())}; // 取最大分量方差
+    value_type acc_total_variance{
+        std::max(static_cast<value_type>(0.0), acc_variance.sum())
+    }; // 取最大分量方差
 
     if (acc_total_variance > config_.accelerometer_variance_threshold)
     {

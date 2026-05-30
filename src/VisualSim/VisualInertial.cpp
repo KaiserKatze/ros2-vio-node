@@ -137,6 +137,7 @@ struct DatumImu
         const DatumImu datum_fast{
             timestamp,
             {gx, gy, gz},
+#if (DATASOURCE == DATASOURCE_EUROC)
             // EuRoC MAV 数据集的特殊要求:
             // 将 IMU 参考系的 X 轴映射为 Z 轴;
             // 将 IMU 参考系的 Y 轴映射为 -Y 轴;
@@ -145,6 +146,9 @@ struct DatumImu
             // 而 IMU0 的三轴与 VICON0 或 LEICA0 的不同,
             // 只有按上述方式重映射以后，双方的标架才近似重合.
             {az, -ay, ax},
+#else
+            {ax, ay, az},
+#endif
         };
         data.push_back(datum_fast);
       }
@@ -579,8 +583,8 @@ private:
         first_loop  = false;
         continue;
       }
-      if (!zupt.Update(std::make_pair(datum_imu.linear_acceleration_,
-                                      datum_imu.angular_velocity_)))
+      if (!zupt.Update(datum_imu.linear_acceleration_,
+                       datum_imu.angular_velocity_))
       {
         datum_last = datum_imu;
         break;
@@ -606,6 +610,24 @@ private:
     Eigen::Vector3f estimated_angular_velocity_imu{Eigen::Vector3f::Zero()};
     Eigen::Vector3f estimated_angular_acceleration_imu{Eigen::Vector3f::Zero()};
     estimated_attitude_imu = zupt.EstimateOrientation();
+    {
+      Eigen::Matrix3f estimated_attitude_imu_matrix{estimated_attitude_imu};
+      std::print(stderr,
+                 "[INFO] ZUPT 估计初始姿态为[\n"
+                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
+                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
+                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
+                 "]\n",
+                 estimated_attitude_imu_matrix(0, 0),
+                 estimated_attitude_imu_matrix(0, 1),
+                 estimated_attitude_imu_matrix(0, 2),
+                 estimated_attitude_imu_matrix(1, 0),
+                 estimated_attitude_imu_matrix(1, 1),
+                 estimated_attitude_imu_matrix(1, 2),
+                 estimated_attitude_imu_matrix(2, 0),
+                 estimated_attitude_imu_matrix(2, 1),
+                 estimated_attitude_imu_matrix(2, 2));
+    }
 
     // 统计信息 (记录使用欧拉法估计位置、线速度产生的绝对误差)
     std::filesystem::path path_estimation_error{"VisualInertial-Imu-Error.csv"};
@@ -1034,6 +1056,19 @@ public:
         this->get_parameter("path_truth_csv").as_string(),
     };
     path_truth_csv_ = path_truth_csv;
+
+    if (path_estimation_csv.empty())
+    {
+      throw std::runtime_error{"'path_estimation_csv' not specified."};
+    }
+    if (path_imu_csv.empty())
+    {
+      throw std::runtime_error{"'path_imu_csv' not specified."};
+    }
+    if (path_truth_csv.empty())
+    {
+      throw std::runtime_error{"'path_truth_csv' not specified."};
+    }
 
     for (auto path_obj : {path_estimation_csv, path_imu_csv, path_truth_csv})
     {
