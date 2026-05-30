@@ -642,6 +642,50 @@ private:
                "err(x) [m],err(y) [m],err(z) [m],"
                "err(vx) [m s^-1],err(vy) [m s^-1],err(vz) [m s^-1]\n");
 
+    // 写入初始状态及其误差
+    {
+      const auto datum_true{Interpolate(data_truth_, 0)};
+      Eigen::Vector3f true_position{datum_true.position_};
+      Eigen::Vector3f true_velocity{datum_true.velocity_};
+      // 更新统计信息
+      std::print(
+          fout_imu_euler_estimation_error,
+          // 时间戳
+          "{:020d}, "
+          // 位置
+          "{:.18f},{:.18f},{:.18f},"
+          // 线速度
+          "{:.18f},{:.18f},{:.18f},"
+          // 线速度变化量
+          "{:.18f},{:.18f},{:.18f},"
+          // 位置变化量
+          "{:.18f},{:.18f},{:.18f},"
+          // 位置绝对误差
+          "{:.18f},{:.18f},{:.18f},"
+          // 线速度绝对误差
+          "{:.18f},{:.18f},{:.18f}\n",
+          0,                                 //
+          estimated_position_imu.x(),        //
+          estimated_position_imu.y(),        //
+          estimated_position_imu.z(),        //
+          estimated_linear_velocity_imu.x(), //
+          estimated_linear_velocity_imu.y(), //
+          estimated_linear_velocity_imu.z(), //
+          0.0,                               //
+          0.0,                               //
+          0.0,                               //
+          0.0,                               //
+          0.0,                               //
+          0.0,                               //
+          std::abs(estimated_position_imu.x() - true_position.x()),
+          std::abs(estimated_position_imu.y() - true_position.y()),
+          std::abs(estimated_position_imu.z() - true_position.z()),
+          std::abs(estimated_linear_velocity_imu.x() - true_velocity.x()),
+          std::abs(estimated_linear_velocity_imu.y() - true_velocity.y()),
+          std::abs(estimated_linear_velocity_imu.z() - true_velocity.z())
+      );
+    }
+
     DatumImu datum_prev;
     for (bool first_loop{true}; const DatumImu &datum_imu : data_imu_)
     {
