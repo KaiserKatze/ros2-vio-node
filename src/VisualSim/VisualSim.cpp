@@ -239,7 +239,7 @@ struct VisualSim
   StereoRig<value_type> rig_{};
   // 仿真双目相机运动路径
   using OrientationMode = Path<value_type>::OrientationMode;
-  OrientationMode orientation_mode_{OrientationMode::StraightLine};
+  OrientationMode orientation_mode_{OrientationMode::Parabola};
   Path<value_type> path_{};
   const value_type time_limit_simulation_{
       // 计算匀速圆周运动恰好旋转两周所需的时间
