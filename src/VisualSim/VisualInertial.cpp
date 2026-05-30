@@ -735,7 +735,7 @@ private:
           rotation_vector_in_sensor_frame.norm(),
           rotation_vector_in_sensor_frame.normalized(),
       });
-      estimated_attitude_imu = estimated_attitude_imu * delta_attitude;
+      estimated_attitude_imu = (estimated_attitude_imu * delta_attitude).normalized();
 
       PushPose(msg_path_imu_, datum_imu.timestamp_, estimated_attitude_imu,
                estimated_position_imu);
