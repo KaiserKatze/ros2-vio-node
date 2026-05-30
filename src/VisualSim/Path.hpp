@@ -23,7 +23,6 @@ struct Path
   const value_type gravity_world_norm{9.81}; // m s^-2
 
   const value_type omega_{0.5}; // 角速率 (rad/s) 或 平抛水平线速度 (m/s)
-  bool print_debug_info_{true};
 
   /**
  * @brief 相机朝向模式
@@ -109,18 +108,6 @@ public:
       {
         pos_body.z() -= static_cast<value_type>(0.3 * room.height_);
       }
-    }
-
-    // 初始位置: [cx+r,cy,cz]
-
-    if (print_debug_info_)
-    {
-      std::print(stderr,
-                 "[DEBUG] (匀速圆周运动) 运动参数:\n"
-                 "\t圆心在世界坐标系下的坐标 = [{:.1f}, {:.1f}, {:.1f}]\n"
-                 "\t角速率 = {:.1f}\n"
-                 "\t轨迹半径 = {:.1f}\n",
-                 center.x(), center.y(), center.z(), omega_, radius);
     }
 
     // 4. 计算相机本体的朝向 (Rotation)

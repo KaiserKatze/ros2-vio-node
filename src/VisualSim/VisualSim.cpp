@@ -372,6 +372,8 @@ struct VisualSim
 
   void Start()
   {
+#if ((PUBLISH_GT_PATH || PUBLISH_EST_PATH || PUBLISH_IMAGE)                    \
+     && !(OUTPUT_AS_EUROC || OUTPUT_AS_INNOV))
     const size_t min_count_common_landmarks{10};
 
     // 投影矩阵 P = K [R, t]
@@ -426,6 +428,7 @@ struct VisualSim
       // std::print("左目相机投影矩阵 =\n{}\n右目相机投影矩阵 =\n{}\n",
       //            cv_projection_matrix_left, cv_projection_matrix_right);
     }
+#endif
 
 #if (OUTPUT_AS_INNOV)
     // 创建文件结构
@@ -557,12 +560,15 @@ struct VisualSim
                "a_RS_S_x [m s^-2],a_RS_S_y [m s^-2],a_RS_S_z [m s^-2]\n");
 #endif
 
+#if ((PUBLISH_GT_PATH || PUBLISH_EST_PATH || PUBLISH_IMAGE)                    \
+     && !(OUTPUT_AS_EUROC || OUTPUT_AS_INNOV))
     // 内参矩阵 K
     const auto cv_camera_matrix{cv_projection_matrix_left(cv::Range(0, 3),
                                                           cv::Range(0, 3))};
 
     bool first_loop{true};
     Frame prev_frame;
+#endif
 
     for (value_type time = 0.0; time < time_limit_simulation_; time += step_)
     {
@@ -585,8 +591,10 @@ struct VisualSim
       std::print(fout_cam1_data_csv, "{0:020d},{0:020d}.png\n", timestamp_ns);
 #endif
 
-      // 直接拿到可见顶点的全局索引，而不是三维坐标系本身了
       const Frame frame{path_.GetImage(rig_, time, room_, orientation_mode_)};
+
+#if ((PUBLISH_GT_PATH || PUBLISH_EST_PATH || PUBLISH_IMAGE)                    \
+     && !(OUTPUT_AS_EUROC || OUTPUT_AS_INNOV))
       const size_t count_common_landmarks{std::get<0>(frame).size()};
 
       // std::print(stderr, "\t当前场景中，双目可见路标点有 {} 个.\n",
@@ -782,143 +790,6 @@ struct VisualSim
                 - estimated_current_attitude * delta_position;
         }
 
-        Point3 true_current_position{Point3::Zero()};
-        Quaternion true_current_attitude{Quaternion::Identity()};
-        std::tie(true_current_position, true_current_attitude) = GetPose(time);
-
-#if (OUTPUT_AS_INNOV || OUTPUT_AS_EUROC)
-        // 计算真值的旋转角度、单位化平移向量
-        Point3 true_prev_position{Point3::Zero()};
-        Quaternion true_prev_attitude{Quaternion::Identity()};
-        std::tie(true_prev_position, true_prev_attitude)
-            = GetPose(time - step_);
-        Point3 true_delta_position{
-            true_current_position - true_prev_position,
-        };
-        Quaternion true_delta_attitude{
-            // C_21 = F_2 F_1.transpose
-            true_current_attitude * true_prev_attitude.conjugate(),
-        };
-        Eigen::AngleAxis<value_type> true_rotation_angle_axis{
-            true_delta_attitude,
-        };
-        Point3 true_rotation_vector{
-            true_rotation_angle_axis.angle() * true_rotation_angle_axis.axis(),
-        };
-#endif
-#if (OUTPUT_AS_INNOV)
-        // 写入数据文件
-        std::print(fout_fake_data_in_world_frame_csv,
-                   // 时间戳
-                   "{:020d}, "
-                   // 旋转向量
-                   "{:.18f}, {:.18f}, {:.18f}, "
-                   // 平移方向
-                   "{:.18f}, {:.18f}, {:.18f}\n",
-                   timestamp_ns, //
-                   true_rotation_vector.x(), true_rotation_vector.y(),
-                   true_rotation_vector.z(), //
-                   true_delta_position.x(), true_delta_position.y(),
-                   true_delta_position.z());
-        // 转换坐标系：从世界坐标系转为相机坐标系
-        true_delta_position
-            = true_prev_attitude.conjugate() * true_delta_position;
-        true_rotation_vector
-            = true_prev_attitude.conjugate() * true_rotation_vector;
-        // 写入数据文件
-        std::print(fout_fake_data_in_camera_frame_csv,
-                   // 时间戳
-                   "{:020d}, "
-                   // 旋转向量
-                   "{:.18f}, {:.18f}, {:.18f}, "
-                   // 平移方向
-                   "{:.18f}, {:.18f}, {:.18f}\n",
-                   timestamp_ns, //
-                   true_rotation_vector.x(), true_rotation_vector.y(),
-                   true_rotation_vector.z(), //
-                   true_delta_position.x(), true_delta_position.y(),
-                   true_delta_position.z());
-#endif
-#if (OUTPUT_AS_EUROC)
-        // 保证 IMU 与 Ground Truth 的数据帧率相同
-        for (int i = 0; i < rate_ratio_; ++i)
-        {
-          // IMU 的时间步长 (秒)
-          // IMU 的当前时间戳
-          const value_type imu_time{time + i * imu_step_};
-          const auto imu_timestamp_ns{
-              static_cast<std::int64_t>(imu_time * 1e9),
-          };
-          // 角速度矢量
-          Point3 imu_true_current_angular_velocity{Point3::Zero()};
-          // 线速度矢量
-          Point3 imu_true_current_linear_velocity{Point3::Zero()};
-          // 线加速度矢量
-          Point3 imu_true_current_linear_acceleration{Point3::Zero()};
-          // 获取 IMU 在世界坐标系下的线速度、角速度、线加速度
-          path_.GetKinematics(room_, imu_time, orientation_mode_,
-                              imu_true_current_linear_velocity,
-                              imu_true_current_angular_velocity,
-                              imu_true_current_linear_acceleration);
-
-          // IMU 在世界坐标系下当前帧的位置
-          Point3 imu_true_current_position{Point3::Zero()};
-          // IMU 在世界坐标系下当前帧的朝向
-          Attitude imu_true_current_attitude{Attitude::Identity()};
-          std::tie(imu_true_current_position, imu_true_current_attitude)
-              = GetPose(imu_time);
-          Quaternion imu_true_current_quaternion{imu_true_current_attitude};
-
-          // 输出仿真 Ground Truth 数据
-          std::print(
-              fout_groundtruth_csv,
-              // 时间戳
-              "{:020d}, "
-              // 位置
-              "{:.18f}, {:.18f}, {:.18f}, "
-              // 朝向
-              "{:.18f}, {:.18f}, {:.18f}, {:.18f}, "
-              // 速度
-              "{:.18f}, {:.18f}, {:.18f}\n",
-              imu_timestamp_ns, //
-              imu_true_current_position.x(), imu_true_current_position.y(),
-              imu_true_current_position.z(), //
-              imu_true_current_quaternion.w(), imu_true_current_quaternion.x(),
-              imu_true_current_quaternion.y(),
-              imu_true_current_quaternion.z(), //
-              imu_true_current_linear_velocity.x(),
-              imu_true_current_linear_velocity.y(),
-              imu_true_current_linear_velocity.z() //
-          );
-
-          // 转换坐标系：从世界坐标系转为相机坐标系
-          imu_true_current_angular_velocity
-              = imu_true_current_attitude * imu_true_current_angular_velocity;
-          imu_true_current_linear_velocity
-              = imu_true_current_attitude * imu_true_current_linear_velocity;
-          const value_type gravity_world_norm{9.81}; // m s^-2
-          imu_true_current_linear_acceleration.z() += gravity_world_norm;
-          imu_true_current_linear_acceleration
-              = imu_true_current_attitude
-                * imu_true_current_linear_acceleration;
-          // 输出仿真 IMU 数据
-          std::print(fout_imu0_data_csv,
-                     // 时间戳
-                     "{:020d}, "
-                     // 角速度
-                     "{:.18f}, {:.18f}, {:.18f}, "
-                     // 加速度
-                     "{:.18f}, {:.18f}, {:.18f}\n",
-                     imu_timestamp_ns, //
-                     imu_true_current_angular_velocity.x(),
-                     imu_true_current_angular_velocity.y(),
-                     imu_true_current_angular_velocity.z(), //
-                     imu_true_current_linear_acceleration.x(),
-                     imu_true_current_linear_acceleration.y(),
-                     imu_true_current_linear_acceleration.z());
-        }
-#endif
-
         // std::print(stderr,
         //            "\t===== 位姿估计误差 =====\n"
         //            "\t真实位置: [{:.3f}, {:.3f}, {:.3f}];\n"
@@ -939,6 +810,142 @@ struct VisualSim
         //            std::abs(true_current_attitude.y() - estimated_current_attitude.y()),
         //            std::abs(true_current_attitude.z() - estimated_current_attitude.z()));
       }
+#endif
+
+      Point3 true_current_position{Point3::Zero()};
+      Quaternion true_current_attitude{Quaternion::Identity()};
+      std::tie(true_current_position, true_current_attitude) = GetPose(time);
+
+#if (OUTPUT_AS_INNOV || OUTPUT_AS_EUROC)
+      // 计算真值的旋转角度、单位化平移向量
+      Point3 true_prev_position{Point3::Zero()};
+      Quaternion true_prev_attitude{Quaternion::Identity()};
+      std::tie(true_prev_position, true_prev_attitude) = GetPose(time - step_);
+      Point3 true_delta_position{
+          true_current_position - true_prev_position,
+      };
+      Quaternion true_delta_attitude{
+          // C_21 = F_2 F_1.transpose
+          true_current_attitude * true_prev_attitude.conjugate(),
+      };
+      Eigen::AngleAxis<value_type> true_rotation_angle_axis{
+          true_delta_attitude,
+      };
+      Point3 true_rotation_vector{
+          true_rotation_angle_axis.angle() * true_rotation_angle_axis.axis(),
+      };
+#endif
+#if (OUTPUT_AS_INNOV)
+      // 写入数据文件
+      std::print(fout_fake_data_in_world_frame_csv,
+                 // 时间戳
+                 "{:020d}, "
+                 // 旋转向量
+                 "{:.18f}, {:.18f}, {:.18f}, "
+                 // 平移方向
+                 "{:.18f}, {:.18f}, {:.18f}\n",
+                 timestamp_ns, //
+                 true_rotation_vector.x(), true_rotation_vector.y(),
+                 true_rotation_vector.z(), //
+                 true_delta_position.x(), true_delta_position.y(),
+                 true_delta_position.z());
+      // 转换坐标系：从世界坐标系转为相机坐标系
+      true_delta_position
+          = true_prev_attitude.conjugate() * true_delta_position;
+      true_rotation_vector
+          = true_prev_attitude.conjugate() * true_rotation_vector;
+      // 写入数据文件
+      std::print(fout_fake_data_in_camera_frame_csv,
+                 // 时间戳
+                 "{:020d}, "
+                 // 旋转向量
+                 "{:.18f}, {:.18f}, {:.18f}, "
+                 // 平移方向
+                 "{:.18f}, {:.18f}, {:.18f}\n",
+                 timestamp_ns, //
+                 true_rotation_vector.x(), true_rotation_vector.y(),
+                 true_rotation_vector.z(), //
+                 true_delta_position.x(), true_delta_position.y(),
+                 true_delta_position.z());
+#endif
+#if (OUTPUT_AS_EUROC)
+      // 保证 IMU 与 Ground Truth 的数据帧率相同
+      for (int i = 0; i < rate_ratio_; ++i)
+      {
+        // IMU 的时间步长 (秒)
+        // IMU 的当前时间戳
+        const value_type imu_time{time + i * imu_step_};
+        const auto imu_timestamp_ns{
+            static_cast<std::int64_t>(imu_time * 1e9),
+        };
+        // 角速度矢量
+        Point3 imu_true_current_angular_velocity{Point3::Zero()};
+        // 线速度矢量
+        Point3 imu_true_current_linear_velocity{Point3::Zero()};
+        // 线加速度矢量
+        Point3 imu_true_current_linear_acceleration{Point3::Zero()};
+        // 获取 IMU 在世界坐标系下的线速度、角速度、线加速度
+        path_.GetKinematics(room_, imu_time, orientation_mode_,
+                            imu_true_current_linear_velocity,
+                            imu_true_current_angular_velocity,
+                            imu_true_current_linear_acceleration);
+
+        // IMU 在世界坐标系下当前帧的位置
+        Point3 imu_true_current_position{Point3::Zero()};
+        // IMU 在世界坐标系下当前帧的朝向
+        Attitude imu_true_current_attitude{Attitude::Identity()};
+        std::tie(imu_true_current_position, imu_true_current_attitude)
+            = GetPose(imu_time);
+        Quaternion imu_true_current_quaternion{imu_true_current_attitude};
+
+        // 输出仿真 Ground Truth 数据
+        std::print(
+            fout_groundtruth_csv,
+            // 时间戳
+            "{:020d}, "
+            // 位置
+            "{:.18f}, {:.18f}, {:.18f}, "
+            // 朝向
+            "{:.18f}, {:.18f}, {:.18f}, {:.18f}, "
+            // 速度
+            "{:.18f}, {:.18f}, {:.18f}\n",
+            imu_timestamp_ns, //
+            imu_true_current_position.x(), imu_true_current_position.y(),
+            imu_true_current_position.z(), //
+            imu_true_current_quaternion.w(), imu_true_current_quaternion.x(),
+            imu_true_current_quaternion.y(),
+            imu_true_current_quaternion.z(), //
+            imu_true_current_linear_velocity.x(),
+            imu_true_current_linear_velocity.y(),
+            imu_true_current_linear_velocity.z() //
+        );
+
+        // 转换坐标系：从世界坐标系转为相机坐标系
+        imu_true_current_angular_velocity
+            = imu_true_current_attitude * imu_true_current_angular_velocity;
+        imu_true_current_linear_velocity
+            = imu_true_current_attitude * imu_true_current_linear_velocity;
+        const value_type gravity_world_norm{9.81}; // m s^-2
+        imu_true_current_linear_acceleration.z() += gravity_world_norm;
+        imu_true_current_linear_acceleration
+            = imu_true_current_attitude * imu_true_current_linear_acceleration;
+        // 输出仿真 IMU 数据
+        std::print(fout_imu0_data_csv,
+                   // 时间戳
+                   "{:020d}, "
+                   // 角速度
+                   "{:.18f}, {:.18f}, {:.18f}, "
+                   // 加速度
+                   "{:.18f}, {:.18f}, {:.18f}\n",
+                   imu_timestamp_ns, //
+                   imu_true_current_angular_velocity.x(),
+                   imu_true_current_angular_velocity.y(),
+                   imu_true_current_angular_velocity.z(), //
+                   imu_true_current_linear_acceleration.x(),
+                   imu_true_current_linear_acceleration.y(),
+                   imu_true_current_linear_acceleration.z());
+      }
+#endif
 
 #if (START_VISUALIZATION || PUBLISH_IMAGE || OUTPUT_AS_EUROC)
       // 绘制相机图像
