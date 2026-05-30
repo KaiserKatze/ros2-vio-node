@@ -94,6 +94,7 @@ public:
       // 把 omega_ 当作初速度，进行平抛运动
       else
       {
+        time -= static_cast<value_type>(1.0);
         pos_body = {
             angle,
             0.0,
@@ -242,6 +243,7 @@ public:
       // 把 omega_ 当作初速度，进行平抛运动
       else
       {
+        time -= static_cast<value_type>(1.0);
         linear_velocity = {
             omega_,
             0.0,
