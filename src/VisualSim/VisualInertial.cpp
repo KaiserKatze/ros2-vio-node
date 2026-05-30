@@ -572,8 +572,17 @@ private:
     // 世界坐标系下的重力加速度
     const Eigen::Vector3f gravity_world{0.0f, 0.0f, -gravity_world_norm};
 
+    // 初始状态
+    Eigen::Vector3f estimated_position_imu{Eigen::Vector3f::Zero()};
+    Eigen::Quaternionf estimated_attitude_imu{Eigen::Quaternionf::Identity()};
+    Eigen::Vector3f estimated_linear_velocity_imu{Eigen::Vector3f::Zero()};
+    Eigen::Vector3f estimated_linear_acceleration_imu{Eigen::Vector3f::Zero()};
+    Eigen::Vector3f estimated_angular_velocity_imu{Eigen::Vector3f::Zero()};
+    Eigen::Vector3f estimated_angular_acceleration_imu{Eigen::Vector3f::Zero()};
+
     // 引入“零速更新”机制，检测起飞时刻
     ZUPT<float> zupt{};
+    bool is_orientation_estimated{false};
 
     DatumImu datum_first;
     DatumImu datum_last;
@@ -584,6 +593,11 @@ private:
         datum_first = datum_imu;
         first_loop  = false;
         continue;
+      }
+      if (zupt.IsFull() && !is_orientation_estimated)
+      { // 当样本足够多时，如果尚未预测过初始朝向，就立即进行预测
+        estimated_attitude_imu   = zupt.EstimateOrientation();
+        is_orientation_estimated = true;
       }
       if (!zupt.Update(datum_imu.linear_acceleration_,
                        datum_imu.angular_velocity_))
@@ -604,14 +618,11 @@ private:
     // 其机体坐标系（即 IMU 坐标系）的 X,Y,Z 三轴大致上
     // 分别与世界坐标系的 Z,-Y,X 三轴对应
 
-    // 初始状态
-    Eigen::Vector3f estimated_position_imu{Eigen::Vector3f::Zero()};
-    Eigen::Quaternionf estimated_attitude_imu{Eigen::Quaternionf::Identity()};
-    Eigen::Vector3f estimated_linear_velocity_imu{Eigen::Vector3f::Zero()};
-    Eigen::Vector3f estimated_linear_acceleration_imu{Eigen::Vector3f::Zero()};
-    Eigen::Vector3f estimated_angular_velocity_imu{Eigen::Vector3f::Zero()};
-    Eigen::Vector3f estimated_angular_acceleration_imu{Eigen::Vector3f::Zero()};
-    estimated_attitude_imu = zupt.EstimateOrientation();
+    if (!is_orientation_estimated)
+    { // 如果尚未预测过初始朝向，就立即进行预测
+      estimated_attitude_imu = zupt.EstimateOrientation();
+    }
+
     {
       Eigen::Matrix3f estimated_attitude_imu_matrix{estimated_attitude_imu};
       std::print(stderr,
@@ -635,56 +646,15 @@ private:
     std::filesystem::path path_estimation_error{"VisualInertial-Imu-Error.csv"};
     std::ofstream fout_imu_euler_estimation_error(path_estimation_error);
     std::print(fout_imu_euler_estimation_error,
-               "time [s],x [m],y [m],z [m],"
+               "time [s],"
+               "qw [],qx [],qy [],qz[],"
+               "x [m],y [m],z [m],"
                "vx [m s^-1],vy [m s^-1],vz [m s^-1],"
+               "ax [m s^-2], ay [m s^-2], az [m s^-2],"
                "dvx [m s^-1],dvy [m s^-1],dvz [m s^-1],"
                "dx [m s^-1],dy [m s^-1],dz [m s^-1],"
                "err(x) [m],err(y) [m],err(z) [m],"
                "err(vx) [m s^-1],err(vy) [m s^-1],err(vz) [m s^-1]\n");
-
-    // 写入初始状态及其误差
-    {
-      const auto datum_true{Interpolate(data_truth_, 0)};
-      Eigen::Vector3f true_position{datum_true.position_};
-      Eigen::Vector3f true_velocity{datum_true.velocity_};
-      // 更新统计信息
-      std::print(
-          fout_imu_euler_estimation_error,
-          // 时间戳
-          "{:020d}, "
-          // 位置
-          "{:.18f},{:.18f},{:.18f},"
-          // 线速度
-          "{:.18f},{:.18f},{:.18f},"
-          // 线速度变化量
-          "{:.18f},{:.18f},{:.18f},"
-          // 位置变化量
-          "{:.18f},{:.18f},{:.18f},"
-          // 位置绝对误差
-          "{:.18f},{:.18f},{:.18f},"
-          // 线速度绝对误差
-          "{:.18f},{:.18f},{:.18f}\n",
-          0,                                 //
-          estimated_position_imu.x(),        //
-          estimated_position_imu.y(),        //
-          estimated_position_imu.z(),        //
-          estimated_linear_velocity_imu.x(), //
-          estimated_linear_velocity_imu.y(), //
-          estimated_linear_velocity_imu.z(), //
-          0.0,                               //
-          0.0,                               //
-          0.0,                               //
-          0.0,                               //
-          0.0,                               //
-          0.0,                               //
-          std::abs(estimated_position_imu.x() - true_position.x()),
-          std::abs(estimated_position_imu.y() - true_position.y()),
-          std::abs(estimated_position_imu.z() - true_position.z()),
-          std::abs(estimated_linear_velocity_imu.x() - true_velocity.x()),
-          std::abs(estimated_linear_velocity_imu.y() - true_velocity.y()),
-          std::abs(estimated_linear_velocity_imu.z() - true_velocity.z())
-      );
-    }
 
     DatumImu datum_prev;
     for (bool first_loop{true}; const DatumImu &datum_imu : data_imu_)
@@ -693,6 +663,59 @@ private:
       {
         datum_prev = datum_imu;
         first_loop = false;
+
+        const auto datum_true{Interpolate(data_truth_, datum_imu.timestamp_)};
+        Eigen::Vector3f true_position{datum_true.position_};
+        Eigen::Vector3f true_velocity{datum_true.velocity_};
+        // 更新统计信息
+        std::print(
+            fout_imu_euler_estimation_error,
+            // 时间戳
+            "{:020d}, "
+            // 朝向
+            "{:.18f},{:.18f},{:.18f},{:.18f},"
+            // 位置
+            "{:.18f},{:.18f},{:.18f},"
+            // 线速度
+            "{:.18f},{:.18f},{:.18f},"
+            // 线加速度
+            "{:.18f},{:.18f},{:.18f},"
+            // 线速度变化量
+            "{:.18f},{:.18f},{:.18f},"
+            // 位置变化量
+            "{:.18f},{:.18f},{:.18f},"
+            // 位置绝对误差
+            "{:.18f},{:.18f},{:.18f},"
+            // 线速度绝对误差
+            "{:.18f},{:.18f},{:.18f}\n",
+            datum_imu.timestamp_,               //
+            estimated_attitude_imu.w(),         //
+            estimated_attitude_imu.x(),         //
+            estimated_attitude_imu.y(),         //
+            estimated_attitude_imu.z(),         //
+            estimated_position_imu.x(),         //
+            estimated_position_imu.y(),         //
+            estimated_position_imu.z(),         //
+            estimated_linear_velocity_imu.x(),  //
+            estimated_linear_velocity_imu.y(),  //
+            estimated_linear_velocity_imu.z(),  //
+            datum_imu.linear_acceleration_.x(), //
+            datum_imu.linear_acceleration_.y(), //
+            datum_imu.linear_acceleration_.z(), //
+            0.0,                                //
+            0.0,                                //
+            0.0,                                //
+            0.0,                                //
+            0.0,                                //
+            0.0,                                //
+            std::abs(estimated_position_imu.x() - true_position.x()),
+            std::abs(estimated_position_imu.y() - true_position.y()),
+            std::abs(estimated_position_imu.z() - true_position.z()),
+            std::abs(estimated_linear_velocity_imu.x() - true_velocity.x()),
+            std::abs(estimated_linear_velocity_imu.y() - true_velocity.y()),
+            std::abs(estimated_linear_velocity_imu.z() - true_velocity.z())
+        );
+
         continue;
       }
 
@@ -735,7 +758,8 @@ private:
           rotation_vector_in_sensor_frame.norm(),
           rotation_vector_in_sensor_frame.normalized(),
       });
-      estimated_attitude_imu = (estimated_attitude_imu * delta_attitude).normalized();
+      estimated_attitude_imu
+          = (estimated_attitude_imu * delta_attitude).normalized();
 
       PushPose(msg_path_imu_, datum_imu.timestamp_, estimated_attitude_imu,
                estimated_position_imu);
@@ -748,9 +772,13 @@ private:
           fout_imu_euler_estimation_error,
           // 时间戳
           "{:020d}, "
+          // 朝向
+          "{:.18f},{:.18f},{:.18f},{:.18f},"
           // 位置
           "{:.18f},{:.18f},{:.18f},"
           // 线速度
+          "{:.18f},{:.18f},{:.18f},"
+          // 线加速度
           "{:.18f},{:.18f},{:.18f},"
           // 线速度变化量
           "{:.18f},{:.18f},{:.18f},"
@@ -760,19 +788,26 @@ private:
           "{:.18f},{:.18f},{:.18f},"
           // 线速度绝对误差
           "{:.18f},{:.18f},{:.18f}\n",
-          datum_imu.timestamp_,              //
-          estimated_position_imu.x(),        //
-          estimated_position_imu.y(),        //
-          estimated_position_imu.z(),        //
-          estimated_linear_velocity_imu.x(), //
-          estimated_linear_velocity_imu.y(), //
-          estimated_linear_velocity_imu.z(), //
-          delta_velocity.x(),                //
-          delta_velocity.y(),                //
-          delta_velocity.z(),                //
-          delta_position.x(),                //
-          delta_position.y(),                //
-          delta_position.z(),                //
+          datum_imu.timestamp_,               //
+          estimated_attitude_imu.w(),         //
+          estimated_attitude_imu.x(),         //
+          estimated_attitude_imu.y(),         //
+          estimated_attitude_imu.z(),         //
+          estimated_position_imu.x(),         //
+          estimated_position_imu.y(),         //
+          estimated_position_imu.z(),         //
+          estimated_linear_velocity_imu.x(),  //
+          estimated_linear_velocity_imu.y(),  //
+          estimated_linear_velocity_imu.z(),  //
+          datum_imu.linear_acceleration_.x(), //
+          datum_imu.linear_acceleration_.y(), //
+          datum_imu.linear_acceleration_.z(), //
+          delta_velocity.x(),                 //
+          delta_velocity.y(),                 //
+          delta_velocity.z(),                 //
+          delta_position.x(),                 //
+          delta_position.y(),                 //
+          delta_position.z(),                 //
           std::abs(estimated_position_imu.x() - true_position.x()),
           std::abs(estimated_position_imu.y() - true_position.y()),
           std::abs(estimated_position_imu.z() - true_position.z()),

@@ -60,6 +60,11 @@ private:
   }
 
 public:
+  bool IsFull() const
+  {
+    return window_.full();
+  }
+
   /**
    * @brief 估计当前姿态四元数（仅在静止时可靠）
    * @note 返回的四元数是从世界坐标系到机体坐标系的旋转（即 C_21）
@@ -152,7 +157,7 @@ public:
         std::make_pair(linear_acceleration, angular_velocity),
     };
     // 记录推送前的状态，决定是否需要从统计量中“减去”被挤出的旧数据
-    const bool was_full{window_.full()};
+    const bool was_full{IsFull()};
 
     // push 返回的是那个位置原本的数据（如果已满，那就是将要丢弃的老数据）
     const data_type old_data{window_.push(imu_data)};
@@ -184,7 +189,7 @@ public:
     }
 
     // 缓冲区未满前，统计量还不具备统计学意义，直接返回 true
-    if (!window_.full())
+    if (!IsFull())
     {
       return this->is_static_ = true;
     }
