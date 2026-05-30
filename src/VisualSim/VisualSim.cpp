@@ -575,7 +575,7 @@ struct VisualSim
       }
 #endif
 
-      std::print(stderr, "[INFO] 时间 = ({:.1f}).\n", time);
+      std::print(stderr, "[INFO] 时间 = ({:.3f}).\n", time);
 
 #if (OUTPUT_AS_EUROC || OUTPUT_AS_INNOV)
       const auto timestamp_ns{static_cast<std::int64_t>(time * 1e9)};
