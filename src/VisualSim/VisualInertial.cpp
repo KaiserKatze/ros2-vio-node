@@ -725,26 +725,6 @@ private:
               * static_cast<float>(datum_imu.timestamp_
                                    - datum_prev.timestamp_),
       };
-      // 传感器参考系下的平均线加速度
-      Eigen::Vector3f average_linear_acceleration_in_sensor_frame{
-          0.5
-              * (datum_prev.linear_acceleration_
-                 + datum_imu.linear_acceleration_),
-      };
-      // 惯性参考系下的平均线加速度
-      Eigen::Vector3f average_linear_acceleration_in_world_frame{
-          estimated_attitude_imu.conjugate()
-                  * average_linear_acceleration_in_sensor_frame //
-              + gravity_world,
-      };
-      Eigen::Vector3f delta_velocity{
-          average_linear_acceleration_in_world_frame * dt,
-      };
-      Eigen::Vector3f delta_position{
-          (estimated_linear_velocity_imu + 0.5f * delta_velocity) * dt,
-      };
-      estimated_position_imu += delta_position;
-      estimated_linear_velocity_imu += delta_velocity;
 
       // 传感器参考系下的平均角速度
       Eigen::Vector3f average_angular_velocity_in_sensor_frame{
@@ -754,12 +734,46 @@ private:
       Eigen::Vector3f rotation_vector_in_sensor_frame{
           average_angular_velocity_in_sensor_frame * dt,
       };
-      Eigen::Quaternionf delta_attitude(Eigen::AngleAxisf{
-          rotation_vector_in_sensor_frame.norm(),
-          rotation_vector_in_sensor_frame.normalized(),
-      });
-      estimated_attitude_imu
-          = (estimated_attitude_imu * delta_attitude).normalized();
+      // 旋转角
+      float rotation_angle{rotation_vector_in_sensor_frame.norm()};
+      // 朝向变化量
+      Eigen::Quaternionf delta_attitude(
+          rotation_angle > 1e-6
+              ? Eigen::Quaternionf(Eigen::AngleAxisf{
+                    rotation_angle,
+                    rotation_vector_in_sensor_frame / rotation_angle,
+                })
+              : Eigen::Quaternionf::Identity()
+      );
+      // 新的朝向
+      Eigen::Quaternionf estimated_new_attitude_imu{
+          (estimated_attitude_imu * delta_attitude).normalized(),
+      };
+
+      // 惯性参考系下的平均线加速度
+      Eigen::Vector3f average_linear_acceleration_in_world_frame{
+          0.5f
+                  * (estimated_attitude_imu.conjugate()
+                         * datum_prev.linear_acceleration_
+                     + estimated_new_attitude_imu.conjugate()
+                           * datum_imu.linear_acceleration_)
+              + gravity_world,
+      };
+      // 线速度变化量
+      Eigen::Vector3f delta_velocity{
+          average_linear_acceleration_in_world_frame * dt,
+      };
+      // 位置变化量
+      Eigen::Vector3f delta_position{
+          (estimated_linear_velocity_imu + 0.5f * delta_velocity) * dt,
+      };
+
+      // 更新位置
+      estimated_position_imu += delta_position;
+      // 更新线速度
+      estimated_linear_velocity_imu += delta_velocity;
+      // 更新朝向
+      estimated_attitude_imu = estimated_new_attitude_imu;
 
       PushPose(msg_path_imu_, datum_imu.timestamp_, estimated_attitude_imu,
                estimated_position_imu);
