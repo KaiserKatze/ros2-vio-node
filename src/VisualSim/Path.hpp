@@ -20,8 +20,9 @@ struct Path
 
   // 如果启用 ZUPT 机制，那么在最初的几秒内，输出静止状态对应的动力学参数
   static constexpr value_type time_static_{(ENABLE_ZUPT) ? 5.0 : 0.0};
+  const value_type gravity_world_norm{9.81}; // m s^-2
 
-  const value_type omega_{0.5}; // 角速率 (rad/s)
+  const value_type omega_{0.5}; // 角速率 (rad/s) 或 平抛水平线速度 (m/s)
   bool print_debug_info_{true};
 
   /**
@@ -34,6 +35,7 @@ struct Path
     Tangent,      // 沿切线方向 (线速度方向)
     Upward,       // 朝向天花板 (垂直向上)
     StraightLine, // 在直线段 (经过房间中心，平行于 x 轴) 上进行变速直线运动
+    Parabola,     // 进行平抛运动
   };
 
 public:
@@ -76,6 +78,12 @@ public:
     if (mode == OrientationMode::StraightLine)
     {
       pos_body.y() = center.y();
+    }
+    else if (mode == OrientationMode::Parabola)
+    {
+      pos_body.x() = angle; // 把 omega_ 当作平抛运动的初速度
+      pos_body.y() = 0.0;
+      pos_body.z() = 0.5 * -gravity_world_norm * time * time;
     }
     else
     {
@@ -138,6 +146,7 @@ public:
       break;
     }
     case OrientationMode::StraightLine:
+    case OrientationMode::Parabola:
     {
       basis_x = {1.0, 0.0, 0.0};
       basis_y = {0.0, 1.0, 0.0};
@@ -195,6 +204,20 @@ public:
           -radius * omega_ * omega_ * std::cos(omega_ * time),
           0.0,
           0.0,
+      };
+    }
+    else if (mode == OrientationMode::Parabola)
+    {
+      angular_velocity = Point3::Zero();
+      linear_velocity  = {
+          omega_,
+          0.0,
+          -gravity_world_norm * time,
+      };
+      linear_acceleration = {
+          0.0,
+          0.0,
+          -gravity_world_norm,
       };
     }
     else
