@@ -35,7 +35,7 @@ struct Path
     Tangent,      // 沿切线方向 (线速度方向)
     Upward,       // 朝向天花板 (垂直向上)
     StraightLine, // 在直线段 (经过房间中心，平行于 x 轴) 上进行变速直线运动
-    Parabola,     // 进行平抛运动
+    Parabola,     // 先进行一段匀加速直线运动，再进行平抛运动
   };
 
 public:
@@ -81,9 +81,25 @@ public:
     }
     else if (mode == OrientationMode::Parabola)
     {
-      pos_body.x() = angle; // 把 omega_ 当作平抛运动的初速度
-      pos_body.y() = 0.0;
-      pos_body.z() = 0.5 * -gravity_world_norm * time * time;
+      // 把 omega_ 当作加速度，进行匀加速直线运动
+      if (time < 1.0)
+      {
+        pos_body = {
+            // 0.5 * (omega_ * time) * time
+            static_cast<value_type>(0.5) * angle * time,
+            0.0,
+            0.0,
+        };
+      }
+      // 把 omega_ 当作初速度，进行平抛运动
+      else
+      {
+        pos_body = {
+            angle,
+            0.0,
+            static_cast<value_type>(0.5) * -gravity_world_norm * time * time,
+        };
+      }
     }
     else
     {
@@ -209,16 +225,34 @@ public:
     else if (mode == OrientationMode::Parabola)
     {
       angular_velocity = Point3::Zero();
-      linear_velocity  = {
-          omega_,
-          0.0,
-          -gravity_world_norm * time,
-      };
-      linear_acceleration = {
-          0.0,
-          0.0,
-          -gravity_world_norm,
-      };
+      // 把 omega_ 当作加速度，进行匀加速直线运动
+      if (time < 1.0)
+      {
+        linear_velocity = {
+            omega_ * time,
+            0.0,
+            0.0,
+        };
+        linear_acceleration = {
+            omega_,
+            0.0,
+            0.0,
+        };
+      }
+      // 把 omega_ 当作初速度，进行平抛运动
+      else
+      {
+        linear_velocity = {
+            omega_,
+            0.0,
+            -gravity_world_norm * time,
+        };
+        linear_acceleration = {
+            0.0,
+            0.0,
+            -gravity_world_norm,
+        };
+      }
     }
     else
     {

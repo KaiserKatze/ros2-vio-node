@@ -995,6 +995,8 @@ struct VisualSim
 #endif
 #endif
 
+#if ((PUBLISH_GT_PATH || PUBLISH_EST_PATH || PUBLISH_IMAGE)                    \
+     && !(OUTPUT_AS_EUROC || OUTPUT_AS_INNOV))
       // 双目可见路标点数量过少!
       if (count_common_landmarks < min_count_common_landmarks)
       {
@@ -1006,12 +1008,16 @@ struct VisualSim
       }
 
       std::this_thread::sleep_for(50ms);
+#endif
     }
 
+#if ((PUBLISH_GT_PATH || PUBLISH_EST_PATH || PUBLISH_IMAGE)                    \
+     && !(OUTPUT_AS_EUROC || OUTPUT_AS_INNOV))
     if (first_loop)
     {
       throw std::runtime_error{"直到仿真结束，双目可见路标点数量还是太少!"};
     }
+#endif
   }
 };
 
