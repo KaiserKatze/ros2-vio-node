@@ -257,6 +257,8 @@ struct DatumTruth
  */
 struct VisualInertial : public rclcpp::Node
 {
+  float gravity_world_norm{9.81f};
+
 private:
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_fast_{
       create_publisher<nav_msgs::msg::Path>("/path_fast_est", rclcpp::QoS{10}),
@@ -568,7 +570,7 @@ private:
   void EstimateImu()
   {
     // 世界坐标系下的重力加速度
-    const Eigen::Vector3f gravity_world{0.0f, 0.0f, -9.81f};
+    const Eigen::Vector3f gravity_world{0.0f, 0.0f, -gravity_world_norm};
 
     // 引入“零速更新”机制，检测起飞时刻
     ZUPT<float> zupt{};
@@ -746,7 +748,7 @@ private:
   void PreintegrateImu()
   {
     // 世界坐标系下的重力加速度
-    const Eigen::Vector3f gravity_world{0.0f, 0.0f, -9.81f};
+    const Eigen::Vector3f gravity_world{0.0f, 0.0f, -gravity_world_norm};
 
     // 初始状态
     Eigen::Vector3f estimated_position_pi{Eigen::Vector3f::Zero()};
@@ -948,7 +950,7 @@ private:
 
         // 旋转对齐到全局世界坐标系并严格剔除常数重力影响分量
         Eigen::Vector3d a_world{q * a_body};
-        a_world(2) -= 9.81;
+        a_world(2) -= gravity_world_norm;
 
         // 应用非奇异伴随运动变换，映射转换至由系统定义的对应欧拉角速率
         double sr{std::sin(roll)};
