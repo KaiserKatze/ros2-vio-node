@@ -565,9 +565,9 @@ private:
   }
 
   /**
-   * @brief 只靠 IMU 提供的角速度向量和加速度向量估计位姿
+   * @brief 只靠 IMU 提供的角速度向量和加速度向量估计位姿 (梯形方法求解常微分方程)
    */
-  void EstimateImu()
+  void EstimateImuEuler()
   {
     // 世界坐标系下的重力加速度
     const Eigen::Vector3f gravity_world{0.0f, 0.0f, -gravity_world_norm};
@@ -1181,7 +1181,7 @@ public:
   void Start()
   {
     EstimateFast();
-    EstimateImu();
+    EstimateImuEuler();
     PreintegrateImu();
     EstimateFuse();
 
