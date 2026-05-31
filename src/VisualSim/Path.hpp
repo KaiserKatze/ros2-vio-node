@@ -39,7 +39,7 @@ struct Path
 
 public:
   /**
-   * @brief 获取世界坐标系下的位姿参数 (位置、朝向)
+   * @brief 获取世界坐标系下的位姿参数 (位置 $r^{vi}_i$、朝向 $C_{iv}$)
    */
   std::pair<Point3, Attitude>
   GetPose(const Room<value_type> &room, value_type time,
