@@ -1185,6 +1185,23 @@ public:
     msg_path_preintegrate_.header.frame_id = DEFAULT_FRAME_ID;
     msg_path_fuse_.header.frame_id         = DEFAULT_FRAME_ID;
     msg_path_truth_.header.frame_id        = DEFAULT_FRAME_ID;
+
+    if (!data_truth_.empty())
+    {
+      Eigen::Matrix3f true_init_attitude{data_truth_[0].attitude_};
+      std::print(stderr,
+                 "[INFO] Ground Truth 初始姿态为 = [\n"
+                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
+                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
+                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
+                 "]\n",
+                 true_init_attitude(0, 0), true_init_attitude(0, 1),
+                 true_init_attitude(0, 2), true_init_attitude(1, 0),
+                 true_init_attitude(1, 1), true_init_attitude(1, 2),
+                 true_init_attitude(2, 0), true_init_attitude(2, 1),
+                 true_init_attitude(2, 2));
+    }
+
     for (const DatumTruth &datum_truth : data_truth_)
     {
       PushPose(msg_path_truth_, datum_truth.timestamp_, datum_truth.attitude_,
