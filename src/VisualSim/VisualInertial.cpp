@@ -344,7 +344,6 @@ private:
 #pragma endregion
 
 private:
-
 #pragma region ROS2_UTILITY
 
   void PushPose(nav_msgs::msg::Path &msg_path, const std::int64_t timestamp,
@@ -807,9 +806,8 @@ private:
       // 惯性参考系下的平均线加速度
       Eigen::Vector3f average_linear_acceleration_in_world_frame{
           0.5f
-                  * (estimated_attitude_imu.conjugate()
-                         * datum_prev.linear_acceleration_
-                     + estimated_new_attitude_imu.conjugate()
+                  * (estimated_attitude_imu * datum_prev.linear_acceleration_
+                     + estimated_new_attitude_imu
                            * datum_imu.linear_acceleration_)
               + gravity_world,
       };

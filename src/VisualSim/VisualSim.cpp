@@ -43,6 +43,8 @@ using namespace std::chrono_literals;
 #define OUTPUT_AS_INNOV 0
 #define OUTPUT_AS_EUROC 1
 
+#pragma region ROS2_UTILITY
+
 #if ((PUBLISH_GT_PATH || PUBLISH_EST_PATH || PUBLISH_IMAGE)                    \
      && !(OUTPUT_AS_EUROC || OUTPUT_AS_INNOV))
 #include <cv_bridge/cv_bridge.hpp>
@@ -194,6 +196,8 @@ protected:
 };
 #endif
 
+#pragma endregion
+
 // static void PrintCvMatInfo(const std::string &mat_name, const cv::Mat &mat)
 // {
 //   const auto mat_type{mat.type()};
@@ -281,6 +285,8 @@ struct VisualSim
     return cv_image_points;
   }
 
+#pragma region WRITE_EUROC_CONFIG
+
   void WriteCameraConfig(const std::filesystem::path &path_cam,
                          const Camera<value_type> &camera) const
   {
@@ -364,6 +370,8 @@ struct VisualSim
                      "         0.0, 0.0, 1.0, 0.0,\n"
                      "         0.0, 0.0, 0.0, 1.0]\n");
   }
+
+#pragma endregion
 
   std::pair<Point3, Attitude> GetPose(value_type time) const
   {
@@ -872,31 +880,29 @@ struct VisualSim
       // 保证 IMU 与 Ground Truth 的数据帧率相同
       for (int i = 0; i < rate_ratio_; ++i)
       {
-        // IMU 的时间步长 (秒)
         // IMU 的当前时间戳
         const value_type imu_time{time + i * imu_step_};
         const auto imu_timestamp_ns{
             static_cast<std::int64_t>(imu_time * 1e9),
         };
         // 角速度矢量
-        Point3 imu_true_current_angular_velocity{Point3::Zero()};
+        Point3 imu_angular_velocity_world{Point3::Zero()};
         // 线速度矢量
-        Point3 imu_true_current_linear_velocity{Point3::Zero()};
+        Point3 imu_linear_velocity_world{Point3::Zero()};
         // 线加速度矢量
-        Point3 imu_true_current_linear_acceleration{Point3::Zero()};
+        Point3 imu_linear_acceleration_world{Point3::Zero()};
         // 获取 IMU 在世界坐标系下的线速度、角速度、线加速度
         path_.GetKinematics(room_, imu_time, orientation_mode_,
-                            imu_true_current_linear_velocity,
-                            imu_true_current_angular_velocity,
-                            imu_true_current_linear_acceleration);
+                            imu_linear_velocity_world,
+                            imu_angular_velocity_world,
+                            imu_linear_acceleration_world);
 
-        // IMU 在世界坐标系下当前帧的位置
-        Point3 imu_true_current_position{Point3::Zero()};
-        // IMU 在世界坐标系下当前帧的朝向
-        Attitude imu_true_current_attitude{Attitude::Identity()};
-        std::tie(imu_true_current_position, imu_true_current_attitude)
-            = GetPose(imu_time);
-        Quaternion imu_true_current_quaternion{imu_true_current_attitude};
+        // IMU 在世界坐标系下当前帧的位置 $r^{vi}_i$
+        Point3 imu_position{Point3::Zero()};
+        // IMU 在世界坐标系下当前帧的朝向 $C_{iv}$
+        Attitude imu_attitude{Attitude::Identity()};
+        std::tie(imu_position, imu_attitude) = GetPose(imu_time);
+        Quaternion imu_attitude_quat{imu_attitude};
 
         // 输出仿真 Ground Truth 数据
         std::print(
@@ -910,25 +916,31 @@ struct VisualSim
             // 速度
             "{:.18f}, {:.18f}, {:.18f}\n",
             imu_timestamp_ns, //
-            imu_true_current_position.x(), imu_true_current_position.y(),
-            imu_true_current_position.z(), //
-            imu_true_current_quaternion.w(), imu_true_current_quaternion.x(),
-            imu_true_current_quaternion.y(),
-            imu_true_current_quaternion.z(), //
-            imu_true_current_linear_velocity.x(),
-            imu_true_current_linear_velocity.y(),
-            imu_true_current_linear_velocity.z() //
+            imu_position.x(), imu_position.y(),
+            imu_position.z(), //
+            imu_attitude_quat.w(), imu_attitude_quat.x(), imu_attitude_quat.y(),
+            imu_attitude_quat.z(), //
+            imu_linear_velocity_world.x(), imu_linear_velocity_world.y(),
+            imu_linear_velocity_world.z() //
         );
 
-        // 转换坐标系：从世界坐标系转为相机坐标系
-        imu_true_current_angular_velocity
-            = imu_true_current_attitude * imu_true_current_angular_velocity;
-        imu_true_current_linear_velocity
-            = imu_true_current_attitude * imu_true_current_linear_velocity;
+        // 转换坐标系：从世界坐标系转为传感器坐标系
+
         const value_type gravity_world_norm{9.81}; // m s^-2
-        imu_true_current_linear_acceleration.z() += gravity_world_norm;
-        imu_true_current_linear_acceleration
-            = imu_true_current_attitude * imu_true_current_linear_acceleration;
+        Point3 imu_angular_velocity_sensor{
+            // 假设传感器坐标系与载具坐标系重合，那么在零误差的情况下 IMU 测得的角速度就是真实角速度
+            imu_angular_velocity_world
+        };
+        Point3 imu_linear_acceleration_sensor{
+            // 假设传感器坐标系与载具坐标系重合 (C_{sv} = 1, r^{sv}_v = 0)
+            // 那么在零误差的情况下
+            // IMU 测得的比力等于
+            // 朝向矩阵的转置 * (世界坐标系下的真实线加速度 - 世界坐标系下的重力加速度)
+            imu_attitude.transpose()
+                * (imu_linear_acceleration_world
+                   - Point3{0.0, 0.0, -gravity_world_norm}),
+        };
+
         // 输出仿真 IMU 数据
         std::print(fout_imu0_data_csv,
                    // 时间戳
@@ -938,12 +950,12 @@ struct VisualSim
                    // 加速度
                    "{:.18f}, {:.18f}, {:.18f}\n",
                    imu_timestamp_ns, //
-                   imu_true_current_angular_velocity.x(),
-                   imu_true_current_angular_velocity.y(),
-                   imu_true_current_angular_velocity.z(), //
-                   imu_true_current_linear_acceleration.x(),
-                   imu_true_current_linear_acceleration.y(),
-                   imu_true_current_linear_acceleration.z());
+                   imu_angular_velocity_sensor.x(),
+                   imu_angular_velocity_sensor.y(),
+                   imu_angular_velocity_sensor.z(), //
+                   imu_linear_acceleration_sensor.x(),
+                   imu_linear_acceleration_sensor.y(),
+                   imu_linear_acceleration_sensor.z());
       }
 #endif
 
