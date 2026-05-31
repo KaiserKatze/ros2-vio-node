@@ -136,7 +136,8 @@ public:
     // 构造一个旋转，使得机体坐标系的 x 轴（前向）与重力方向对齐
     // 注意：这只是一个近似的估计，实际应用中可能需要更复杂的处理
     return Eigen::Quaternion<value_type>::FromTwoVectors(gravity_world,
-                                                         gravity_sensor);
+                                                         gravity_sensor)
+        .normalized();
   }
 
   /**

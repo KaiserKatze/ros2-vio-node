@@ -19,6 +19,8 @@ using namespace std::chrono_literals;
 
 #include <Eigen/Dense>
 
+#include <boost/numeric/odeint.hpp>
+
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/check.hpp>
 #include <opencv2/core/eigen.hpp>
@@ -30,6 +32,7 @@ using namespace std::chrono_literals;
 #include <rclcpp/time.hpp>
 #include <sensor_msgs/msg/image.hpp>
 
+#include "ImuState.hpp"
 #include "LinearKalmanFilter.hpp"
 #include "euroc_vio/AbstractLoader.hpp"
 #include "euroc_vio/Interpolation.hpp"
@@ -280,6 +283,16 @@ private:
   };
 #endif
 
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_rk4_{
+      create_publisher<nav_msgs::msg::Path>("/path_rk4_est", rclcpp::QoS{10}),
+  };
+  nav_msgs::msg::Path msg_path_rk4_;
+#if (PUBLISH_POSE)
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_pose_rk4_{
+      create_publisher<nav_msgs::msg::Path>("/pose_rk4_est", rclcpp::QoS{10}),
+  };
+#endif
+
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr
       publisher_path_preintegrate_{
           create_publisher<nav_msgs::msg::Path>("/path_preintegrate_est",
@@ -355,7 +368,7 @@ private:
     publisher_path_fast_->publish(msg_path_fast_);
   }
 
-  void PublishPathImu()
+  void PublishPathImuEuler()
   {
     if (msg_path_imu_.poses.empty())
     {
@@ -374,6 +387,16 @@ private:
     msg_path_preintegrate_.header.stamp
         = msg_path_preintegrate_.poses.back().header.stamp;
     publisher_path_preintegrate_->publish(msg_path_preintegrate_);
+  }
+
+  void PublishPathImuRK4()
+  {
+    if (msg_path_rk4_.poses.empty())
+    {
+      return;
+    }
+    msg_path_rk4_.header.stamp = msg_path_rk4_.poses.back().header.stamp;
+    publisher_path_rk4_->publish(msg_path_rk4_);
   }
 
   void PublishPathFuse()
@@ -402,7 +425,7 @@ private:
     publisher_pose_fast_->publish(msg_path_pose);
   }
 
-  void PublishPoseImu(size_t index)
+  void PublishPoseImuEuler(size_t index)
   {
     const auto &msg_pose{msg_path_imu_.poses[index]};
     nav_msgs::msg::Path msg_path_pose;
@@ -420,6 +443,16 @@ private:
     msg_path_pose.header.stamp    = msg_pose.header.stamp;
     msg_path_pose.poses.push_back(msg_pose);
     publisher_pose_preintegrate_->publish(msg_path_pose);
+  }
+
+  void PublishPoseImuRK4(size_t index)
+  {
+    const auto &msg_pose{msg_path_rk4_.poses[index]};
+    nav_msgs::msg::Path msg_path_pose;
+    msg_path_pose.header.frame_id = DEFAULT_FRAME_ID;
+    msg_path_pose.header.stamp    = msg_pose.header.stamp;
+    msg_path_pose.poses.push_back(msg_pose);
+    publisher_pose_rk4_->publish(msg_path_pose);
   }
 
   void PublishPoseFuse(size_t index)
@@ -626,7 +659,7 @@ private:
     {
       Eigen::Matrix3f estimated_attitude_imu_matrix{estimated_attitude_imu};
       std::print(stderr,
-                 "[INFO] ZUPT 估计初始姿态为[\n"
+                 "[INFO] ZUPT 估计初始姿态为 = [\n"
                  "\t[{:.2f}, {:.2f}, {:.2f}]\n"
                  "\t[{:.2f}, {:.2f}, {:.2f}]\n"
                  "\t[{:.2f}, {:.2f}, {:.2f}]\n"
@@ -908,6 +941,278 @@ private:
   }
 
   /**
+   * @brief 只靠 IMU 提供的角速度向量和加速度向量估计位姿 (梯形方法求解常微分方程)
+   */
+  void EstimateImuRK4()
+  {
+    if (data_imu_.empty())
+    {
+      return;
+    }
+
+    // 世界坐标系下的重力加速度
+    const Eigen::Vector3f gravity_world{0.0f, 0.0f, -gravity_world_norm};
+
+    // 时间
+    float ode_time{static_cast<float>(1e-9f * data_imu_[0].timestamp_)};
+    // 初始状态
+    ImuState<float> state;
+    // 积分器
+    boost::numeric::odeint::runge_kutta4<ImuState<float>, float,
+                                         ImuDerivative<float>>
+        rk4;
+    // 微分方程
+    struct ImuKinematicsODE
+    {
+      const DatumImu &datum_prev_;
+      const DatumImu &datum_next_;
+      const Eigen::Vector3f &gravity_world_;
+
+      void operator()(const ImuState<float> &x, ImuDerivative<float> &dxdt,
+                      const float t) const
+      {
+        float alpha{
+            (datum_next_.timestamp_ > datum_prev_.timestamp_)
+                ? std::clamp(static_cast<float>((t - datum_prev_.timestamp_)
+                                                / (datum_next_.timestamp_
+                                                   - datum_prev_.timestamp_)),
+                             0.0f, 1.0f)
+                : 0.0f,
+        };
+        // 传感器参考系下的角速度
+        const Eigen::Vector3f ang_vel_sensor{
+            datum_prev_.angular_velocity_
+                + (datum_next_.angular_velocity_
+                   - datum_prev_.angular_velocity_)
+                      * alpha,
+        };
+        // 提取当前姿态四元数
+        Eigen::Quaternionf att_world{x.GetAttitude()};
+        // 惯性参考系下的线速度
+        Eigen::Vector3f lin_vec_world{x.GetVelocity()};
+        // 传感器参考系下的加速度
+        Eigen::Vector3f lin_acc_sensor{
+            datum_prev_.linear_acceleration_
+                + (datum_next_.linear_acceleration_
+                   - datum_prev_.linear_acceleration_)
+                      * alpha,
+        };
+        // 世界参考系下的加速度
+        Eigen::Vector3f lin_acc_world{
+            att_world * lin_acc_sensor + gravity_world_,
+        };
+        Eigen::Quaternionf half_rotation{
+            0.0f,
+            0.5f * ang_vel_sensor.x(),
+            0.5f * ang_vel_sensor.y(),
+            0.5f * ang_vel_sensor.z(),
+        };
+        Eigen::Quaternionf att_derivative_world{att_world * half_rotation};
+
+        // 位置导数 = 速度
+        dxdt.SetVelocity(lin_vec_world);
+
+        // 速度导数 = 加速度
+        dxdt.SetAcceleration(lin_acc_world);
+
+        // 朝向导数 = 0.5 * 朝向 ** 角速度
+        dxdt.SetAttitudeDerivative(att_derivative_world);
+      }
+    };
+
+    // 引入“零速更新”机制，检测起飞时刻
+    ZUPT<float> zupt{};
+    bool is_orientation_estimated{false};
+    // 初始朝向
+    Eigen::Quaternionf estimated_attitude_rk{Eigen::Quaternionf::Identity()};
+
+    DatumImu datum_first;
+    DatumImu datum_last;
+    for (bool first_loop{true}; const DatumImu &datum_rk : data_imu_)
+    {
+      if (first_loop)
+      {
+        datum_first = datum_rk;
+        first_loop  = false;
+        continue;
+      }
+      if (zupt.IsFull() && !is_orientation_estimated)
+      { // 当样本足够多时，如果尚未预测过初始朝向，就立即进行预测
+        estimated_attitude_rk    = zupt.EstimateOrientation();
+        is_orientation_estimated = true;
+      }
+      if (!zupt.Update(datum_rk.linear_acceleration_,
+                       datum_rk.angular_velocity_))
+      {
+        datum_last = datum_rk;
+        break;
+      }
+    } // end for
+    // 静止状态的时长
+    const float time_elapsed_before_takeoff{
+        1e-9f
+            * static_cast<float>(datum_last.timestamp_
+                                 - datum_first.timestamp_),
+    };
+    std::print(stderr, "静止时长: {:.4f} 秒.\n", time_elapsed_before_takeoff);
+    // 机体处于静止状态时，机体坐标系与世界坐标系不一定是重合的。
+    // 以 EuRoC MAV 数据集为例，无人机起飞前，
+    // 其机体坐标系（即 IMU 坐标系）的 X,Y,Z 三轴大致上
+    // 分别与世界坐标系的 Z,-Y,X 三轴对应
+
+    if (!is_orientation_estimated)
+    { // 如果尚未预测过初始朝向，就立即进行预测
+      estimated_attitude_rk = zupt.EstimateOrientation();
+    }
+    state.SetAttitude(estimated_attitude_rk);
+
+    {
+      Eigen::Matrix3f estimated_attitude_rk_matrix{estimated_attitude_rk};
+      std::print(stderr,
+                 "[INFO] ZUPT 估计初始姿态为 = [\n"
+                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
+                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
+                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
+                 "]\n",
+                 estimated_attitude_rk_matrix(0, 0),
+                 estimated_attitude_rk_matrix(0, 1),
+                 estimated_attitude_rk_matrix(0, 2),
+                 estimated_attitude_rk_matrix(1, 0),
+                 estimated_attitude_rk_matrix(1, 1),
+                 estimated_attitude_rk_matrix(1, 2),
+                 estimated_attitude_rk_matrix(2, 0),
+                 estimated_attitude_rk_matrix(2, 1),
+                 estimated_attitude_rk_matrix(2, 2));
+    }
+
+    // 统计信息 (记录使用龙格贝塔法估计位置、线速度产生的绝对误差)
+    std::filesystem::path path_estimation_error{
+        "VisualInertial-Imu-RK4-Error.csv"
+    };
+    std::ofstream fout_rk_estimation_error(path_estimation_error);
+    std::print(fout_rk_estimation_error,
+               "time [s],"
+               "qw [],qx [],qy [],qz[],"
+               "x [m],y [m],z [m],"
+               "vx [m s^-1],vy [m s^-1],vz [m s^-1],"
+               "ax [m s^-2], ay [m s^-2], az [m s^-2],"
+               "err(x) [m],err(y) [m],err(z) [m],"
+               "err(vx) [m s^-1],err(vy) [m s^-1],err(vz) [m s^-1]\n");
+
+    DatumImu datum_prev;
+    for (bool first_loop{true}; const DatumImu &datum_rk : data_imu_)
+    {
+      if (first_loop)
+      {
+        datum_prev = datum_rk;
+        first_loop = false;
+
+        const auto datum_true{Interpolate(data_truth_, datum_rk.timestamp_)};
+        Eigen::Vector3f true_position{datum_true.position_};
+        Eigen::Vector3f true_velocity{datum_true.velocity_};
+        // 更新统计信息
+        std::print(fout_rk_estimation_error,
+                   // 时间戳
+                   "{:020d}, "
+                   // 朝向
+                   "{:.18f},{:.18f},{:.18f},{:.18f},"
+                   // 位置
+                   "{:.18f},{:.18f},{:.18f},"
+                   // 线速度
+                   "{:.18f},{:.18f},{:.18f},"
+                   // 线加速度
+                   "{:.18f},{:.18f},{:.18f},"
+                   // 位置绝对误差
+                   "{:.18f},{:.18f},{:.18f},"
+                   // 线速度绝对误差
+                   "{:.18f},{:.18f},{:.18f}\n",
+                   datum_rk.timestamp_,               //
+                   state.GetAttitude().w(),           //
+                   state.GetAttitude().x(),           //
+                   state.GetAttitude().y(),           //
+                   state.GetAttitude().z(),           //
+                   state.GetPosition().x(),           //
+                   state.GetPosition().y(),           //
+                   state.GetPosition().z(),           //
+                   state.GetVelocity().x(),           //
+                   state.GetVelocity().y(),           //
+                   state.GetVelocity().z(),           //
+                   datum_rk.linear_acceleration_.x(), //
+                   datum_rk.linear_acceleration_.y(), //
+                   datum_rk.linear_acceleration_.z(), //
+                   std::abs(state.GetPosition().x() - true_position.x()),
+                   std::abs(state.GetPosition().y() - true_position.y()),
+                   std::abs(state.GetPosition().z() - true_position.z()),
+                   std::abs(state.GetVelocity().x() - true_velocity.x()),
+                   std::abs(state.GetVelocity().y() - true_velocity.y()),
+                   std::abs(state.GetVelocity().z() - true_velocity.z()));
+
+        continue;
+      }
+
+      // 时间步长
+      const float dt{
+          1e-9f
+              * static_cast<float>(datum_rk.timestamp_ - datum_prev.timestamp_),
+      };
+
+      ImuKinematicsODE ode{datum_prev, datum_rk, gravity_world};
+      rk4.do_step(ode, state, ode_time, dt);
+      ode_time += dt;
+      state.NormalizeAttitude();
+
+      PushPose(msg_path_rk4_, datum_rk.timestamp_, state.GetAttitude(),
+               state.GetPosition());
+
+      const auto datum_true{Interpolate(data_truth_, datum_rk.timestamp_)};
+      Eigen::Vector3f true_position{datum_true.position_};
+      Eigen::Vector3f true_velocity{datum_true.velocity_};
+      // 更新统计信息
+      std::print(fout_rk_estimation_error,
+                 // 时间戳
+                 "{:020d}, "
+                 // 朝向
+                 "{:.18f},{:.18f},{:.18f},{:.18f},"
+                 // 位置
+                 "{:.18f},{:.18f},{:.18f},"
+                 // 线速度
+                 "{:.18f},{:.18f},{:.18f},"
+                 // 线加速度
+                 "{:.18f},{:.18f},{:.18f},"
+                 // 位置绝对误差
+                 "{:.18f},{:.18f},{:.18f},"
+                 // 线速度绝对误差
+                 "{:.18f},{:.18f},{:.18f}\n",
+                 datum_rk.timestamp_,               //
+                 state.GetAttitude().w(),           //
+                 state.GetAttitude().x(),           //
+                 state.GetAttitude().y(),           //
+                 state.GetAttitude().z(),           //
+                 state.GetPosition().x(),           //
+                 state.GetPosition().y(),           //
+                 state.GetPosition().z(),           //
+                 state.GetVelocity().x(),           //
+                 state.GetVelocity().y(),           //
+                 state.GetVelocity().z(),           //
+                 datum_rk.linear_acceleration_.x(), //
+                 datum_rk.linear_acceleration_.y(), //
+                 datum_rk.linear_acceleration_.z(), //
+                 std::abs(state.GetPosition().x() - true_position.x()),
+                 std::abs(state.GetPosition().y() - true_position.y()),
+                 std::abs(state.GetPosition().z() - true_position.z()),
+                 std::abs(state.GetVelocity().x() - true_velocity.x()),
+                 std::abs(state.GetVelocity().y() - true_velocity.y()),
+                 std::abs(state.GetVelocity().z() - true_velocity.z()));
+
+      datum_prev = datum_rk;
+    } // end for
+
+    fout_rk_estimation_error.flush();
+    std::print(stderr, "误差评估文件已写入 {}\n",
+               std::filesystem::absolute(path_estimation_error).string());
+  }
+
+  /**
    * @brief 将四元数转换为欧拉角 (Roll, Pitch, Yaw)
    * @param q 表示朝向的 Eigen 四元数
    * @return Eigen::Vector3d 对应的欧拉角 (roll, pitch, yaw) 向量，单位为弧度
@@ -1183,6 +1488,7 @@ public:
     msg_path_fast_.header.frame_id         = DEFAULT_FRAME_ID;
     msg_path_imu_.header.frame_id          = DEFAULT_FRAME_ID;
     msg_path_preintegrate_.header.frame_id = DEFAULT_FRAME_ID;
+    msg_path_rk4_.header.frame_id          = DEFAULT_FRAME_ID;
     msg_path_fuse_.header.frame_id         = DEFAULT_FRAME_ID;
     msg_path_truth_.header.frame_id        = DEFAULT_FRAME_ID;
 
@@ -1213,13 +1519,15 @@ public:
   {
     EstimateFast();
     EstimateImuEuler();
+    EstimateImuRK4();
     PreintegrateImu();
     EstimateFuse();
 
 #if (PUBLISH_POSE)
     size_t index_fast{0};
-    size_t index_imu{0};
+    size_t index_imu_euler{0};
     size_t index_preintegrate{0};
+    size_t index_imu_rk4{0};
     size_t index_fuse{0};
     size_t index_truth{0};
 #endif
@@ -1227,24 +1535,27 @@ public:
     while (rclcpp::ok())
     {
       PublishPathFast();
-      PublishPathImu();
+      PublishPathImuEuler();
+      PublishPathImuRK4();
       PublishPathPreintegrate();
       PublishPathFuse();
       PublishPathTruth();
 
 #if (PUBLISH_POSE)
       PublishPoseFast(index_fast);
-      PublishPoseImu(index_imu);
+      PublishPoseImuEuler(index_imu_euler);
       PublishPosePreintegrate(index_preintegrate);
+      PublishPoseImuRK4(index_imu_rk4);
       PublishPoseFuse(index_fuse);
       PublishPoseTruth(index_truth);
 
-      index_fast = (index_fast + 1) % msg_path_fast_.poses.size();
-      index_imu  = (index_imu + 1) % msg_path_imu_.poses.size();
+      index_fast      = (index_fast + 1) % msg_path_fast_.poses.size();
+      index_imu_euler = (index_imu_euler + 1) % msg_path_imu_.poses.size();
       index_preintegrate
           = (index_preintegrate + 1) % msg_path_preintegrate_.poses.size();
-      index_fuse  = (index_fuse + 1) % msg_path_fuse_.poses.size();
-      index_truth = (index_truth + 1) % msg_path_truth_.poses.size();
+      index_imu_rk4 = (index_imu_rk4 + 1) % msg_path_rk4_.poses.size();
+      index_fuse    = (index_fuse + 1) % msg_path_fuse_.poses.size();
+      index_truth   = (index_truth + 1) % msg_path_truth_.poses.size();
 #endif
 
       std::this_thread::sleep_for(50ms);
