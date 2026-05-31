@@ -26,6 +26,7 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
+                "use_true_init_pose": True,
                 "path_estimation_csv": str(
                     home_path / "vio_ws" / "estimated_motion.csv"
                 ),

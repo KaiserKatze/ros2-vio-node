@@ -263,6 +263,10 @@ struct VisualInertial : public rclcpp::Node
   float gravity_world_norm{9.81f};
 
 private:
+#pragma region PRIVATE_MEMBER_VARIABLES
+
+  bool use_true_init_pose_{false};
+
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_fast_{
       create_publisher<nav_msgs::msg::Path>("/path_fast_est", rclcpp::QoS{10}),
   };
@@ -337,7 +341,12 @@ private:
 
   LinearKalmanFilter filter_;
 
+#pragma endregion
+
 private:
+
+#pragma region ROS2_UTILITY
+
   void PushPose(nav_msgs::msg::Path &msg_path, const std::int64_t timestamp,
                 const Eigen::Quaternionf &attitude,
                 const Eigen::Vector3f &position)
@@ -476,6 +485,10 @@ private:
   }
 #endif /* PUBLISH_POSE */
 
+#pragma endregion
+
+#pragma region POSE_ESTIMATION
+
   /**
    * @brief 只靠单目相机提供的角位移向量和单位化平移向量估计位姿
    */
@@ -613,66 +626,74 @@ private:
     Eigen::Vector3f estimated_angular_velocity_imu{Eigen::Vector3f::Zero()};
     Eigen::Vector3f estimated_angular_acceleration_imu{Eigen::Vector3f::Zero()};
 
-    // 引入“零速更新”机制，检测起飞时刻
-    ZUPT<float> zupt{};
-    bool is_orientation_estimated{false};
-
-    DatumImu datum_first;
-    DatumImu datum_last;
-    for (bool first_loop{true}; const DatumImu &datum_imu : data_imu_)
+    if (use_true_init_pose_ && !data_truth_.empty())
     {
-      if (first_loop)
-      {
-        datum_first = datum_imu;
-        first_loop  = false;
-        continue;
-      }
-      if (zupt.IsFull() && !is_orientation_estimated)
-      { // 当样本足够多时，如果尚未预测过初始朝向，就立即进行预测
-        estimated_attitude_imu   = zupt.EstimateOrientation();
-        is_orientation_estimated = true;
-      }
-      if (!zupt.Update(datum_imu.linear_acceleration_,
-                       datum_imu.angular_velocity_))
-      {
-        datum_last = datum_imu;
-        break;
-      }
-    } // end for
-    // 静止状态的时长
-    const float time_elapsed_before_takeoff{
-        1e-9f
-            * static_cast<float>(datum_last.timestamp_
-                                 - datum_first.timestamp_),
-    };
-    std::print(stderr, "静止时长: {:.4f} 秒.\n", time_elapsed_before_takeoff);
-    // 机体处于静止状态时，机体坐标系与世界坐标系不一定是重合的。
-    // 以 EuRoC MAV 数据集为例，无人机起飞前，
-    // 其机体坐标系（即 IMU 坐标系）的 X,Y,Z 三轴大致上
-    // 分别与世界坐标系的 Z,-Y,X 三轴对应
-
-    if (!is_orientation_estimated)
-    { // 如果尚未预测过初始朝向，就立即进行预测
-      estimated_attitude_imu = zupt.EstimateOrientation();
+      estimated_position_imu = data_truth_[0].position_;
+      estimated_attitude_imu = data_truth_[0].attitude_;
     }
-
+    else
     {
-      Eigen::Matrix3f estimated_attitude_imu_matrix{estimated_attitude_imu};
-      std::print(stderr,
-                 "[INFO] ZUPT 估计初始姿态为 = [\n"
-                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
-                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
-                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
-                 "]\n",
-                 estimated_attitude_imu_matrix(0, 0),
-                 estimated_attitude_imu_matrix(0, 1),
-                 estimated_attitude_imu_matrix(0, 2),
-                 estimated_attitude_imu_matrix(1, 0),
-                 estimated_attitude_imu_matrix(1, 1),
-                 estimated_attitude_imu_matrix(1, 2),
-                 estimated_attitude_imu_matrix(2, 0),
-                 estimated_attitude_imu_matrix(2, 1),
-                 estimated_attitude_imu_matrix(2, 2));
+      // 引入“零速更新”机制，检测起飞时刻
+      ZUPT<float> zupt{};
+      bool is_orientation_estimated{false};
+
+      DatumImu datum_first;
+      DatumImu datum_last;
+      for (bool first_loop{true}; const DatumImu &datum_imu : data_imu_)
+      {
+        if (first_loop)
+        {
+          datum_first = datum_imu;
+          first_loop  = false;
+          continue;
+        }
+        if (zupt.IsFull() && !is_orientation_estimated)
+        { // 当样本足够多时，如果尚未预测过初始朝向，就立即进行预测
+          estimated_attitude_imu   = zupt.EstimateOrientation();
+          is_orientation_estimated = true;
+        }
+        if (!zupt.Update(datum_imu.linear_acceleration_,
+                         datum_imu.angular_velocity_))
+        {
+          datum_last = datum_imu;
+          break;
+        }
+      } // end for
+      // 静止状态的时长
+      const float time_elapsed_before_takeoff{
+          1e-9f
+              * static_cast<float>(datum_last.timestamp_
+                                   - datum_first.timestamp_),
+      };
+      std::print(stderr, "静止时长: {:.4f} 秒.\n", time_elapsed_before_takeoff);
+      // 机体处于静止状态时，机体坐标系与世界坐标系不一定是重合的。
+      // 以 EuRoC MAV 数据集为例，无人机起飞前，
+      // 其机体坐标系（即 IMU 坐标系）的 X,Y,Z 三轴大致上
+      // 分别与世界坐标系的 Z,-Y,X 三轴对应
+
+      if (!is_orientation_estimated)
+      { // 如果尚未预测过初始朝向，就立即进行预测
+        estimated_attitude_imu = zupt.EstimateOrientation();
+      }
+
+      {
+        Eigen::Matrix3f estimated_attitude_imu_matrix{estimated_attitude_imu};
+        std::print(stderr,
+                   "[INFO] ZUPT 估计初始姿态为 = [\n"
+                   "\t[{:.2f}, {:.2f}, {:.2f}]\n"
+                   "\t[{:.2f}, {:.2f}, {:.2f}]\n"
+                   "\t[{:.2f}, {:.2f}, {:.2f}]\n"
+                   "]\n",
+                   estimated_attitude_imu_matrix(0, 0),
+                   estimated_attitude_imu_matrix(0, 1),
+                   estimated_attitude_imu_matrix(0, 2),
+                   estimated_attitude_imu_matrix(1, 0),
+                   estimated_attitude_imu_matrix(1, 1),
+                   estimated_attitude_imu_matrix(1, 2),
+                   estimated_attitude_imu_matrix(2, 0),
+                   estimated_attitude_imu_matrix(2, 1),
+                   estimated_attitude_imu_matrix(2, 2));
+      }
     }
 
     // 统计信息 (记录使用欧拉法估计位置、线速度产生的绝对误差)
@@ -1020,69 +1041,77 @@ private:
       }
     };
 
-    // 引入“零速更新”机制，检测起飞时刻
-    ZUPT<float> zupt{};
-    bool is_orientation_estimated{false};
-    // 初始朝向
-    Eigen::Quaternionf estimated_attitude_rk{Eigen::Quaternionf::Identity()};
-
-    DatumImu datum_first;
-    DatumImu datum_last;
-    for (bool first_loop{true}; const DatumImu &datum_rk : data_imu_)
+    if (use_true_init_pose_ && !data_truth_.empty())
     {
-      if (first_loop)
-      {
-        datum_first = datum_rk;
-        first_loop  = false;
-        continue;
-      }
-      if (zupt.IsFull() && !is_orientation_estimated)
-      { // 当样本足够多时，如果尚未预测过初始朝向，就立即进行预测
-        estimated_attitude_rk    = zupt.EstimateOrientation();
-        is_orientation_estimated = true;
-      }
-      if (!zupt.Update(datum_rk.linear_acceleration_,
-                       datum_rk.angular_velocity_))
-      {
-        datum_last = datum_rk;
-        break;
-      }
-    } // end for
-    // 静止状态的时长
-    const float time_elapsed_before_takeoff{
-        1e-9f
-            * static_cast<float>(datum_last.timestamp_
-                                 - datum_first.timestamp_),
-    };
-    std::print(stderr, "静止时长: {:.4f} 秒.\n", time_elapsed_before_takeoff);
-    // 机体处于静止状态时，机体坐标系与世界坐标系不一定是重合的。
-    // 以 EuRoC MAV 数据集为例，无人机起飞前，
-    // 其机体坐标系（即 IMU 坐标系）的 X,Y,Z 三轴大致上
-    // 分别与世界坐标系的 Z,-Y,X 三轴对应
-
-    if (!is_orientation_estimated)
-    { // 如果尚未预测过初始朝向，就立即进行预测
-      estimated_attitude_rk = zupt.EstimateOrientation();
+      state.SetPosition(data_truth_[0].position_);
+      state.SetAttitude(data_truth_[0].attitude_);
     }
-    state.SetAttitude(estimated_attitude_rk);
-
+    else
     {
-      Eigen::Matrix3f estimated_attitude_rk_matrix{estimated_attitude_rk};
-      std::print(stderr,
-                 "[INFO] ZUPT 估计初始姿态为 = [\n"
-                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
-                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
-                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
-                 "]\n",
-                 estimated_attitude_rk_matrix(0, 0),
-                 estimated_attitude_rk_matrix(0, 1),
-                 estimated_attitude_rk_matrix(0, 2),
-                 estimated_attitude_rk_matrix(1, 0),
-                 estimated_attitude_rk_matrix(1, 1),
-                 estimated_attitude_rk_matrix(1, 2),
-                 estimated_attitude_rk_matrix(2, 0),
-                 estimated_attitude_rk_matrix(2, 1),
-                 estimated_attitude_rk_matrix(2, 2));
+      // 引入“零速更新”机制，检测起飞时刻
+      ZUPT<float> zupt{};
+      bool is_orientation_estimated{false};
+      // 初始朝向
+      Eigen::Quaternionf estimated_attitude_rk{Eigen::Quaternionf::Identity()};
+
+      DatumImu datum_first;
+      DatumImu datum_last;
+      for (bool first_loop{true}; const DatumImu &datum_rk : data_imu_)
+      {
+        if (first_loop)
+        {
+          datum_first = datum_rk;
+          first_loop  = false;
+          continue;
+        }
+        if (zupt.IsFull() && !is_orientation_estimated)
+        { // 当样本足够多时，如果尚未预测过初始朝向，就立即进行预测
+          estimated_attitude_rk    = zupt.EstimateOrientation();
+          is_orientation_estimated = true;
+        }
+        if (!zupt.Update(datum_rk.linear_acceleration_,
+                         datum_rk.angular_velocity_))
+        {
+          datum_last = datum_rk;
+          break;
+        }
+      } // end for
+      // 静止状态的时长
+      const float time_elapsed_before_takeoff{
+          1e-9f
+              * static_cast<float>(datum_last.timestamp_
+                                   - datum_first.timestamp_),
+      };
+      std::print(stderr, "静止时长: {:.4f} 秒.\n", time_elapsed_before_takeoff);
+      // 机体处于静止状态时，机体坐标系与世界坐标系不一定是重合的。
+      // 以 EuRoC MAV 数据集为例，无人机起飞前，
+      // 其机体坐标系（即 IMU 坐标系）的 X,Y,Z 三轴大致上
+      // 分别与世界坐标系的 Z,-Y,X 三轴对应
+
+      if (!is_orientation_estimated)
+      { // 如果尚未预测过初始朝向，就立即进行预测
+        estimated_attitude_rk = zupt.EstimateOrientation();
+      }
+      state.SetAttitude(estimated_attitude_rk);
+
+      {
+        Eigen::Matrix3f estimated_attitude_rk_matrix{estimated_attitude_rk};
+        std::print(stderr,
+                   "[INFO] ZUPT 估计初始姿态为 = [\n"
+                   "\t[{:.2f}, {:.2f}, {:.2f}]\n"
+                   "\t[{:.2f}, {:.2f}, {:.2f}]\n"
+                   "\t[{:.2f}, {:.2f}, {:.2f}]\n"
+                   "]\n",
+                   estimated_attitude_rk_matrix(0, 0),
+                   estimated_attitude_rk_matrix(0, 1),
+                   estimated_attitude_rk_matrix(0, 2),
+                   estimated_attitude_rk_matrix(1, 0),
+                   estimated_attitude_rk_matrix(1, 1),
+                   estimated_attitude_rk_matrix(1, 2),
+                   estimated_attitude_rk_matrix(2, 0),
+                   estimated_attitude_rk_matrix(2, 1),
+                   estimated_attitude_rk_matrix(2, 2));
+      }
     }
 
     // 统计信息 (记录使用龙格贝塔法估计位置、线速度产生的绝对误差)
@@ -1431,9 +1460,14 @@ private:
     }
   }
 
+#pragma endregion
+
 public:
   VisualInertial() : Node("StereoSlam1")
   {
+    this->declare_parameter("use_true_init_pose", false);
+    use_true_init_pose_ = this->get_parameter("use_true_init_pose").as_bool();
+
     // std::filesystem::path{std::getenv("HOME")} / "vio_ws" / "estimated_motion.csv"
     this->declare_parameter("path_estimation_csv", "estimated_motion.csv");
     const std::string path_estimation_csv{
