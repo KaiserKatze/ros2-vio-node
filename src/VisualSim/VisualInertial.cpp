@@ -19,6 +19,8 @@ using namespace std::chrono_literals;
 
 #include <Eigen/Dense>
 
+#include <sophus/so3.hpp>
+
 #include <boost/numeric/odeint.hpp>
 
 #include <opencv2/calib3d.hpp>
@@ -780,40 +782,26 @@ private:
       };
 
       // 传感器参考系下的平均角速度
-      Eigen::Vector3f average_angular_velocity_in_sensor_frame{
-          0.5f * (datum_prev.angular_velocity_ + datum_imu.angular_velocity_),
+      Eigen::Vector3f angular_velocity_in_sensor_frame{
+          datum_prev.angular_velocity_,
       };
-      // 传感器参考系下的旋转向量
-      Eigen::Vector3f rotation_vector_in_sensor_frame{
-          average_angular_velocity_in_sensor_frame * dt,
-      };
-      // 旋转角
-      float rotation_angle{rotation_vector_in_sensor_frame.norm()};
       // 朝向变化量
-      Eigen::Quaternionf delta_attitude(
-          rotation_angle > 1e-6
-              ? Eigen::Quaternionf(Eigen::AngleAxisf{
-                    rotation_angle,
-                    rotation_vector_in_sensor_frame / rotation_angle,
-                })
-              : Eigen::Quaternionf::Identity()
-      );
+      Eigen::Quaternionf delta_attitude{
+          Sophus::SO3f::exp(angular_velocity_in_sensor_frame * dt),
+      };
       // 新的朝向
       Eigen::Quaternionf estimated_new_attitude_imu{
           (estimated_attitude_imu * delta_attitude).normalized(),
       };
 
       // 惯性参考系下的平均线加速度
-      Eigen::Vector3f average_linear_acceleration_in_world_frame{
-          0.5f
-                  * (estimated_attitude_imu * datum_prev.linear_acceleration_
-                     + estimated_new_attitude_imu
-                           * datum_imu.linear_acceleration_)
+      Eigen::Vector3f linear_acceleration_in_world_frame{
+          estimated_attitude_imu * datum_prev.linear_acceleration_
               + gravity_world,
       };
       // 线速度变化量
       Eigen::Vector3f delta_velocity{
-          average_linear_acceleration_in_world_frame * dt,
+          linear_acceleration_in_world_frame * dt,
       };
       // 位置变化量
       Eigen::Vector3f delta_position{
