@@ -633,8 +633,9 @@ private:
 
     if (use_true_init_pose_ && !data_truth_.empty())
     {
-      estimated_position_imu = data_truth_[0].position_;
-      estimated_attitude_imu = Sophus::SO3f(data_truth_[0].attitude_);
+      estimated_position_imu        = data_truth_[0].position_;
+      estimated_attitude_imu        = Sophus::SO3f(data_truth_[0].attitude_);
+      estimated_linear_velocity_imu = data_truth_[0].velocity_;
     }
     else
     {
@@ -1038,6 +1039,7 @@ private:
     {
       state.SetPosition(data_truth_[0].position_);
       state.SetAttitude(data_truth_[0].attitude_);
+      state.SetVelocity(data_truth_[0].velocity_);
     }
     else
     {
