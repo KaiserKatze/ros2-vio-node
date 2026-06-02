@@ -56,7 +56,7 @@ struct VisualSim
   // 仿真双目相机运动路径
   using OrientationMode = Path<value_type>::OrientationMode;
   OrientationMode orientation_mode_{OrientationMode::LookAtCenter};
-  Path<value_type> path_{};
+  Path<value_type> path_{room_, orientation_mode_};
   const value_type time_limit_simulation_{
       // 计算匀速圆周运动恰好旋转两周所需的时间
       std::round(4 * std::numbers::pi_v<value_type> / path_.omega_
@@ -187,7 +187,7 @@ struct VisualSim
 
   std::pair<Point3, Attitude> GetPose(value_type time) const
   {
-    return path_.GetPose(room_, time, orientation_mode_);
+    return path_.GetPose(time);
   }
 
   void Start()
@@ -266,15 +266,56 @@ struct VisualSim
     std::ofstream fout_readme(path_mav0 / "README.md");
     std::print(fout_readme,
                "Room:\n"
-               "\tWidth:  {:.2f}  <!-- 房间开间 -->\n"
-               "\tDepth:  {:.2f}  <!-- 房间进深 -->\n"
-               "\tHeight: {:.2f}  <!-- 房间层高 -->\n"
-               "Time Length Before Takeoff: {:.2f} seconds  "
-               "<!-- 无人机起飞前处于静止状态的时间长度 (单位: 秒) -->\n"
-               "Movement Paradigm: {}  <!-- 无人机的运动范式 -->\n",
-               room_.width_, room_.depth_, room_.height_, //
-               path_.time_static_,                        //
-               enum_to_string(orientation_mode_));
+               "\tWidth:  {:.2f} [m]  <!-- 房间开间 -->\n"
+               "\tDepth:  {:.2f} [m]  <!-- 房间进深 -->\n"
+               "\tHeight: {:.2f} [m]  <!-- 房间层高 -->\n"
+               "Movement Paradigm: {}  <!-- 无人机的运动范式 -->\n"
+               "Movement Stage #1\n"
+               "\tTime Length Before Takeoff: {:.2f} [s]  "
+               "<!-- 无人机起飞前处于静止状态的时间长度 (单位: 秒) -->\n",
+               room_.width_, room_.depth_,
+               room_.height_,                     //                    //
+               enum_to_string(orientation_mode_), //
+               path_.time_static_);
+    switch (orientation_mode_)
+    {
+    case OrientationMode::LookAtCenter:
+    case OrientationMode::BackToCenter:
+    case OrientationMode::Tangent:
+    case OrientationMode::Upward:
+    {
+      // 做匀速圆周运动时的运动半径
+      const value_type radius{path_.GetRadius()};
+      // 做匀速圆周运动时的线速度大小
+      const value_type v0{radius * path_.omega_};
+      // 做匀速圆周运动之前，做匀加速直线运动所需的时长
+      const value_type t0{static_cast<value_type>(2.0) * radius / v0};
+      // 做匀加速直线运动时的线加速度大小
+      const value_type a0{static_cast<value_type>(0.5) * v0 * path_.omega_};
+      // 做匀速圆周运动时的线加速度大小
+      const value_type a1{path_.omega_ * v0};
+      std::print(
+          fout_readme,
+          "Movement Stage #2\n"
+          "\tTime: {:.2f} [s]  <!-- 匀加速直线运动 时间 -->\n"
+          "\tDistance: {:.2f} [m]  <!-- 匀加速直线运动 位移 -->\n"
+          "\tAcceleration: {:.2f} [m s^-2]  <!-- 匀加速直线运动 线加速度 -->\n"
+          "Movement Stage #3\n"
+          "\tRadius: {:.2f} [m]  <!-- 匀速圆周运动 轨道半径 -->\n"
+          "\tLinear Velocity: {:.2f} [m s^-1]  <!-- 匀速圆周运动 线速度 -->\n"
+          "\tLinear Acceleration: {:.2f} [m s^-2]"
+          "  <!-- 匀速圆周运动 线加速度 -->\n"
+          "\tAngular Velocity: {:.2f} [rad s^-1]"
+          "  <!-- 匀速圆周运动 角速度 -->\n",
+          t0, radius, a0, //
+          radius, v0, a1, path_.omega_
+      );
+      break;
+    }
+    case OrientationMode::StraightLine:
+    case OrientationMode::Parabola:
+      break;
+    }
 
     // 输出 mav0/cam0/data.csv 表头
     std::ofstream fout_cam0_data_csv(path_cam0 / "data.csv");
@@ -284,10 +325,14 @@ struct VisualSim
     std::print(fout_cam1_data_csv, "#timestamp [ns],filename\n");
     // 输出 mav0/state_groundtruth_estimate0/data.csv 表头
     std::ofstream fout_groundtruth_csv(path_groundtruth / "data.csv");
-    std::print(fout_groundtruth_csv,
-               "#timestamp [ns], p_RS_R_x [m], p_RS_R_y [m], p_RS_R_z [m], "
-               "q_RS_w [], q_RS_x [], q_RS_y [], q_RS_z [], "
-               "v_RS_R_x [m s^-1], v_RS_R_y [m s^-1], v_RS_R_z [m s^-1]\n");
+    std::print(
+        fout_groundtruth_csv,
+        "#timestamp [ns], p_RS_R_x [m], p_RS_R_y [m], p_RS_R_z [m], "
+        "q_RS_w [], q_RS_x [], q_RS_y [], q_RS_z [], "
+        "v_RS_R_x [m s^-1], v_RS_R_y [m s^-1], v_RS_R_z [m s^-1], "
+        "a_RS_R_x [m s^-2], a_RS_R_y [m s^-2], a_RS_R_z [m s^-2], "
+        "w_RS_R_x [rad s^-1], w_RS_R_y [rad s^-1], w_RS_R_z [rad s^-1]\n"
+    );
     // 输出 mav0/imu0/data.csv 表头
     std::ofstream fout_imu0_data_csv(path_imu0 / "data.csv");
     std::print(fout_imu0_data_csv,
@@ -310,7 +355,7 @@ struct VisualSim
       std::print(fout_cam1_data_csv, "{0:020d},{0:020d}.png\n", timestamp_ns);
 #endif
 
-      const Frame frame{path_.GetImage(rig_, time, room_, orientation_mode_)};
+      const Frame frame{path_.GetImage(rig_, time)};
 
       Point3 true_current_position{Point3::Zero()};
       Quaternion true_current_attitude{Quaternion::Identity()};
@@ -334,8 +379,7 @@ struct VisualSim
         // 线加速度矢量 $\ddot{r}^{iv}_i$
         Point3 imu_linear_acceleration_world{Point3::Zero()};
         // 获取 IMU 在世界坐标系下的线速度、角速度、线加速度
-        path_.GetKinematics(room_, imu_time, orientation_mode_,
-                            imu_linear_velocity_world,
+        path_.GetKinematics(imu_time, imu_linear_velocity_world,
                             imu_angular_velocity_world,
                             imu_linear_acceleration_world);
 
@@ -348,24 +392,33 @@ struct VisualSim
         Quaternion imu_attitude_quat{imu_attitude};
 
         // 输出仿真 Ground Truth 数据
-        std::print(
-            fout_groundtruth_csv,
-            // 时间戳
-            "{:020d}, "
-            // 位置
-            "{:.18f}, {:.18f}, {:.18f}, "
-            // 朝向
-            "{:.18f}, {:.18f}, {:.18f}, {:.18f}, "
-            // 速度
-            "{:.18f}, {:.18f}, {:.18f}\n",
-            imu_timestamp_ns, //
-            imu_position.x(), imu_position.y(),
-            imu_position.z(), //
-            imu_attitude_quat.w(), imu_attitude_quat.x(), imu_attitude_quat.y(),
-            imu_attitude_quat.z(), //
-            imu_linear_velocity_world.x(), imu_linear_velocity_world.y(),
-            imu_linear_velocity_world.z() //
-        );
+        std::print(fout_groundtruth_csv,
+                   // 时间戳
+                   "{:020d}, "
+                   // 位置
+                   "{:.18f}, {:.18f}, {:.18f}, "
+                   // 朝向
+                   "{:.18f}, {:.18f}, {:.18f}, {:.18f}, "
+                   // 线速度
+                   "{:.18f}, {:.18f}, {:.18f},"
+                   // 线加速度
+                   "{:.18f}, {:.18f}, {:.18f},"
+                   // 角速度
+                   "{:.18f}, {:.18f}, {:.18f}\n",
+                   imu_timestamp_ns, //
+                   imu_position.x(), imu_position.y(),
+                   imu_position.z(), //
+                   imu_attitude_quat.w(), imu_attitude_quat.x(),
+                   imu_attitude_quat.y(),
+                   imu_attitude_quat.z(), //
+                   imu_linear_velocity_world.x(), imu_linear_velocity_world.y(),
+                   imu_linear_velocity_world.z(), //
+                   imu_linear_acceleration_world.x(),
+                   imu_linear_acceleration_world.y(),
+                   imu_linear_acceleration_world.z(), //
+                   imu_angular_velocity_world.x(),
+                   imu_angular_velocity_world.y(),
+                   imu_angular_velocity_world.z());
 
         // 转换坐标系：从世界坐标系转为传感器坐标系
 

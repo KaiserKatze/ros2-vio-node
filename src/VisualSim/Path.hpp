@@ -37,13 +37,45 @@ struct Path
     Parabola,     // 先进行一段匀加速直线运动，再进行平抛运动
   };
 
+  const Room<value_type> &room_;
+  const OrientationMode mode_;
+
+  Path(const Room<value_type> &room,
+       OrientationMode mode = OrientationMode::LookAtCenter) :
+    room_{room}, mode_{mode}
+  {
+  }
+
 public:
+  /**
+   * @brief 获取匀速圆周运动的运动半径
+   */
+  value_type GetRadius() const
+  {
+    return static_cast<value_type>(mode_ == OrientationMode::LookAtCenter
+                                       ? 0.4
+                                       : 0.45)
+           * std::min<value_type>(room_.depth_, room_.width_);
+  }
+
+  /**
+   * @brief 获取匀速圆周运动的轨迹圆圆心
+   */
+  Point3 GetCenter() const
+  {
+    Point3 center{room_.center_};
+    // 修改离地高度
+    if (mode_ != OrientationMode::LookAtCenter)
+    {
+      center.z() -= static_cast<value_type>(0.3 * room_.height_);
+    }
+    return center;
+  }
+
   /**
    * @brief 获取世界坐标系下的位姿参数 (位置 $r^{vi}_i$、朝向 $C_{iv}$)
    */
-  std::pair<Point3, Attitude>
-  GetPose(const Room<value_type> &room, value_type time,
-          OrientationMode mode = OrientationMode::LookAtCenter) const
+  std::pair<Point3, Attitude> GetPose(value_type time) const
   {
 #if (ENABLE_ZUPT)
     if (time < time_static_)
@@ -57,15 +89,10 @@ public:
 #endif
 
     // 1. 计算房间几何中心
-    const Point3 center{room.center_};
+    const Point3 center{GetCenter()};
 
     // 2. 设置圆周运动参数
-    const value_type radius{
-        // 下面的系数必须小于 0.5
-        static_cast<value_type>(mode == OrientationMode::LookAtCenter ? 0.4
-                                                                      : 0.45)
-            * std::min<value_type>(room.depth_, room.width_),
-    }; // 运动半径（留在房间内）
+    const value_type radius{GetRadius()}; // 运动半径（留在房间内）
 
     // 3. 计算相机本体 (Body/Base) 在世界坐标系下的位置
     // 在平行于地板的平面内运动，Z 轴高度保持在房间中心高度
@@ -76,13 +103,13 @@ public:
     Point3 basis_y{Point3::UnitY()};
     Point3 basis_z{Point3::UnitZ()};
 
-    if (mode == OrientationMode::StraightLine)
+    if (mode_ == OrientationMode::StraightLine)
     {
       pos_body.x() = center.x() + radius * std::cos(omega_ * time);
       pos_body.y() = center.y();
       pos_body.z() = center.z();
     }
-    else if (mode == OrientationMode::Parabola)
+    else if (mode_ == OrientationMode::Parabola)
     {
       // 把 omega_ 当作加速度，进行匀加速直线运动
       if (time < 1.0)
@@ -109,11 +136,6 @@ public:
     {
       // 不论是匀速圆周运动还是匀加速直线运动，离地高度总是保持不变
       pos_body.z() = center.z();
-      // 修改离地高度
-      if (mode != OrientationMode::LookAtCenter)
-      {
-        pos_body.z() -= static_cast<value_type>(0.3 * room.height_);
-      }
       // 做匀速圆周运动时的线速度大小
       const value_type v0{radius * omega_};
       // 做匀速圆周运动之前，做匀加速直线运动所需的时长
@@ -132,10 +154,7 @@ public:
         pos_orientation = {
             center.x() + radius,
             center.y(),
-            center.z()
-                + (mode != OrientationMode::LookAtCenter
-                       ? -static_cast<value_type>(0.3 * room.height_)
-                       : static_cast<value_type>(0.0)),
+            center.z(),
         };
       }
       // 进行匀速圆周运动
@@ -148,7 +167,7 @@ public:
         pos_orientation = pos_body;
       }
 
-      switch (mode)
+      switch (mode_)
       {
       case OrientationMode::LookAtCenter:
       {
@@ -197,8 +216,7 @@ public:
   /**
    * @brief 获取世界坐标系下的动力学参数 (线速度、角速度、线加速度)
    */
-  void GetKinematics(const Room<value_type> &room, value_type time,
-                     OrientationMode mode, Point3 &linear_velocity,
+  void GetKinematics(value_type time, Point3 &linear_velocity,
                      Point3 &angular_velocity, Point3 &linear_acceleration)
   {
 #if (ENABLE_ZUPT)
@@ -215,15 +233,10 @@ public:
     }
 #endif
 
-    const value_type radius{
-        // 下面的系数必须小于 0.5
-        static_cast<value_type>(mode == OrientationMode::LookAtCenter ? 0.4
-                                                                      : 0.45)
-            * std::min<value_type>(room.depth_, room.width_),
-    }; // 运动半径（留在房间内）
+    const value_type radius{GetRadius()}; // 运动半径（留在房间内）
 
-    auto &&[position, attitude] = GetPose(room, time, mode);
-    if (mode == OrientationMode::StraightLine)
+    auto &&[position, attitude] = GetPose(time);
+    if (mode_ == OrientationMode::StraightLine)
     {
       angular_velocity = Point3::Zero();
       linear_velocity  = {
@@ -237,7 +250,7 @@ public:
           0.0,
       };
     }
-    else if (mode == OrientationMode::Parabola)
+    else if (mode_ == OrientationMode::Parabola)
     {
       angular_velocity = Point3::Zero();
       // 把 omega_ 当作加速度，进行匀加速直线运动
@@ -290,7 +303,7 @@ public:
       {
         angular_velocity = omega_ * Point3::UnitZ();
         // 匀速圆周运动的半径矢量 (当前位置点与房间中心点的差向量)
-        const Point3 relative_position{position - room.center_};
+        const Point3 relative_position{position - room_.center_};
         // 线速度矢量
         // v_k = ω \times r_k
         linear_velocity = angular_velocity.cross(relative_position);
@@ -304,14 +317,10 @@ public:
   /**
    * @brief 让双目相机 rig 绕着房间的几何中心，在平行于地板的平面内，做匀速圆周运动
    */
-  auto GetImage(const StereoRig<value_type> &rig, value_type time,
-                const Room<value_type> &room,
-                OrientationMode mode = OrientationMode::LookAtCenter) const
+  auto GetImage(const StereoRig<value_type> &rig, value_type time) const
   {
-    // 这里不能调用 CheckTime(time)
-    // 否则会和下面的函数调用 GetPose 发生冲突
-    const Point3 center{room.center_};
-    const auto &&[pos_body, att_body] = GetPose(room, time, mode);
+    const Point3 center{GetCenter()};
+    const auto &&[pos_body, att_body] = GetPose(time);
 
     // if constexpr (false)
     // {
@@ -339,7 +348,7 @@ public:
     //       center_pixel_right.z());
     // }
 
-    return rig.Project(room.object_matrix_, att_body.transpose(),
+    return rig.Project(room_.object_matrix_, att_body.transpose(),
                        -att_body.transpose() * pos_body);
   }
 };
