@@ -265,14 +265,18 @@ struct VisualSim
     // 输出 mav0/README.md 说明文件
     std::ofstream fout_readme(path_mav0 / "README.md");
     std::print(fout_readme,
+               "Simulation Time: {} [s]  <!-- 仿真时长 (单位: 秒) -->\n"
+               "Local Gravity: {:.2f} [m s^-2]  <!-- 重力加速度 -->\n"
                "Room:\n"
                "\tWidth:  {:.2f} [m]  <!-- 房间开间 -->\n"
                "\tDepth:  {:.2f} [m]  <!-- 房间进深 -->\n"
                "\tHeight: {:.2f} [m]  <!-- 房间层高 -->\n"
                "Movement Paradigm: {}  <!-- 无人机的运动范式 -->\n"
                "Movement Stage #1\n"
-               "\tTime Length Before Takeoff: {:.2f} [s]  "
+               "\tTime: {:.2f} [s]  "
                "<!-- 无人机起飞前处于静止状态的时间长度 (单位: 秒) -->\n",
+               time_limit_simulation_, //
+               gravity_world_norm_,    //
                room_.width_, room_.depth_,
                room_.height_,                     //                    //
                enum_to_string(orientation_mode_), //
@@ -469,7 +473,7 @@ struct VisualSim
                                rig_.camera_right_.width_, CV_8UC3,
                                background_gray);
 
-        std::print("\t绘制双目图像 ...\n");
+        // std::print("\t绘制双目图像 ...\n");
 
         // 核心绘制逻辑收口
         mesh_plot_.Draw(cv_image_left, cv_image_right, frame);
