@@ -283,7 +283,7 @@ public:
       if (time < t0)
       {
         angular_velocity    = Point3::Zero();
-        linear_acceleration = {0.0, a0, 0.0};
+        linear_acceleration = a0 * Point3::UnitY();
         linear_velocity     = linear_acceleration * time;
       }
       else
