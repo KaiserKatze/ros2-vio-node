@@ -19,7 +19,7 @@ struct Path
   using Attitude = Eigen::Matrix<value_type, 3, 3>;
 
   // 如果启用 ZUPT 机制，那么在最初的几秒内，输出静止状态对应的动力学参数
-  static constexpr value_type time_static_{(ENABLE_ZUPT) ? 5.0 : 0.0};
+  static constexpr value_type time_static_{(ENABLE_ZUPT) ? 2.0 : 0.0};
   const value_type gravity_world_norm{9.81}; // m s^-2
 
   const value_type omega_{0.5}; // 角速率 (rad/s) 或 平抛水平线速度 (m/s)
@@ -66,17 +66,21 @@ public:
                                                                       : 0.45)
             * std::min<value_type>(room.depth_, room.width_),
     }; // 运动半径（留在房间内）
-    const value_type angle{omega_ * time}; // 当前角度
 
     // 3. 计算相机本体 (Body/Base) 在世界坐标系下的位置
     // 在平行于地板的平面内运动，Z 轴高度保持在房间中心高度
     Point3 pos_body{Point3::Zero()};
 
-    pos_body.x() = center.x() + radius * std::cos(angle);
-    pos_body.z() = center.z();
+    // 4. 计算相机本体的朝向 (Rotation)
+    Point3 basis_x{Point3::UnitX()};
+    Point3 basis_y{Point3::UnitY()};
+    Point3 basis_z{Point3::UnitZ()};
+
     if (mode == OrientationMode::StraightLine)
     {
+      pos_body.x() = center.x() + radius * std::cos(omega_ * time);
       pos_body.y() = center.y();
+      pos_body.z() = center.z();
     }
     else if (mode == OrientationMode::Parabola)
     {
@@ -84,8 +88,8 @@ public:
       if (time < 1.0)
       {
         pos_body = {
-            // 0.5 * (omega_ * time) * time
-            static_cast<value_type>(0.5) * angle * time,
+            // static_cast<value_type>(0.5) * (omega_ * time) * time
+            static_cast<value_type>(0.5) * omega_ * time * time,
             0.0,
             0.0,
         };
@@ -95,7 +99,7 @@ public:
       {
         time -= static_cast<value_type>(1.0);
         pos_body = {
-            angle,
+            omega_ * time,
             0.0,
             static_cast<value_type>(0.5) * -gravity_world_norm * time * time,
         };
@@ -103,60 +107,82 @@ public:
     }
     else
     {
-      pos_body.y() = center.y() + radius * std::sin(angle);
+      // 不论是匀速圆周运动还是匀加速直线运动，离地高度总是保持不变
+      pos_body.z() = center.z();
+      // 修改离地高度
       if (mode != OrientationMode::LookAtCenter)
       {
         pos_body.z() -= static_cast<value_type>(0.3 * room.height_);
       }
-    }
+      // 做匀速圆周运动时的线速度大小
+      const value_type v0{radius * omega_};
+      // 做匀速圆周运动之前，做匀加速直线运动所需的时长
+      const value_type t0{static_cast<value_type>(2.0) * radius / v0};
+      // 做匀加速直线运动时的线加速度大小
+      const value_type a0{static_cast<value_type>(0.5) * v0 * omega_};
+      // 用来构造标架
+      Point3 pos_orientation{Point3::Zero()};
+      // 进行匀加速直线运动
+      if (time < t0)
+      {
+        pos_body.x() = center.x() + radius;
+        pos_body.y() = center.y() - radius
+                       + static_cast<value_type>(0.5) * a0 * time * time;
 
-    // 4. 计算相机本体的朝向 (Rotation)
-    // 习惯上：让相机 Z 轴指向房间中心 (Look-at)，X 轴水平
-    // 这里构造一个简单的旋转矩阵：
-    // https://libeigen.gitlab.io/eigen/docs-nightly/group__Geometry__Module.html#gac32d7ca309f8c0ef9ae04172d49a88e6
-    Point3 basis_x;
-    Point3 basis_y;
-    Point3 basis_z;
+        pos_orientation = {
+            center.x() + radius,
+            center.y(),
+            center.z()
+                + (mode != OrientationMode::LookAtCenter
+                       ? -static_cast<value_type>(0.3 * room.height_)
+                       : static_cast<value_type>(0.0)),
+        };
+      }
+      // 进行匀速圆周运动
+      else
+      {
+        time -= t0;
+        pos_body.x() = center.x() + radius * std::cos(omega_ * time);
+        pos_body.y() = center.y() + radius * std::sin(omega_ * time);
 
-    switch (mode)
-    {
-    case OrientationMode::LookAtCenter:
-    {
-      basis_z = (center - pos_body).normalized();    // 朝向圆心
-      basis_y = {0.0, 0.0, -1.0};                    // 朝向地心
-      basis_x = basis_y.cross(basis_z).normalized(); // 朝向右侧
-      break;
-    }
-    case OrientationMode::BackToCenter:
-    {
-      basis_z = (pos_body - center).normalized();    // 背对圆心
-      basis_y = {0.0, 0.0, -1.0};                    // 朝向地心
-      basis_x = basis_y.cross(basis_z).normalized(); // 朝向右侧
-      break;
-    }
-    case OrientationMode::Tangent:
-    {
-      // 逆时针运动的切线方向
-      basis_z = Point3{-std::sin(angle), std::cos(angle), 0.0};
-      basis_y = {0.0, 0.0, -1.0};                    // 朝向地心
-      basis_x = basis_y.cross(basis_z).normalized(); // 朝向右侧
-      break;
-    }
-    case OrientationMode::Upward:
-    {
-      basis_z = {0.0, 0.0, 1.0};                     // 指向天花板
-      basis_x = (center - pos_body).normalized();    // 朝向圆心
-      basis_y = basis_z.cross(basis_x).normalized(); // 朝向运动的反方向
-      break;
-    }
-    case OrientationMode::StraightLine:
-    case OrientationMode::Parabola:
-    {
-      basis_x = {1.0, 0.0, 0.0};
-      basis_y = {0.0, 1.0, 0.0};
-      basis_z = {0.0, 0.0, 1.0};
-      break;
-    }
+        pos_orientation = pos_body;
+      }
+
+      switch (mode)
+      {
+      case OrientationMode::LookAtCenter:
+      {
+        basis_z = (center - pos_orientation).normalized(); // 朝向圆心
+        basis_y = -Point3::UnitZ();                        // 朝向地心
+        basis_x = basis_y.cross(basis_z).normalized();     // 朝向右侧
+        break;
+      }
+      case OrientationMode::BackToCenter:
+      {
+        basis_z = (pos_orientation - center).normalized(); // 背对圆心
+        basis_y = -Point3::UnitZ();                        // 朝向地心
+        basis_x = basis_y.cross(basis_z).normalized();     // 朝向右侧
+        break;
+      }
+      case OrientationMode::Tangent:
+      {
+        // 逆时针运动的切线方向
+        basis_z
+            = Point3{-std::sin(omega_ * time), std::cos(omega_ * time), 0.0};
+        basis_y = -Point3::UnitZ();                    // 朝向地心
+        basis_x = basis_y.cross(basis_z).normalized(); // 朝向右侧
+        break;
+      }
+      case OrientationMode::Upward:
+      {
+        basis_z = Point3::UnitZ();                         // 指向天花板
+        basis_x = (center - pos_orientation).normalized(); // 朝向圆心
+        basis_y = basis_z.cross(basis_x).normalized();     // 朝向运动的反方向
+        break;
+      }
+      default:
+        break;
+      }
     }
 
     Attitude att_body;
@@ -189,15 +215,16 @@ public:
     }
 #endif
 
+    const value_type radius{
+        // 下面的系数必须小于 0.5
+        static_cast<value_type>(mode == OrientationMode::LookAtCenter ? 0.4
+                                                                      : 0.45)
+            * std::min<value_type>(room.depth_, room.width_),
+    }; // 运动半径（留在房间内）
+
     auto &&[position, attitude] = GetPose(room, time, mode);
     if (mode == OrientationMode::StraightLine)
     {
-      const value_type radius{
-          // 下面的系数必须小于 0.5
-          static_cast<value_type>(mode == OrientationMode::LookAtCenter ? 0.4
-                                                                        : 0.45)
-              * std::min<value_type>(room.depth_, room.width_),
-      }; // 运动半径（留在房间内）
       angular_velocity = Point3::Zero();
       linear_velocity  = {
           -radius * omega_ * std::sin(omega_ * time),
@@ -245,15 +272,32 @@ public:
     }
     else
     {
-      angular_velocity = omega_ * Point3{0.0, 0.0, 1.0};
-      // 匀速圆周运动的半径矢量 (当前位置点与房间中心点的差向量)
-      const Point3 relative_position{position - room.center_};
-      // 线速度矢量
-      // v_k = ω \times r_k
-      linear_velocity = angular_velocity.cross(relative_position);
-      // 线加速度矢量
-      // a_k = ω \times v_k
-      linear_acceleration = angular_velocity.cross(linear_velocity);
+      // 做匀速圆周运动时的线速度大小
+      const value_type v0{radius * omega_};
+      // 做匀速圆周运动之前，做匀加速直线运动所需的时长
+      const value_type t0{static_cast<value_type>(2.0) * radius / v0};
+      // 做匀加速直线运动时的线加速度大小
+      const value_type a0{static_cast<value_type>(0.5) * v0 * omega_};
+
+      // 进行匀加速直线运动
+      if (time < t0)
+      {
+        angular_velocity    = Point3::Zero();
+        linear_acceleration = {0.0, a0, 0.0};
+        linear_velocity     = linear_acceleration * time;
+      }
+      else
+      {
+        angular_velocity = omega_ * Point3::UnitZ();
+        // 匀速圆周运动的半径矢量 (当前位置点与房间中心点的差向量)
+        const Point3 relative_position{position - room.center_};
+        // 线速度矢量
+        // v_k = ω \times r_k
+        linear_velocity = angular_velocity.cross(relative_position);
+        // 线加速度矢量
+        // a_k = ω \times v_k
+        linear_acceleration = angular_velocity.cross(linear_velocity);
+      }
     }
   }
 
