@@ -215,7 +215,6 @@ struct DatumTruth
         const float vx{AbstractLoader::get_item_as_float(ss)};
         const float vy{AbstractLoader::get_item_as_float(ss)};
         const float vz{AbstractLoader::get_item_as_float(ss)};
-#if (DATASOURCE == DATASOURCE_EUROC)
         // 读取陀螺仪偏差 (rad s^-1)
         const float bwx{AbstractLoader::get_item_as_float(ss)};
         const float bwy{AbstractLoader::get_item_as_float(ss)};
@@ -224,15 +223,8 @@ struct DatumTruth
         const float bax{AbstractLoader::get_item_as_float(ss)};
         const float bay{AbstractLoader::get_item_as_float(ss)};
         const float baz{AbstractLoader::get_item_as_float(ss)};
+#if (DATASOURCE == DATASOURCE_EUROC)
 #elif (DATASOURCE == DATASOURCE_SIM)
-        // 读取陀螺仪偏差 (rad s^-1)
-        const float bwx{0.0f};
-        const float bwy{0.0f};
-        const float bwz{0.0f};
-        // 读取加速度计偏差 (m s^-2)
-        const float bax{0.0f};
-        const float bay{0.0f};
-        const float baz{0.0f};
 #endif
 
         const DatumTruth datum_truth{
@@ -337,8 +329,6 @@ private:
   };
 #endif
 
-  std::string path_estimation_csv_;
-  std::string path_imu_csv_;
   std::string path_truth_csv_;
 
   std::vector<DatumFast> data_fast_{};
@@ -1468,7 +1458,6 @@ public:
     const std::string path_estimation_csv{
         this->get_parameter("path_estimation_csv").as_string(),
     };
-    path_estimation_csv_ = path_estimation_csv;
 
     // "/mnt/e/Documents/mav0/imu0/data.csv"
     // std::filesystem::path{std::getenv("HOME")} / "vio_ws" / "mav0" / "imu0" / "data.csv"
@@ -1476,7 +1465,6 @@ public:
     const std::string path_imu_csv{
         this->get_parameter("path_imu_csv").as_string(),
     };
-    path_imu_csv_ = path_imu_csv;
 
     // "/mnt/e/Documents/mav0/state_groundtruth_estimate0/data.csv"
     // std::filesystem::path{std::getenv("HOME")} / "vio_ws" / "mav0" / "state_groundtruth_estimate0" / "data.csv"
