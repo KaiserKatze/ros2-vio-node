@@ -51,6 +51,105 @@ using namespace std::chrono_literals;
 #define DATASOURCE_SIM 0x10
 #define DATASOURCE DATASOURCE_SIM
 
+class EvoSim3
+{
+public:
+  EvoSim3() {}
+
+  ~EvoSim3() noexcept
+  {
+    // 删除临时文件
+    std::error_code ec;
+    std::filesystem::remove(path_temp_tum_file_, ec);
+  }
+
+  void Write(std::int64_t timestamp,
+             const Eigen::Vector3d &estimated_position_fast,
+             const Eigen::Quaterniond &estimated_attitude_fast)
+  {
+    std::print(fout_temp_evo_sim3_,
+               // 时间戳
+               "{:020d}, "
+               // 位置
+               "{:.18f}, {:.18f}, {:.18f}, "
+               // 朝向
+               "{:.18f}, {:.18f}, {:.18f}, {:.18f}\n",
+               timestamp, estimated_position_fast.x(),
+               estimated_position_fast.y(), estimated_position_fast.z(),
+               estimated_attitude_fast.w(), estimated_attitude_fast.x(),
+               estimated_attitude_fast.y(), estimated_attitude_fast.z());
+  }
+
+  void Flush()
+  {
+    fout_temp_evo_sim3_.flush();
+    fout_temp_evo_sim3_.close();
+    std::print(stderr, "[INFO] 估计轨迹已写入 {}\n",
+               std::filesystem::absolute(path_temp_tum_file_).string());
+    // 利用 evo 提供的 SIM(3) 变换调整轨迹
+    std::system(
+        std::format("bash -c '"
+                    "source .venv/bin/activate && "
+                    "yes 'y' | evo_traj euroc {} --ref={} "
+                    "--align --correct_scale --save_as_tum'",
+                    std::filesystem::absolute(path_temp_tum_file_).string(),
+                    std::filesystem::absolute(path_truth_csv_).string())
+            .c_str()
+    );
+  }
+
+  template <typename Callback>
+  void Read(Callback callback)
+  {
+    std::ifstream fin_temp_evo_sim3{path_temp_tum_file_};
+    std::string line;
+    size_t line_num{0};
+    while (std::getline(fin_fast, line))
+    {
+      ++line_num;
+      std::stringstream ss(line);
+      try
+      {
+        // 读取时间戳
+        const std::int64_t timestamp{
+            static_cast<std::int64_t>(
+                AbstractLoader::get_item_as_double(ss, ' ')
+            ), // in nanoseconds
+        };
+        // 读取位置
+        const double px{AbstractLoader::get_item_as_double(ss, ' ')};
+        const double py{AbstractLoader::get_item_as_double(ss, ' ')};
+        const double pz{AbstractLoader::get_item_as_double(ss, ' ')};
+        // 读取朝向
+        const double qw{AbstractLoader::get_item_as_double(ss, ' ')};
+        const double qx{AbstractLoader::get_item_as_double(ss, ' ')};
+        const double qy{AbstractLoader::get_item_as_double(ss, ' ')};
+        const double qz{AbstractLoader::get_item_as_double(ss, ' ')};
+        callback(timestamp, Eigen::Quaterniond{qw, qx, qy, qz},
+                 Eigen::Vector3d{px, py, pz});
+      }
+      catch (const std::runtime_error &ex)
+      {
+        throw std::runtime_error{
+            std::format("Fail to parse line #{} of file '{}':\n{}.\n"
+                        "Triggered by:\n{}",
+                        line_num, path_temp_tum_file_.string(), line, //
+                        ex.what()),
+        };
+      }
+    } // end while
+    std::print(stderr, "[INFO] 估计轨迹已缩放.\n");
+  }
+
+private:
+  // 在工作目录下，用临时文件 path_temp_evo_sim3.tum 存储 TUM 格式的数据
+  // 它是利用 python 模块 evo，经过 SIM(3) 变换得到的相机轨迹数据
+  const std::filesystem::path path_temp_tum_file_{
+      "path_temp_evo_sim3.tum",
+  };
+  std::ofstream fout_temp_evo_sim3_{path_temp_tum_file_};
+};
+
 #pragma region DATA_LOADER
 
 struct DatumFast
@@ -552,12 +651,7 @@ private:
    */
   void EstimateFast()
   {
-    // 在工作目录下，用临时文件 path_fast_est.tum 存储 TUM 格式的数据
-    // 它是利用 python 模块 evo，经过 SIM(3) 变换得到的相机轨迹数据
-    const std::filesystem::path path_temp_tum_file{
-        "path_fast_est.tum",
-    };
-    std::ofstream fout_fast(path_temp_tum_file);
+    EvoSim3 evo_sim3{};
 
     // 初始状态
     Eigen::Vector3d estimated_position_fast{Eigen::Vector3d::Zero()};
@@ -596,76 +690,16 @@ private:
           = estimated_position_fast + estimated_attitude_fast * delta_position;
       estimated_attitude_fast
           = (estimated_attitude_fast * delta_rotation).normalized();
-
-      std::print(fout_fast,
-                 // 时间戳
-                 "{:020d}, "
-                 // 位置
-                 "{:.18f}, {:.18f}, {:.18f}, "
-                 // 朝向
-                 "{:.18f}, {:.18f}, {:.18f}, {:.18f}\n",
-                 datum_fast.timestamp_, estimated_position_fast.x(),
-                 estimated_position_fast.y(), estimated_position_fast.z(),
-                 estimated_attitude_fast.w(), estimated_attitude_fast.x(),
-                 estimated_attitude_fast.y(), estimated_attitude_fast.z());
+      evo_sim3.Write(datum_fast.timestamp_, estimated_position_fast,
+                     estimated_attitude_fast);
     } // end for
 
-    std::print(stderr, "[INFO] 估计轨迹已写入 {}\n",
-               std::filesystem::absolute(path_temp_tum_file).string());
-    // 利用 evo 提供的 SIM(3) 变换调整轨迹
-    std::system(
-        std::format("bash -c '"
-                    "source .venv/bin/activate && "
-                    "yes 'y' | evo_traj euroc {} --ref={} "
-                    "--align --correct_scale --save_as_tum'",
-                    std::filesystem::absolute(path_temp_tum_file).string(),
-                    std::filesystem::absolute(path_truth_csv_).string())
-            .c_str()
-    );
+    evo_sim3.Flush();
 
-    std::ifstream fin_fast(path_temp_tum_file);
-    std::string line;
-    size_t line_num{0};
-    while (std::getline(fin_fast, line))
-    {
-      ++line_num;
-      std::stringstream ss(line);
-      try
-      {
-        // 读取时间戳
-        const std::int64_t timestamp{
-            static_cast<std::int64_t>(
-                AbstractLoader::get_item_as_double(ss, ' ')
-            ), // in nanoseconds
-        };
-        // 读取位置
-        const double px{AbstractLoader::get_item_as_double(ss, ' ')};
-        const double py{AbstractLoader::get_item_as_double(ss, ' ')};
-        const double pz{AbstractLoader::get_item_as_double(ss, ' ')};
-        // 读取朝向
-        const double qw{AbstractLoader::get_item_as_double(ss, ' ')};
-        const double qx{AbstractLoader::get_item_as_double(ss, ' ')};
-        const double qy{AbstractLoader::get_item_as_double(ss, ' ')};
-        const double qz{AbstractLoader::get_item_as_double(ss, ' ')};
-        estimated_attitude_fast = Eigen::Quaterniond{qw, qx, qy, qz};
-        estimated_position_fast = Eigen::Vector3d{px, py, pz};
-        PushPose(msg_path_fast_, timestamp, estimated_attitude_fast,
-                 estimated_position_fast);
-      }
-      catch (const std::runtime_error &ex)
-      {
-        throw std::runtime_error{
-            std::format("Fail to parse line #{} of file '{}':\n{}.\n"
-                        "Triggered by:\n{}",
-                        line_num, path_temp_tum_file.string(), line, //
-                        ex.what()),
-        };
-      }
-    } // end while
-    std::print(stderr, "[INFO] 估计轨迹已缩放.\n");
-    // 删除临时文件
-    std::error_code ec;
-    std::filesystem::remove(path_temp_tum_file, ec);
+    evo_sim3.Read([&msg_path_fast_](std::int64_t timestamp,
+                                    const Eigen::Quaterniond &attitude,
+                                    const Eigen::Vector3d &position)
+                  { PushPose(msg_path_fast_, timestamp, attitude, position); });
   }
 
   /**
@@ -1644,11 +1678,24 @@ public:
 
   void Start()
   {
-    EstimateFast();
+    // EstimateFast();
     EstimateImuEuler();
     EstimateImuRK4();
     PreintegrateImu();
     EstimateFuse();
+
+    for (const auto &&[path_name, path_inst] : {
+             {"msg_path_fast_", msg_path_fast_},
+             {"msg_path_imu_", msg_path_imu_},
+             {"msg_path_rk4_", msg_path_rk4_},
+             {"msg_path_preintegrate_", msg_path_preintegrate_},
+             {"msg_path_fuse_", msg_path_fuse_},
+             {"msg_path_truth_", msg_path_truth_},
+         })
+    {
+      std::print(stderr, "[INFO] Path '{}' has {} poses.", //
+                 path_name, path_inst.poses.size());
+    }
 
 #if (PUBLISH_POSE)
     size_t index_fast{0};
@@ -1661,7 +1708,7 @@ public:
 
     while (rclcpp::ok())
     {
-      PublishPathFast();
+      // PublishPathFast();
       PublishPathImuEuler();
       PublishPathImuRK4();
       PublishPathPreintegrate();
@@ -1669,14 +1716,14 @@ public:
       PublishPathTruth();
 
 #if (PUBLISH_POSE)
-      PublishPoseFast(index_fast);
+      // PublishPoseFast(index_fast);
       PublishPoseImuEuler(index_imu_euler);
       PublishPosePreintegrate(index_preintegrate);
       PublishPoseImuRK4(index_imu_rk4);
       PublishPoseFuse(index_fuse);
       PublishPoseTruth(index_truth);
 
-      index_fast      = (index_fast + 1) % msg_path_fast_.poses.size();
+      // index_fast      = (index_fast + 1) % msg_path_fast_.poses.size();
       index_imu_euler = (index_imu_euler + 1) % msg_path_imu_.poses.size();
       index_preintegrate
           = (index_preintegrate + 1) % msg_path_preintegrate_.poses.size();
