@@ -34,6 +34,8 @@ using namespace std::chrono_literals;
 #include <rclcpp/time.hpp>
 #include <sensor_msgs/msg/image.hpp>
 
+#include "yaml-cpp/yaml.h"
+
 #include "ImuState.hpp"
 #include "LinearKalmanFilter.hpp"
 #include "euroc_vio/AbstractLoader.hpp"
@@ -53,7 +55,9 @@ using namespace std::chrono_literals;
 struct DatumFast
 {
   std::int64_t timestamp_;
+  // 角位移向量
   Eigen::Vector3f angular_displacement_;
+  // 单位化平移向量
   Eigen::Vector3f normalized_translation_;
 
   static std::vector<DatumFast> Load(const std::string &path_estimation_csv)
@@ -251,6 +255,31 @@ struct DatumTruth
   }
 };
 
+struct SensorConfig
+{
+  Eigen::Matrix4d transform_matrix_;
+
+  SensorConfig() : transform_matrix_{Eigen::Matrix4d::Identity()} {}
+  SensorConfig(const Eigen::Matrix4d &) = default;
+  SensorConfig(Eigen::Matrix4d &&)      = default;
+  ~SensorConfig()                       = default;
+
+  static std::optional<SensorConfig>
+  ReadSensorYaml(const std::string &path_sensor_yaml)
+  {
+    YAML::Node node_sensor{YAML::LoadFile(path_sensor_yaml)};
+    if (node_sensor["T_BS"] && node_sensor["T_BS"]["data"])
+    {
+      std::vector<double> T_BS_data{
+          config["T_BS"]["data"].as<std::vector<double>>()
+      };
+      Eigen::Map<Eigen::Matrix4d> T_BS_mat{T_BS_data.data()};
+      return T_BS_mat;
+    }
+    return std::nullopt;
+  }
+};
+
 #pragma endregion
 
 /**
@@ -334,6 +363,8 @@ private:
   std::vector<DatumFast> data_fast_{};
   std::vector<DatumImu> data_imu_{};
   std::vector<DatumTruth> data_truth_{};
+  SensorConfig sensor_config_cam0_{};
+  SensorConfig sensor_config_imu0_{};
 
   LinearKalmanFilter filter_;
 
@@ -1459,11 +1490,21 @@ public:
         this->get_parameter("path_estimation_csv").as_string(),
     };
 
+    this->declare_parameter("path_cam0_yaml", "");
+    const std::string path_cam0_yaml{
+        this->get_parameter("path_cam0_yaml").as_string(),
+    };
+
     // "/mnt/e/Documents/mav0/imu0/data.csv"
     // std::filesystem::path{std::getenv("HOME")} / "vio_ws" / "mav0" / "imu0" / "data.csv"
     this->declare_parameter("path_imu_csv", "");
     const std::string path_imu_csv{
         this->get_parameter("path_imu_csv").as_string(),
+    };
+
+    this->declare_parameter("path_imu_yaml", "");
+    const std::string path_imu_yaml{
+        this->get_parameter("path_imu_yaml").as_string(),
     };
 
     // "/mnt/e/Documents/mav0/state_groundtruth_estimate0/data.csv"
@@ -1478,9 +1519,17 @@ public:
     {
       throw std::runtime_error{"'path_estimation_csv' not specified."};
     }
+    if (path_cam0_yaml.empty())
+    {
+      throw std::runtime_error{"'path_cam0_yaml' not specified."};
+    }
     if (path_imu_csv.empty())
     {
       throw std::runtime_error{"'path_imu_csv' not specified."};
+    }
+    if (path_imu_yaml.empty())
+    {
+      throw std::runtime_error{"'path_imu_yaml' not specified."};
     }
     if (path_truth_csv.empty())
     {
@@ -1495,6 +1544,26 @@ public:
         continue;
       }
       throw std::runtime_error{std::format("FileNotFound: {}!", path_obj)};
+    }
+
+    auto opt_sensor_config_cam0_{SensorConfig::ReadSensorYaml(path_cam0_yaml)};
+    if (opt_sensor_config_cam0_.has_value())
+    {
+      sensor_config_cam0_ = std::move(opt_sensor_config_cam0_.value());
+    }
+    else
+    {
+      throw std::runtime_error{std::format("Fail to parse {}!",
+                                           path_cam0_yaml)};
+    }
+    auto opt_sensor_config_imu0_{SensorConfig::ReadSensorYaml(path_imu_yaml)};
+    if (opt_sensor_config_imu0_.has_value())
+    {
+      sensor_config_imu0_ = std::move(opt_sensor_config_imu0_.value());
+    }
+    else
+    {
+      throw std::runtime_error{std::format("Fail to parse {}!", path_imu_yaml)};
     }
 
     data_fast_  = DatumFast::Load(path_estimation_csv);

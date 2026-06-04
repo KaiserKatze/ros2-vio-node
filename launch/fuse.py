@@ -15,6 +15,13 @@ def generate_launch_description():
 
     home_path = pathlib.PosixPath(os.path.expanduser("~"))
 
+    mav0_path = home_path / "vio_ws" / "mav0"
+    # mav0_path = pathlib.PosixPath("/mnt/e/Documents/mav0")
+
+    cam0_path = mav0_path / "cam0"
+    imu0_path = mav0_path / "imu0"
+    truth_path = mav0_path / "state_groundtruth_estimate0"
+
     # 输出: 轨迹话题 /path_fast_est
     # 输出: 轨迹话题 /pose_fast_est
     # 输出: 轨迹话题 /path_fuse_est
@@ -30,18 +37,10 @@ def generate_launch_description():
                 "path_estimation_csv": str(
                     home_path / "vio_ws" / "estimated_motion.csv"
                 ),
-                # "path_imu_csv": "/mnt/e/Documents/mav0/imu0/data.csv",
-                "path_imu_csv": str(
-                    home_path / "vio_ws" / "mav0" / "imu0" / "data.csv"
-                ),
-                # "path_truth_csv": "/mnt/e/Documents/mav0/state_groundtruth_estimate0/data.csv",
-                "path_truth_csv": str(
-                    home_path
-                    / "vio_ws"
-                    / "mav0"
-                    / "state_groundtruth_estimate0"
-                    / "data.csv"
-                ),
+                "path_imu_csv": str(imu0_path / "data.csv"),
+                "path_imu_yaml": str(imu0_path / "sensor.yaml"),
+                "path_truth_csv": str(truth_path / "data.csv"),
+                "path_cam0_yaml": str(cam0_path / "sensor.yaml"),
             }
         ],
     )
