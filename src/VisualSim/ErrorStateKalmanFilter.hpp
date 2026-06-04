@@ -37,6 +37,7 @@ struct ErrorStateKalmanFilter
   };
 
   // 误差状态变量
+  // 误差状态是指真实状态与估计状态之差，即 δx = x_true - x_est
   struct ErrorStateVariable
   {
     // 位置误差

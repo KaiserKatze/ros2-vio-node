@@ -56,11 +56,13 @@ struct DatumFast
 {
   std::int64_t timestamp_;
   // 角位移向量
-  Eigen::Vector3f angular_displacement_;
+  Eigen::Vector3d angular_displacement_;
   // 单位化平移向量
-  Eigen::Vector3f normalized_translation_;
+  Eigen::Vector3d normalized_translation_;
 
-  static std::vector<DatumFast> Load(const std::string &path_estimation_csv)
+  static std::vector<DatumFast>
+  Load(const std::string &path_estimation_csv,
+       const Sophus::SO3d &sensor_rotation_wrt_body)
   {
     std::vector<DatumFast> data;
 
@@ -81,18 +83,18 @@ struct DatumFast
             AbstractLoader::get_item_as_int64(ss), // in nanoseconds
         };
         // 读取旋转角度
-        const float wxt{AbstractLoader::get_item_as_float(ss)};
-        const float wyt{AbstractLoader::get_item_as_float(ss)};
-        const float wzt{AbstractLoader::get_item_as_float(ss)};
+        const double wxt{AbstractLoader::get_item_as_double(ss)};
+        const double wyt{AbstractLoader::get_item_as_double(ss)};
+        const double wzt{AbstractLoader::get_item_as_double(ss)};
         // 读取位移方向
-        const float tx{AbstractLoader::get_item_as_float(ss)};
-        const float ty{AbstractLoader::get_item_as_float(ss)};
-        const float tz{AbstractLoader::get_item_as_float(ss)};
+        const double tx{AbstractLoader::get_item_as_double(ss)};
+        const double ty{AbstractLoader::get_item_as_double(ss)};
+        const double tz{AbstractLoader::get_item_as_double(ss)};
 
         const DatumFast datum_fast{
             timestamp,
-            {wxt, wyt, wzt},
-            {tx, ty, tz},
+            sensor_rotation_wrt_body * Eigen::Vector3d{wxt, wyt, wzt},
+            sensor_rotation_wrt_body * Eigen::Vector3d{tx, ty, tz},
         };
         data.push_back(datum_fast);
       }
@@ -113,10 +115,12 @@ struct DatumFast
 struct DatumImu
 {
   std::int64_t timestamp_;
-  Eigen::Vector3f angular_velocity_;
-  Eigen::Vector3f linear_acceleration_;
+  Eigen::Vector3d angular_velocity_;
+  Eigen::Vector3d linear_acceleration_;
 
-  static std::vector<DatumImu> Load(const std::string &path_imu_csv)
+  static std::vector<DatumImu>
+  Load(const std::string &path_imu_csv,
+       const Sophus::SO3d &sensor_rotation_wrt_body)
   {
     std::vector<DatumImu> data;
 
@@ -137,31 +141,20 @@ struct DatumImu
             AbstractLoader::get_item_as_int64(ss), // in nanoseconds
         };
         // 读取旋转角度
-        const float gx{AbstractLoader::get_item_as_float(ss)};
-        const float gy{AbstractLoader::get_item_as_float(ss)};
-        const float gz{AbstractLoader::get_item_as_float(ss)};
+        const double gx{AbstractLoader::get_item_as_double(ss)};
+        const double gy{AbstractLoader::get_item_as_double(ss)};
+        const double gz{AbstractLoader::get_item_as_double(ss)};
         // 读取位移方向
-        const float ax{AbstractLoader::get_item_as_float(ss)};
-        const float ay{AbstractLoader::get_item_as_float(ss)};
-        const float az{AbstractLoader::get_item_as_float(ss)};
+        const double ax{AbstractLoader::get_item_as_double(ss)};
+        const double ay{AbstractLoader::get_item_as_double(ss)};
+        const double az{AbstractLoader::get_item_as_double(ss)};
 
-        const DatumImu datum_fast{
+        const DatumImu datum_imu{
             timestamp,
-            {gx, gy, gz},
-#if (DATASOURCE == DATASOURCE_EUROC)
-            // EuRoC MAV 数据集的特殊要求:
-            // 将 IMU 参考系的 X 轴映射为 Z 轴;
-            // 将 IMU 参考系的 Y 轴映射为 -Y 轴;
-            // 将 IMU 参考系的 Z 轴映射为 X 轴.
-            // 这是因为数据集的 ground truth 是由 VICON0 或 LEICA0 提供的,
-            // 而 IMU0 的三轴与 VICON0 或 LEICA0 的不同,
-            // 只有按上述方式重映射以后，双方的标架才近似重合.
-            {az, -ay, ax},
-#else
-            {ax, ay, az},
-#endif
+            sensor_rotation_wrt_body * Eigen::Vector3d{gx, gy, gz},
+            sensor_rotation_wrt_body * Eigen::Vector3d{ax, ay, az},
         };
-        data.push_back(datum_fast);
+        data.push_back(datum_imu);
       }
       catch (const std::runtime_error &ex)
       {
@@ -180,11 +173,11 @@ struct DatumImu
 struct DatumTruth
 {
   std::int64_t timestamp_;
-  Eigen::Vector3f position_;
-  Eigen::Quaternionf attitude_;
-  Eigen::Vector3f velocity_;
-  Eigen::Vector3f bias_gyro_;
-  Eigen::Vector3f bias_accel_;
+  Eigen::Vector3d position_;
+  Eigen::Quaterniond attitude_;
+  Eigen::Vector3d velocity_;
+  Eigen::Vector3d bias_gyro_;
+  Eigen::Vector3d bias_accel_;
 
   static std::vector<DatumTruth> Load(const std::string &path_truth_csv)
   {
@@ -207,26 +200,26 @@ struct DatumTruth
             AbstractLoader::get_item_as_int64(ss), // in nanoseconds
         };
         // 读取位置 (m)
-        const float px{AbstractLoader::get_item_as_float(ss)};
-        const float py{AbstractLoader::get_item_as_float(ss)};
-        const float pz{AbstractLoader::get_item_as_float(ss)};
+        const double px{AbstractLoader::get_item_as_double(ss)};
+        const double py{AbstractLoader::get_item_as_double(ss)};
+        const double pz{AbstractLoader::get_item_as_double(ss)};
         // 读取朝向
-        const float qw{AbstractLoader::get_item_as_float(ss)};
-        const float qx{AbstractLoader::get_item_as_float(ss)};
-        const float qy{AbstractLoader::get_item_as_float(ss)};
-        const float qz{AbstractLoader::get_item_as_float(ss)};
+        const double qw{AbstractLoader::get_item_as_double(ss)};
+        const double qx{AbstractLoader::get_item_as_double(ss)};
+        const double qy{AbstractLoader::get_item_as_double(ss)};
+        const double qz{AbstractLoader::get_item_as_double(ss)};
         // 读取速度 (m s^-1)
-        const float vx{AbstractLoader::get_item_as_float(ss)};
-        const float vy{AbstractLoader::get_item_as_float(ss)};
-        const float vz{AbstractLoader::get_item_as_float(ss)};
+        const double vx{AbstractLoader::get_item_as_double(ss)};
+        const double vy{AbstractLoader::get_item_as_double(ss)};
+        const double vz{AbstractLoader::get_item_as_double(ss)};
         // 读取陀螺仪偏差 (rad s^-1)
-        const float bwx{AbstractLoader::get_item_as_float(ss)};
-        const float bwy{AbstractLoader::get_item_as_float(ss)};
-        const float bwz{AbstractLoader::get_item_as_float(ss)};
+        const double bwx{AbstractLoader::get_item_as_double(ss)};
+        const double bwy{AbstractLoader::get_item_as_double(ss)};
+        const double bwz{AbstractLoader::get_item_as_double(ss)};
         // 读取加速度计偏差 (m s^-2)
-        const float bax{AbstractLoader::get_item_as_float(ss)};
-        const float bay{AbstractLoader::get_item_as_float(ss)};
-        const float baz{AbstractLoader::get_item_as_float(ss)};
+        const double bax{AbstractLoader::get_item_as_double(ss)};
+        const double bay{AbstractLoader::get_item_as_double(ss)};
+        const double baz{AbstractLoader::get_item_as_double(ss)};
 #if (DATASOURCE == DATASOURCE_EUROC)
 #elif (DATASOURCE == DATASOURCE_SIM)
 #endif
@@ -296,7 +289,7 @@ struct SensorConfig
  */
 struct VisualInertial : public rclcpp::Node
 {
-  float gravity_world_norm{9.81f};
+  double gravity_world_norm{9.81};
 
 private:
 #pragma region PRIVATE_MEMBER_VARIABLES
@@ -383,8 +376,8 @@ private:
 #pragma region ROS2_UTILITY
 
   void PushPose(nav_msgs::msg::Path &msg_path, const std::int64_t timestamp,
-                const Eigen::Quaternionf &attitude,
-                const Eigen::Vector3f &position)
+                const Eigen::Quaterniond &attitude,
+                const Eigen::Vector3d &position)
   {
     geometry_msgs::msg::PoseStamped msg_pose;
     msg_pose.header.frame_id = DEFAULT_FRAME_ID;
@@ -537,8 +530,8 @@ private:
     std::ofstream fout_fast(path_temp_tum_file);
 
     // 初始状态
-    Eigen::Vector3f estimated_position_fast{Eigen::Vector3f::Zero()};
-    Eigen::Quaternionf estimated_attitude_fast{Eigen::Quaternionf::Identity()};
+    Eigen::Vector3d estimated_position_fast{Eigen::Vector3d::Zero()};
+    Eigen::Quaterniond estimated_attitude_fast{Eigen::Quaterniond::Identity()};
 
     for (size_t i = 0; i + 1 < data_fast_.size(); ++i)
     {
@@ -546,20 +539,20 @@ private:
 #if (USE_TRUE_SCALE_IN_FAST)
       const DatumFast &datum_fast_next{data_fast_[i + 1]};
 #endif
-      const Eigen::Quaternionf delta_rotation{
-          Eigen::AngleAxisf{
+      const Eigen::Quaterniond delta_rotation{
+          Eigen::AngleAxisd{
               datum_fast.angular_displacement_.norm(),
               datum_fast.angular_displacement_.normalized(),
           },
       };
 
-      Eigen::Vector3f delta_position{datum_fast.normalized_translation_};
+      Eigen::Vector3d delta_position{datum_fast.normalized_translation_};
 #if (USE_TRUE_SCALE_IN_FAST)
       // TODO 利用插值查找函数 Interpolate 获取 delta_position 对应的真值的范数
-      Eigen::Vector3f true_old_position{
+      Eigen::Vector3d true_old_position{
           Interpolate(data_truth_, datum_fast.timestamp_).position_,
       };
-      Eigen::Vector3f true_new_position{
+      Eigen::Vector3d true_new_position{
           // 时间戳 + 50 毫秒
           Interpolate(data_truth_, datum_fast_next.timestamp_).position_,
       };
@@ -612,20 +605,20 @@ private:
         // 读取时间戳
         const std::int64_t timestamp{
             static_cast<std::int64_t>(
-                AbstractLoader::get_item_as_float(ss, ' ')
+                AbstractLoader::get_item_as_double(ss, ' ')
             ), // in nanoseconds
         };
         // 读取位置
-        const float px{AbstractLoader::get_item_as_float(ss, ' ')};
-        const float py{AbstractLoader::get_item_as_float(ss, ' ')};
-        const float pz{AbstractLoader::get_item_as_float(ss, ' ')};
+        const double px{AbstractLoader::get_item_as_double(ss, ' ')};
+        const double py{AbstractLoader::get_item_as_double(ss, ' ')};
+        const double pz{AbstractLoader::get_item_as_double(ss, ' ')};
         // 读取朝向
-        const float qw{AbstractLoader::get_item_as_float(ss, ' ')};
-        const float qx{AbstractLoader::get_item_as_float(ss, ' ')};
-        const float qy{AbstractLoader::get_item_as_float(ss, ' ')};
-        const float qz{AbstractLoader::get_item_as_float(ss, ' ')};
-        estimated_attitude_fast = Eigen::Quaternionf{qw, qx, qy, qz};
-        estimated_position_fast = Eigen::Vector3f{px, py, pz};
+        const double qw{AbstractLoader::get_item_as_double(ss, ' ')};
+        const double qx{AbstractLoader::get_item_as_double(ss, ' ')};
+        const double qy{AbstractLoader::get_item_as_double(ss, ' ')};
+        const double qz{AbstractLoader::get_item_as_double(ss, ' ')};
+        estimated_attitude_fast = Eigen::Quaterniond{qw, qx, qy, qz};
+        estimated_position_fast = Eigen::Vector3d{px, py, pz};
         PushPose(msg_path_fast_, timestamp, estimated_attitude_fast,
                  estimated_position_fast);
       }
@@ -651,26 +644,26 @@ private:
   void EstimateImuEuler()
   {
     // 世界坐标系下的重力加速度
-    const Eigen::Vector3f gravity_world{0.0f, 0.0f, -gravity_world_norm};
+    const Eigen::Vector3d gravity_world{0.0, 0.0, -gravity_world_norm};
 
     // 初始状态
-    Eigen::Vector3f estimated_position_imu{Eigen::Vector3f::Zero()};
-    Sophus::SO3f estimated_attitude_imu{/* Eigen::Quaternionf::Identity() */};
-    Eigen::Vector3f estimated_linear_velocity_imu{Eigen::Vector3f::Zero()};
-    Eigen::Vector3f estimated_linear_acceleration_imu{Eigen::Vector3f::Zero()};
-    Eigen::Vector3f estimated_angular_velocity_imu{Eigen::Vector3f::Zero()};
-    Eigen::Vector3f estimated_angular_acceleration_imu{Eigen::Vector3f::Zero()};
+    Eigen::Vector3d estimated_position_imu{Eigen::Vector3d::Zero()};
+    Sophus::SO3d estimated_attitude_imu{/* Eigen::Quaterniond::Identity() */};
+    Eigen::Vector3d estimated_linear_velocity_imu{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d estimated_linear_acceleration_imu{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d estimated_angular_velocity_imu{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d estimated_angular_acceleration_imu{Eigen::Vector3d::Zero()};
 
     if (use_true_init_pose_ && !data_truth_.empty())
     {
       estimated_position_imu        = data_truth_[0].position_;
-      estimated_attitude_imu        = Sophus::SO3f(data_truth_[0].attitude_);
+      estimated_attitude_imu        = Sophus::SO3d(data_truth_[0].attitude_);
       estimated_linear_velocity_imu = data_truth_[0].velocity_;
     }
     else
     {
       // 引入“零速更新”机制，检测起飞时刻
-      ZUPT<float> zupt{};
+      ZUPT<double> zupt{};
       bool is_orientation_estimated{false};
 
       DatumImu datum_first;
@@ -685,7 +678,7 @@ private:
         }
         if (zupt.IsFull() && !is_orientation_estimated)
         { // 当样本足够多时，如果尚未预测过初始朝向，就立即进行预测
-          estimated_attitude_imu   = Sophus::SO3f(zupt.EstimateOrientation());
+          estimated_attitude_imu   = Sophus::SO3d(zupt.EstimateOrientation());
           is_orientation_estimated = true;
         }
         if (!zupt.Update(datum_imu.linear_acceleration_,
@@ -696,10 +689,10 @@ private:
         }
       } // end for
       // 静止状态的时长
-      const float time_elapsed_before_takeoff{
+      const double time_elapsed_before_takeoff{
           1e-9f
-              * static_cast<float>(datum_last.timestamp_
-                                   - datum_first.timestamp_),
+              * static_cast<double>(datum_last.timestamp_
+                                    - datum_first.timestamp_),
       };
       std::print(stderr, "静止时长: {:.4f} 秒.\n", time_elapsed_before_takeoff);
       // 机体处于静止状态时，机体坐标系与世界坐标系不一定是重合的。
@@ -709,11 +702,11 @@ private:
 
       if (!is_orientation_estimated)
       { // 如果尚未预测过初始朝向，就立即进行预测
-        estimated_attitude_imu = Sophus::SO3f(zupt.EstimateOrientation());
+        estimated_attitude_imu = Sophus::SO3d(zupt.EstimateOrientation());
       }
 
       {
-        Eigen::Matrix3f estimated_attitude_imu_matrix{
+        Eigen::Matrix3d estimated_attitude_imu_matrix{
             estimated_attitude_imu.matrix(),
         };
         std::print(stderr,
@@ -757,8 +750,8 @@ private:
         first_loop = false;
 
         const auto datum_true{Interpolate(data_truth_, datum_imu.timestamp_)};
-        Eigen::Vector3f true_position{datum_true.position_};
-        Eigen::Vector3f true_velocity{datum_true.velocity_};
+        Eigen::Vector3d true_position{datum_true.position_};
+        Eigen::Vector3d true_velocity{datum_true.velocity_};
         // 更新统计信息
         std::print(
             fout_imu_euler_estimation_error,
@@ -812,37 +805,37 @@ private:
       }
 
       // 时间步长
-      const float dt{
+      const double dt{
           1e-9f
-              * static_cast<float>(datum_imu.timestamp_
-                                   - datum_prev.timestamp_),
+              * static_cast<double>(datum_imu.timestamp_
+                                    - datum_prev.timestamp_),
       };
 
       // 传感器参考系下的角速度
-      Eigen::Vector3f angular_velocity_in_sensor_frame{
+      Eigen::Vector3d angular_velocity_in_sensor_frame{
           datum_prev.angular_velocity_,
       };
       // 朝向变化量
-      Sophus::SO3f delta_attitude{
-          Sophus::SO3f::exp(angular_velocity_in_sensor_frame * dt),
+      Sophus::SO3d delta_attitude{
+          Sophus::SO3d::exp(angular_velocity_in_sensor_frame * dt),
       };
       // 新的朝向
-      Sophus::SO3f estimated_new_attitude_imu{
+      Sophus::SO3d estimated_new_attitude_imu{
           estimated_attitude_imu * delta_attitude,
       };
 
       // 惯性参考系下的线加速度
-      Eigen::Vector3f linear_acceleration_in_world_frame{
+      Eigen::Vector3d linear_acceleration_in_world_frame{
           estimated_attitude_imu * datum_prev.linear_acceleration_
               + gravity_world,
       };
       // 线速度变化量
-      Eigen::Vector3f delta_velocity{
+      Eigen::Vector3d delta_velocity{
           linear_acceleration_in_world_frame * dt,
       };
       // 位置变化量
-      Eigen::Vector3f delta_position{
-          (estimated_linear_velocity_imu + 0.5f * delta_velocity) * dt,
+      Eigen::Vector3d delta_position{
+          (estimated_linear_velocity_imu + 0.5 * delta_velocity) * dt,
       };
 
       // 更新位置
@@ -857,8 +850,8 @@ private:
                estimated_position_imu);
 
       const auto datum_true{Interpolate(data_truth_, datum_imu.timestamp_)};
-      Eigen::Vector3f true_position{datum_true.position_};
-      Eigen::Vector3f true_velocity{datum_true.velocity_};
+      Eigen::Vector3d true_position{datum_true.position_};
+      Eigen::Vector3d true_velocity{datum_true.velocity_};
       // 更新统计信息
       std::print(
           fout_imu_euler_estimation_error,
@@ -919,24 +912,24 @@ private:
   void PreintegrateImu()
   {
     // 世界坐标系下的重力加速度
-    const Eigen::Vector3f gravity_world{0.0f, 0.0f, -gravity_world_norm};
+    const Eigen::Vector3d gravity_world{0.0, 0.0, -gravity_world_norm};
 
     // 初始状态
-    Eigen::Vector3f estimated_position_pi{Eigen::Vector3f::Zero()};
-    Eigen::Vector3f estimated_velocity_pi{Eigen::Vector3f::Zero()};
-    Eigen::Quaternionf estimated_attitude_pi{Eigen::Quaternionf::Identity()};
-    Eigen::Quaternionf delta_R{Eigen::Quaternionf::Identity()};
-    Eigen::Vector3f delta_p{Eigen::Vector3f::Zero()};
-    Eigen::Vector3f delta_v{Eigen::Vector3f::Zero()};
-    float delta_t{0};
-    float t_prev{0};
+    Eigen::Vector3d estimated_position_pi{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d estimated_velocity_pi{Eigen::Vector3d::Zero()};
+    Eigen::Quaterniond estimated_attitude_pi{Eigen::Quaterniond::Identity()};
+    Eigen::Quaterniond delta_R{Eigen::Quaterniond::Identity()};
+    Eigen::Vector3d delta_p{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d delta_v{Eigen::Vector3d::Zero()};
+    double delta_t{0.0};
+    double t_prev{0.0};
 
     // 统计信息
-    Eigen::Vector3f bound_pi{Eigen::Vector3f::Zero()};
+    Eigen::Vector3d bound_pi{Eigen::Vector3d::Zero()};
 
     for (bool first_loop{true}; const DatumImu &datum_imu : data_imu_)
     {
-      float t_samp{1e-9f * static_cast<float>(datum_imu.timestamp_)};
+      double t_samp{1e-9f * static_cast<double>(datum_imu.timestamp_)};
       if (first_loop)
       {
         first_loop = false;
@@ -945,16 +938,16 @@ private:
       }
 
       // 时间步长
-      const float dt{t_samp - t_prev};
+      const double dt{t_samp - t_prev};
       auto drotvec{dt * datum_imu.angular_velocity_};
-      Eigen::Quaternionf dR{
-          Eigen::AngleAxisf{
+      Eigen::Quaterniond dR{
+          Eigen::AngleAxisd{
               drotvec.norm(),
               drotvec.normalized(),
           },
       };
       auto dv{dt * datum_imu.linear_acceleration_};
-      auto dp{0.5f * dt * dv};
+      auto dp{0.5 * dt * dv};
       delta_t += dt;
       delta_p += delta_v * dt + delta_R * dp;
       delta_v += delta_R * dv;
@@ -963,7 +956,7 @@ private:
 
       estimated_position_pi = estimated_position_pi
                               + delta_t * estimated_velocity_pi
-                              + 0.5f * delta_t * delta_t * gravity_world
+                              + 0.5 * delta_t * delta_t * gravity_world
                               + estimated_attitude_pi * delta_p;
       estimated_velocity_pi = estimated_velocity_pi + delta_t * gravity_world
                               + estimated_attitude_pi * delta_v;
@@ -996,63 +989,63 @@ private:
     }
 
     // 世界坐标系下的重力加速度
-    const Eigen::Vector3f gravity_world{0.0f, 0.0f, -gravity_world_norm};
+    const Eigen::Vector3d gravity_world{0.0, 0.0, -gravity_world_norm};
 
     // 时间
-    float ode_time{static_cast<float>(1e-9f * data_imu_[0].timestamp_)};
+    double ode_time{static_cast<double>(1e-9f * data_imu_[0].timestamp_)};
     // 初始状态
-    ImuState<float> state;
+    ImuState<double> state;
     // 积分器
-    boost::numeric::odeint::runge_kutta4<ImuState<float>, float,
-                                         ImuDerivative<float>>
+    boost::numeric::odeint::runge_kutta4<ImuState<double>, double,
+                                         ImuDerivative<double>>
         rk4;
     // 微分方程
     struct ImuKinematicsODE
     {
       const DatumImu &datum_prev_;
       const DatumImu &datum_next_;
-      const Eigen::Vector3f &gravity_world_;
+      const Eigen::Vector3d &gravity_world_;
 
-      void operator()(const ImuState<float> &x, ImuDerivative<float> &dxdt,
-                      const float t) const
+      void operator()(const ImuState<double> &x, ImuDerivative<double> &dxdt,
+                      const double t) const
       {
-        float alpha{
+        double alpha{
             (datum_next_.timestamp_ > datum_prev_.timestamp_)
-                ? std::clamp(static_cast<float>((t - datum_prev_.timestamp_)
-                                                / (datum_next_.timestamp_
-                                                   - datum_prev_.timestamp_)),
-                             0.0f, 1.0f)
-                : 0.0f,
+                ? std::clamp(static_cast<double>((t - datum_prev_.timestamp_)
+                                                 / (datum_next_.timestamp_
+                                                    - datum_prev_.timestamp_)),
+                             0.0, 1.0)
+                : 0.0,
         };
         // 传感器参考系下的角速度
-        const Eigen::Vector3f ang_vel_sensor{
+        const Eigen::Vector3d ang_vel_sensor{
             datum_prev_.angular_velocity_
                 + (datum_next_.angular_velocity_
                    - datum_prev_.angular_velocity_)
                       * alpha,
         };
         // 提取当前姿态四元数
-        Eigen::Quaternionf att_world{x.GetAttitude()};
+        Eigen::Quaterniond att_world{x.GetAttitude()};
         // 惯性参考系下的线速度
-        Eigen::Vector3f lin_vec_world{x.GetVelocity()};
+        Eigen::Vector3d lin_vec_world{x.GetVelocity()};
         // 传感器参考系下的加速度
-        Eigen::Vector3f lin_acc_sensor{
+        Eigen::Vector3d lin_acc_sensor{
             datum_prev_.linear_acceleration_
                 + (datum_next_.linear_acceleration_
                    - datum_prev_.linear_acceleration_)
                       * alpha,
         };
         // 世界参考系下的加速度
-        Eigen::Vector3f lin_acc_world{
+        Eigen::Vector3d lin_acc_world{
             att_world * lin_acc_sensor + gravity_world_,
         };
-        Eigen::Quaternionf half_rotation{
-            0.0f,
-            0.5f * ang_vel_sensor.x(),
-            0.5f * ang_vel_sensor.y(),
-            0.5f * ang_vel_sensor.z(),
+        Eigen::Quaterniond half_rotation{
+            0.0,
+            0.5 * ang_vel_sensor.x(),
+            0.5 * ang_vel_sensor.y(),
+            0.5 * ang_vel_sensor.z(),
         };
-        Eigen::Quaternionf att_derivative_world{att_world * half_rotation};
+        Eigen::Quaterniond att_derivative_world{att_world * half_rotation};
 
         // 位置导数 = 速度
         dxdt.SetVelocity(lin_vec_world);
@@ -1074,10 +1067,10 @@ private:
     else
     {
       // 引入“零速更新”机制，检测起飞时刻
-      ZUPT<float> zupt{};
+      ZUPT<double> zupt{};
       bool is_orientation_estimated{false};
       // 初始朝向
-      Eigen::Quaternionf estimated_attitude_rk{Eigen::Quaternionf::Identity()};
+      Eigen::Quaterniond estimated_attitude_rk{Eigen::Quaterniond::Identity()};
 
       DatumImu datum_first;
       DatumImu datum_last;
@@ -1102,10 +1095,10 @@ private:
         }
       } // end for
       // 静止状态的时长
-      const float time_elapsed_before_takeoff{
+      const double time_elapsed_before_takeoff{
           1e-9f
-              * static_cast<float>(datum_last.timestamp_
-                                   - datum_first.timestamp_),
+              * static_cast<double>(datum_last.timestamp_
+                                    - datum_first.timestamp_),
       };
       std::print(stderr, "静止时长: {:.4f} 秒.\n", time_elapsed_before_takeoff);
       // 机体处于静止状态时，机体坐标系与世界坐标系不一定是重合的。
@@ -1120,7 +1113,7 @@ private:
       state.SetAttitude(estimated_attitude_rk);
 
       {
-        Eigen::Matrix3f estimated_attitude_rk_matrix{estimated_attitude_rk};
+        Eigen::Matrix3d estimated_attitude_rk_matrix{estimated_attitude_rk};
         std::print(stderr,
                    "[INFO] ZUPT 估计初始姿态为 = [\n"
                    "\t[{:.2f}, {:.2f}, {:.2f}]\n"
@@ -1162,8 +1155,8 @@ private:
         first_loop = false;
 
         const auto datum_true{Interpolate(data_truth_, datum_rk.timestamp_)};
-        Eigen::Vector3f true_position{datum_true.position_};
-        Eigen::Vector3f true_velocity{datum_true.velocity_};
+        Eigen::Vector3d true_position{datum_true.position_};
+        Eigen::Vector3d true_velocity{datum_true.velocity_};
         // 更新统计信息
         std::print(fout_rk_estimation_error,
                    // 时间戳
@@ -1205,9 +1198,10 @@ private:
       }
 
       // 时间步长
-      const float dt{
+      const double dt{
           1e-9f
-              * static_cast<float>(datum_rk.timestamp_ - datum_prev.timestamp_),
+              * static_cast<double>(datum_rk.timestamp_
+                                    - datum_prev.timestamp_),
       };
 
       ImuKinematicsODE ode{datum_prev, datum_rk, gravity_world};
@@ -1219,8 +1213,8 @@ private:
                state.GetPosition());
 
       const auto datum_true{Interpolate(data_truth_, datum_rk.timestamp_)};
-      Eigen::Vector3f true_position{datum_true.position_};
-      Eigen::Vector3f true_velocity{datum_true.velocity_};
+      Eigen::Vector3d true_position{datum_true.position_};
+      Eigen::Vector3d true_velocity{datum_true.velocity_};
       // 更新统计信息
       std::print(fout_rk_estimation_error,
                  // 时间戳
@@ -1332,8 +1326,8 @@ private:
                       { return std::make_tuple(e.timestamp, !e.is_imu); });
 
     std::int64_t last_timestamp{-1};
-    Eigen::Vector3f cam_position{Eigen::Vector3f::Zero()};
-    Eigen::Quaternionf cam_attitude{Eigen::Quaternionf::Identity()};
+    Eigen::Vector3d cam_position{Eigen::Vector3d::Zero()};
+    Eigen::Quaterniond cam_attitude{Eigen::Quaterniond::Identity()};
 
     // 顺序迭代离线混合时间轴上的所有传感器事件
     for (const auto &event : events)
@@ -1437,8 +1431,8 @@ private:
       {
         // 针对单目角位移向量和单位化平移向量，应用一阶增量公式积分获取连续的全局绝对位姿
         const auto &datum_fast = data_fast_[event.index];
-        const Eigen::Quaternionf delta_rotation{
-            Eigen::AngleAxisf{
+        const Eigen::Quaterniond delta_rotation{
+            Eigen::AngleAxisd{
                 datum_fast.angular_displacement_.norm(),
                 datum_fast.angular_displacement_.normalized(),
             },
@@ -1479,8 +1473,8 @@ private:
         Eigen::Vector3d est_p(est_x, est_y, est_z);
 
         // 将离线同步得到的融合位姿有序加入轨迹容器，使得两路轨迹数据帧总数与索引保持绝对等同，规避崩溃
-        PushPose(msg_path_fuse_, datum_fast.timestamp_, est_q.cast<float>(),
-                 est_p.cast<float>());
+        PushPose(msg_path_fuse_, datum_fast.timestamp_, est_q.cast<double>(),
+                 est_p.cast<double>());
       }
     }
   }
@@ -1559,6 +1553,28 @@ public:
     if (opt_sensor_config_cam0_.has_value())
     {
       sensor_config_cam0_ = std::move(opt_sensor_config_cam0_.value());
+      std::print(stderr,
+                 "T_BS_cam0 =\n"
+                 "\t[[{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
+                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
+                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
+                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}]]\n",
+                 sensor_config_cam0_.transform_matrix_(0, 0),
+                 sensor_config_cam0_.transform_matrix_(0, 1),
+                 sensor_config_cam0_.transform_matrix_(0, 2),
+                 sensor_config_cam0_.transform_matrix_(0, 3),
+                 sensor_config_cam0_.transform_matrix_(1, 0),
+                 sensor_config_cam0_.transform_matrix_(1, 1),
+                 sensor_config_cam0_.transform_matrix_(1, 2),
+                 sensor_config_cam0_.transform_matrix_(1, 3),
+                 sensor_config_cam0_.transform_matrix_(2, 0),
+                 sensor_config_cam0_.transform_matrix_(2, 1),
+                 sensor_config_cam0_.transform_matrix_(2, 2),
+                 sensor_config_cam0_.transform_matrix_(2, 3),
+                 sensor_config_cam0_.transform_matrix_(3, 0),
+                 sensor_config_cam0_.transform_matrix_(3, 1),
+                 sensor_config_cam0_.transform_matrix_(3, 2),
+                 sensor_config_cam0_.transform_matrix_(3, 3));
     }
     else
     {
@@ -1569,14 +1585,42 @@ public:
     if (opt_sensor_config_imu0_.has_value())
     {
       sensor_config_imu0_ = std::move(opt_sensor_config_imu0_.value());
+      std::print(stderr,
+                 "T_BS_imu0 =\n"
+                 "\t[[{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
+                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
+                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
+                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}]]\n",
+                 sensor_config_imu0_.transform_matrix_(0, 0),
+                 sensor_config_imu0_.transform_matrix_(0, 1),
+                 sensor_config_imu0_.transform_matrix_(0, 2),
+                 sensor_config_imu0_.transform_matrix_(0, 3),
+                 sensor_config_imu0_.transform_matrix_(1, 0),
+                 sensor_config_imu0_.transform_matrix_(1, 1),
+                 sensor_config_imu0_.transform_matrix_(1, 2),
+                 sensor_config_imu0_.transform_matrix_(1, 3),
+                 sensor_config_imu0_.transform_matrix_(2, 0),
+                 sensor_config_imu0_.transform_matrix_(2, 1),
+                 sensor_config_imu0_.transform_matrix_(2, 2),
+                 sensor_config_imu0_.transform_matrix_(2, 3),
+                 sensor_config_imu0_.transform_matrix_(3, 0),
+                 sensor_config_imu0_.transform_matrix_(3, 1),
+                 sensor_config_imu0_.transform_matrix_(3, 2),
+                 sensor_config_imu0_.transform_matrix_(3, 3));
     }
     else
     {
       throw std::runtime_error{std::format("Fail to parse {}!", path_imu_yaml)};
     }
 
-    data_fast_  = DatumFast::Load(path_estimation_csv);
-    data_imu_   = DatumImu::Load(path_imu_csv);
+    data_fast_ = DatumFast::Load(
+        path_estimation_csv,
+        Sophus::SO3d{sensor_config_cam0_.transform_matrix_.block<3, 3>(0, 0)}
+    );
+    data_imu_ = DatumImu::Load(
+        path_imu_csv,
+        Sophus::SO3d{sensor_config_imu0_.transform_matrix_.block<3, 3>(0, 0)}
+    );
     data_truth_ = DatumTruth::Load(path_truth_csv);
 
     std::print(stderr, "VisualInertial ready ...\n");
@@ -1589,7 +1633,7 @@ public:
 
     if (!data_truth_.empty())
     {
-      Eigen::Matrix3f true_init_attitude{data_truth_[0].attitude_};
+      Eigen::Matrix3d true_init_attitude{data_truth_[0].attitude_};
       std::print(stderr,
                  "[INFO] Ground Truth 初始姿态为 = [\n"
                  "\t[{:.2f}, {:.2f}, {:.2f}]\n"
