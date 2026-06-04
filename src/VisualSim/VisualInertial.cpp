@@ -13,6 +13,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 
 using namespace std::chrono_literals;
@@ -80,7 +81,7 @@ public:
                estimated_attitude_fast.y(), estimated_attitude_fast.z());
   }
 
-  void Flush()
+  void Flush(std::string_view path_truth_csv)
   {
     fout_temp_evo_sim3_.flush();
     fout_temp_evo_sim3_.close();
@@ -93,7 +94,7 @@ public:
                     "yes 'y' | evo_traj euroc {} --ref={} "
                     "--align --correct_scale --save_as_tum'",
                     std::filesystem::absolute(path_temp_tum_file_).string(),
-                    std::filesystem::absolute(path_truth_csv_).string())
+                    std::filesystem::absolute(path_truth_csv).string())
             .c_str()
     );
   }
@@ -104,7 +105,7 @@ public:
     std::ifstream fin_temp_evo_sim3{path_temp_tum_file_};
     std::string line;
     size_t line_num{0};
-    while (std::getline(fin_fast, line))
+    while (std::getline(fin_temp_evo_sim3, line))
     {
       ++line_num;
       std::stringstream ss(line);
@@ -696,10 +697,11 @@ private:
 
     evo_sim3.Flush();
 
-    evo_sim3.Read([&msg_path_fast_](std::int64_t timestamp,
-                                    const Eigen::Quaterniond &attitude,
-                                    const Eigen::Vector3d &position)
-                  { PushPose(msg_path_fast_, timestamp, attitude, position); });
+    evo_sim3.Read([&msg_path{this->msg_path_fast_}](
+                      std::int64_t timestamp,
+                      const Eigen::Quaterniond &attitude,
+                      const Eigen::Vector3d &position
+                  ) { PushPose(msg_path, timestamp, attitude, position); });
   }
 
   /**
