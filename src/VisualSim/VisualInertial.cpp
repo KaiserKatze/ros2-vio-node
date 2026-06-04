@@ -395,7 +395,8 @@ private:
   SensorConfig sensor_config_imu0_{};
   SensorConfig sensor_config_truth_{};
 
-  LinearKalmanFilter filter_;
+  // 引入 ESKF 松耦合姿态解算器，替代原本精度较低的 opencv 线性卡尔曼解算模型
+  ErrorStateKalmanFilter<double> filter_;
 
 #pragma endregion
 
@@ -1320,13 +1321,13 @@ private:
   }
 
   /**
-   * @brief 基于松耦合的线性卡尔曼滤波，
+   * @brief 基于松耦合的误差状态卡尔曼滤波 (ESKF)，
             融合单目视觉提供的角位移向量、单位化平移向量信息，
             与 IMU 提供的角速度向量、线加速度向量信息。
    */
   void EstimateFuse()
   {
-    // TODO 将 OpenCV 提供的线性卡尔曼滤波替换为 ErrorStateKalmanFilter<double>
+    // 将 OpenCV 提供的线性卡尔曼滤波替换为 ErrorStateKalmanFilter<double>
 
     // 定义离线统一的时间轴事件结构体，用于交织对齐异步的视觉序列与高频 IMU 序列
     struct TimelineEvent
@@ -1354,156 +1355,68 @@ private:
     std::ranges::sort(events, std::less<>{}, [](const TimelineEvent &e)
                       { return std::make_tuple(e.timestamp, !e.is_imu); });
 
-    std::int64_t last_timestamp{-1};
-    Eigen::Vector3d cam_position{Eigen::Vector3d::Zero()};
-    Eigen::Quaterniond cam_attitude{Eigen::Quaterniond::Identity()};
+    // 初始化 ESKF 的标称状态
+    typename ErrorStateKalmanFilter<double>::NominalStateVariable init_state;
+    if (use_true_init_pose_ && !data_truth_.empty())
+    {
+      init_state.position_           = data_truth_[0].position_;
+      init_state.linear_velocity_    = data_truth_[0].velocity_;
+      init_state.attitude_           = data_truth_[0].attitude_;
+      init_state.accelerometer_bias_ = data_truth_[0].bias_accel_;
+      init_state.gyroscope_bias_     = data_truth_[0].bias_gyro_;
+    }
+    else
+    {
+      if (!data_truth_.empty())
+      {
+        init_state.attitude_ = data_truth_[0].attitude_;
+      }
+    }
+    filter_.SetNominalState(init_state);
+
+    // 将 YAML 中读取的传感器物理特征噪声传入 ESKF 进行精确的过程协方差计算
+    filter_.SetGyroscopeNoiseDensity(
+        sensor_config_imu0_.gyroscope_noise_density_
+    );
+    filter_.SetGyroscopeRandomWalk(sensor_config_imu0_.gyroscope_random_walk_);
+    filter_.SetAccelerometerNoiseDensity(
+        sensor_config_imu0_.accelerometer_noise_density_
+    );
+    filter_.SetAccelerometerRandomWalk(
+        sensor_config_imu0_.accelerometer_random_walk_
+    );
 
     // 顺序迭代离线混合时间轴上的所有传感器事件
     for (const auto &event : events)
     {
-      double dt{0.0};
-      if (last_timestamp != -1)
-      {
-        // 动态计算前后两次状态演进事件的真实秒级时间差异步长
-        dt = static_cast<double>(event.timestamp - last_timestamp) * 1e-9;
-      }
-
-      // 如果时间差异间隔大于 0 且滤波器具有有效历史时间戳，则根据当前真实步长执行状态预测演进
-      if (dt > 0 && last_timestamp != -1)
-      {
-        // 动态调配并重构状态转移矩阵中与平移位置项相关的元素
-        filter_.kf_.transitionMatrix.at<double>(0, 3) = dt;
-        filter_.kf_.transitionMatrix.at<double>(1, 4) = dt;
-        filter_.kf_.transitionMatrix.at<double>(2, 5) = dt;
-        filter_.kf_.transitionMatrix.at<double>(3, 6) = dt;
-        filter_.kf_.transitionMatrix.at<double>(4, 7) = dt;
-        filter_.kf_.transitionMatrix.at<double>(5, 8) = dt;
-        filter_.kf_.transitionMatrix.at<double>(0, 6) = 0.5 * dt * dt;
-        filter_.kf_.transitionMatrix.at<double>(1, 7) = 0.5 * dt * dt;
-        filter_.kf_.transitionMatrix.at<double>(2, 8) = 0.5 * dt * dt;
-
-        // 动态调配并重构状态转移矩阵中与旋转朝向角相关的元素
-        filter_.kf_.transitionMatrix.at<double>(9, 12)  = dt;
-        filter_.kf_.transitionMatrix.at<double>(10, 13) = dt;
-        filter_.kf_.transitionMatrix.at<double>(11, 14) = dt;
-        filter_.kf_.transitionMatrix.at<double>(12, 15) = dt;
-        filter_.kf_.transitionMatrix.at<double>(13, 16) = dt;
-        filter_.kf_.transitionMatrix.at<double>(14, 17) = dt;
-        filter_.kf_.transitionMatrix.at<double>(9, 15)  = 0.5 * dt * dt;
-        filter_.kf_.transitionMatrix.at<double>(10, 16) = 0.5 * dt * dt;
-        filter_.kf_.transitionMatrix.at<double>(11, 17) = 0.5 * dt * dt;
-
-        filter_.kf_.predict();
-      }
-
-      // 实时递推更新当前的参考基础时间戳
-      if (last_timestamp == -1 || dt > 0)
-      {
-        last_timestamp = event.timestamp;
-      }
-
       if (event.is_imu)
       {
-        // 提取当前由滤波器通过上层 Predict 推演得到的欧拉角姿态，用作世界系转换
-        double roll{filter_.kf_.statePre.at<double>(9)};
-        double pitch{filter_.kf_.statePre.at<double>(10)};
-        double yaw{filter_.kf_.statePre.at<double>(11)};
-
-        Eigen::AngleAxisd rollAngle(roll, Eigen::Vector3d::UnitX());
-        Eigen::AngleAxisd pitchAngle(pitch, Eigen::Vector3d::UnitY());
-        Eigen::AngleAxisd yawAngle(yaw, Eigen::Vector3d::UnitZ());
-        Eigen::Quaterniond q{yawAngle * pitchAngle * rollAngle};
-
-        // 加载 IMU 载体坐标系原生的角速度与比力测量结果
+        // 传递高频 IMU 采样数据，执行 ESKF 标称状态前推以及误差状态协方差的时间传播
         const auto &datum_imu = data_imu_[event.index];
-        Eigen::Vector3d a_body(datum_imu.linear_acceleration_.x(),
-                               datum_imu.linear_acceleration_.y(),
-                               datum_imu.linear_acceleration_.z());
-        Eigen::Vector3d w_body(datum_imu.angular_velocity_.x(),
-                               datum_imu.angular_velocity_.y(),
-                               datum_imu.angular_velocity_.z());
+        typename ErrorStateKalmanFilter<double>::DatumImuImpl imu_data;
+        imu_data.timestamp_           = datum_imu.timestamp_;
+        imu_data.angular_velocity_    = datum_imu.angular_velocity_;
+        imu_data.linear_acceleration_ = datum_imu.linear_acceleration_;
 
-        // 旋转对齐到全局世界坐标系并严格剔除常数重力影响分量
-        Eigen::Vector3d a_world{q * a_body};
-        a_world(2) -= gravity_world_norm;
-
-        // 应用非奇异伴随运动变换，映射转换至由系统定义的对应欧拉角速率
-        double sr{std::sin(roll)};
-        double cr{std::cos(roll)};
-        double sp{std::sin(pitch)};
-        double cp{std::cos(pitch)};
-        Eigen::Matrix3d T;
-        if (std::abs(cp) > 1e-4)
-        {
-          T << 1, sr * sp / cp, cr * sp / cp, 0, cr, -sr, 0, sr / cp, cr / cp;
-        }
-        else
-        {
-          T = Eigen::Matrix3d::Identity();
-        }
-        Eigen::Vector3d euler_rates{T * w_body};
-
-        // 临时动态修改卡尔曼测量映射阵至高频惯性通道，并设置相应噪声协方差
-        filter_.SetImuMeasurementModel();
-        cv::Mat measurement{cv::Mat::zeros(6, 1, CV_64F)};
-        measurement.at<double>(0) = a_world.x();
-        measurement.at<double>(1) = a_world.y();
-        measurement.at<double>(2) = a_world.z();
-        measurement.at<double>(3) = euler_rates.x();
-        measurement.at<double>(4) = euler_rates.y();
-        measurement.at<double>(5) = euler_rates.z();
-
-        // 依据当前测量修正更新卡尔曼后验状态量
-        filter_.kf_.correct(measurement);
+        filter_.ImuUpdate(&imu_data);
       }
       else
       {
-        // 针对单目角位移向量和单位化平移向量，应用一阶增量公式积分获取连续的全局绝对位姿
+        // 加载当前帧低频单目视觉观测信息并调用 ESKF 的观测融合与后验误差校正
         const auto &datum_fast = data_fast_[event.index];
-        const Eigen::Quaterniond delta_rotation{
-            Eigen::AngleAxisd{
-                datum_fast.angular_displacement_.norm(),
-                datum_fast.angular_displacement_.normalized(),
-            },
-        };
+        typename ErrorStateKalmanFilter<double>::DatumFastImpl fast_data;
+        fast_data.timestamp_              = datum_fast.timestamp_;
+        fast_data.angular_displacement_   = datum_fast.angular_displacement_;
+        fast_data.normalized_translation_ = datum_fast.normalized_translation_;
 
-        cam_position
-            = cam_position + cam_attitude * datum_fast.normalized_translation_;
-        cam_attitude = (cam_attitude * delta_rotation).normalized();
+        filter_.MonocularUpdate(&fast_data);
 
-        Eigen::Quaterniond q_cam = cam_attitude.cast<double>();
-        Eigen::Vector3d euler    = QuaternionToEuler(q_cam);
-
-        // 临时切换卡尔曼测量阵至低频全局位姿模式
-        filter_.SetCamMeasurementModel();
-        cv::Mat measurement{cv::Mat::zeros(6, 1, CV_64F)};
-        measurement.at<double>(0) = static_cast<double>(cam_position.x());
-        measurement.at<double>(1) = static_cast<double>(cam_position.y());
-        measurement.at<double>(2) = static_cast<double>(cam_position.z());
-        measurement.at<double>(3) = euler.x();
-        measurement.at<double>(4) = euler.y();
-        measurement.at<double>(5) = euler.z();
-
-        // 叠加具有极小测量噪声不确定性的视觉全局解，触发高维状态的二次 Correct 联合估计
-        filter_.kf_.correct(measurement);
-
-        // 提取最终稳定融合所得的最优空间位移和欧拉姿态解
-        double est_x{filter_.kf_.statePost.at<double>(0)};
-        double est_y{filter_.kf_.statePost.at<double>(1)};
-        double est_z{filter_.kf_.statePost.at<double>(2)};
-        double est_roll{filter_.kf_.statePost.at<double>(9)};
-        double est_pitch{filter_.kf_.statePost.at<double>(10)};
-        double est_yaw{filter_.kf_.statePost.at<double>(11)};
-
-        Eigen::AngleAxisd est_rollAngle(est_roll, Eigen::Vector3d::UnitX());
-        Eigen::AngleAxisd est_pitchAngle(est_pitch, Eigen::Vector3d::UnitY());
-        Eigen::AngleAxisd est_yawAngle(est_yaw, Eigen::Vector3d::UnitZ());
-        Eigen::Quaterniond est_q{est_yawAngle * est_pitchAngle * est_rollAngle};
-        Eigen::Vector3d est_p(est_x, est_y, est_z);
+        // 获取融合后的最新名义状态
+        auto state = filter_.GetNominalState();
 
         // 将离线同步得到的融合位姿有序加入轨迹容器，使得两路轨迹数据帧总数与索引保持绝对等同，规避崩溃
-        PushPose(msg_path_fuse_, datum_fast.timestamp_, est_q.cast<double>(),
-                 est_p.cast<double>());
+        PushPose(msg_path_fuse_, datum_fast.timestamp_, state.attitude_,
+                 state.position_);
       }
     }
   }
