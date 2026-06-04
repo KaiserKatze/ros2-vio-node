@@ -283,17 +283,18 @@ struct SensorConfig
   static std::optional<SensorConfig>
   ReadSensorYaml(const std::string &path_sensor_yaml)
   {
+    SensorConfig result_sensor_config;
     YAML::Node node_sensor{YAML::LoadFile(path_sensor_yaml)};
     if (node_sensor["sensor_type"]
         && node_sensor["sensor_type"].as<std::string>() == "imu")
     {
-      gyroscope_noise_density_
+      result_sensor_config.gyroscope_noise_density_
           = node_sensor["gyroscope_noise_density"].as<double>();
-      gyroscope_random_walk_
+      result_sensor_config.gyroscope_random_walk_
           = node_sensor["gyroscope_random_walk"].as<double>();
-      accelerometer_noise_density_
+      result_sensor_config.accelerometer_noise_density_
           = node_sensor["accelerometer_noise_density"].as<double>();
-      accelerometer_random_walk_
+      result_sensor_config.accelerometer_random_walk_
           = node_sensor["accelerometer_random_walk"].as<double>();
     }
     if (node_sensor["T_BS"] && node_sensor["T_BS"]["data"])
@@ -302,7 +303,8 @@ struct SensorConfig
           node_sensor["T_BS"]["data"].as<std::vector<double>>()
       };
       Eigen::Map<Eigen::Matrix4d> T_BS_mat{T_BS_data.data()};
-      return std::make_optional<Eigen::Matrix4d>(T_BS_mat);
+      result_sensor_config.transform_matrix_ = std::move(T_BS_mat);
+      return result_sensor_config;
     }
     return std::nullopt;
   }
