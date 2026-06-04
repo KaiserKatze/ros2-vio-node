@@ -41,6 +41,7 @@ def generate_launch_description():
                 "path_imu_yaml": str(imu0_path / "sensor.yaml"),
                 "path_truth_csv": str(truth_path / "data.csv"),
                 "path_cam0_yaml": str(cam0_path / "sensor.yaml"),
+                "path_truth_yaml": str(truth_path / "sensor.yaml"),
             }
         ],
     )

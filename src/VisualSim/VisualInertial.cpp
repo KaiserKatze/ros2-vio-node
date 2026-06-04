@@ -179,7 +179,9 @@ struct DatumTruth
   Eigen::Vector3d bias_gyro_;
   Eigen::Vector3d bias_accel_;
 
-  static std::vector<DatumTruth> Load(const std::string &path_truth_csv)
+  static std::vector<DatumTruth>
+  Load(const std::string &path_truth_csv,
+       const Sophus::SO3d &sensor_rotation_wrt_body)
   {
     std::vector<DatumTruth> data;
 
@@ -225,12 +227,14 @@ struct DatumTruth
 #endif
 
         const DatumTruth datum_truth{
-            timestamp,        //
-            {px, py, pz},     //
-            {qw, qx, qy, qz}, //
-            {vx, vy, vz},     //
-            {bwx, bwy, bwz},  //
-            {bax, bay, baz},  //
+            timestamp,                                              //
+            sensor_rotation_wrt_body * Eigen::Vector3d{px, py, pz}, //
+            (Eigen::Quaterniond{qw, qx, qy, qz}
+             * sensor_rotation_wrt_body.unit_quaternion().conjugate())
+                .normalized(),                                         //
+            sensor_rotation_wrt_body * Eigen::Vector3d{vx, vy, vz},    //
+            sensor_rotation_wrt_body * Eigen::Vector3d{bwx, bwy, bwz}, //
+            sensor_rotation_wrt_body * Eigen::Vector3d{bax, bay, baz}, //
         };
         data.push_back(datum_truth);
       }
@@ -367,6 +371,7 @@ private:
   std::vector<DatumTruth> data_truth_{};
   SensorConfig sensor_config_cam0_{};
   SensorConfig sensor_config_imu0_{};
+  SensorConfig sensor_config_truth_{};
 
   LinearKalmanFilter filter_;
 
@@ -1518,6 +1523,11 @@ public:
     };
     path_truth_csv_ = path_truth_csv;
 
+    this->declare_parameter("path_truth_yaml", "");
+    const std::string path_truth_yaml{
+        this->get_parameter("path_truth_yaml").as_string(),
+    };
+
     if (path_estimation_csv.empty())
     {
       throw std::runtime_error{"'path_estimation_csv' not specified."};
@@ -1538,6 +1548,10 @@ public:
     {
       throw std::runtime_error{"'path_truth_csv' not specified."};
     }
+    if (path_truth_yaml.empty())
+    {
+      throw std::runtime_error{"'path_truth_yaml' not specified."};
+    }
 
     for (auto path_obj : {path_estimation_csv, path_imu_csv, path_truth_csv})
     {
@@ -1549,10 +1563,10 @@ public:
       throw std::runtime_error{std::format("FileNotFound: {}!", path_obj)};
     }
 
-    auto opt_sensor_config_cam0_{SensorConfig::ReadSensorYaml(path_cam0_yaml)};
-    if (opt_sensor_config_cam0_.has_value())
+    auto opt_sensor_config_cam0{SensorConfig::ReadSensorYaml(path_cam0_yaml)};
+    if (opt_sensor_config_cam0.has_value())
     {
-      sensor_config_cam0_ = std::move(opt_sensor_config_cam0_.value());
+      sensor_config_cam0_ = std::move(opt_sensor_config_cam0.value());
       std::print(stderr,
                  "T_BS_cam0 =\n"
                  "\t[[{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
@@ -1581,10 +1595,10 @@ public:
       throw std::runtime_error{std::format("Fail to parse {}!",
                                            path_cam0_yaml)};
     }
-    auto opt_sensor_config_imu0_{SensorConfig::ReadSensorYaml(path_imu_yaml)};
-    if (opt_sensor_config_imu0_.has_value())
+    auto opt_sensor_config_imu0{SensorConfig::ReadSensorYaml(path_imu_yaml)};
+    if (opt_sensor_config_imu0.has_value())
     {
-      sensor_config_imu0_ = std::move(opt_sensor_config_imu0_.value());
+      sensor_config_imu0_ = std::move(opt_sensor_config_imu0.value());
       std::print(stderr,
                  "T_BS_imu0 =\n"
                  "\t[[{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
@@ -1612,6 +1626,38 @@ public:
     {
       throw std::runtime_error{std::format("Fail to parse {}!", path_imu_yaml)};
     }
+    auto opt_sensor_config_truth{SensorConfig::ReadSensorYaml(path_truth_yaml)};
+    if (opt_sensor_config_truth.has_value())
+    {
+      sensor_config_truth_ = std::move(opt_sensor_config_truth.value());
+      std::print(stderr,
+                 "T_BS_truth =\n"
+                 "\t[[{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
+                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
+                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
+                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}]]\n",
+                 sensor_config_truth_.transform_matrix_(0, 0),
+                 sensor_config_truth_.transform_matrix_(0, 1),
+                 sensor_config_truth_.transform_matrix_(0, 2),
+                 sensor_config_truth_.transform_matrix_(0, 3),
+                 sensor_config_truth_.transform_matrix_(1, 0),
+                 sensor_config_truth_.transform_matrix_(1, 1),
+                 sensor_config_truth_.transform_matrix_(1, 2),
+                 sensor_config_truth_.transform_matrix_(1, 3),
+                 sensor_config_truth_.transform_matrix_(2, 0),
+                 sensor_config_truth_.transform_matrix_(2, 1),
+                 sensor_config_truth_.transform_matrix_(2, 2),
+                 sensor_config_truth_.transform_matrix_(2, 3),
+                 sensor_config_truth_.transform_matrix_(3, 0),
+                 sensor_config_truth_.transform_matrix_(3, 1),
+                 sensor_config_truth_.transform_matrix_(3, 2),
+                 sensor_config_truth_.transform_matrix_(3, 3));
+    }
+    else
+    {
+      throw std::runtime_error{std::format("Fail to parse {}!",
+                                           path_truth_yaml)};
+    }
 
     data_fast_ = DatumFast::Load(
         path_estimation_csv,
@@ -1621,7 +1667,10 @@ public:
         path_imu_csv,
         Sophus::SO3d{sensor_config_imu0_.transform_matrix_.block<3, 3>(0, 0)}
     );
-    data_truth_ = DatumTruth::Load(path_truth_csv);
+    data_truth_ = DatumTruth::Load(
+        path_truth_csv,
+        Sophus::SO3d{sensor_config_truth_.transform_matrix_.block<3, 3>(0, 0)}
+    );
 
     std::print(stderr, "VisualInertial ready ...\n");
     msg_path_fast_.header.frame_id         = DEFAULT_FRAME_ID;
