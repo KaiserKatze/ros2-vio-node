@@ -1,4 +1,6 @@
 {
-  "clangd.arguments": [
-  ]
+  "chat.agent.maxRequests": 100,
+  "cmake.configureOnOpen": false,
+  "cmake.configureOnEdit": false,
+  "clangd.arguments": []
 }
