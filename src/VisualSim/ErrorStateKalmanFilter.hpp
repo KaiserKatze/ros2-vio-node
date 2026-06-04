@@ -122,6 +122,26 @@ public:
     // TODO
   }
 
+  void SetGyroscopeNoiseDensity(value_type noise_density)
+  {
+    gyroscope_noise_density_ = noise_density;
+  }
+
+  void SetGyroscopeRandomWalk(value_type random_walk)
+  {
+    gyroscope_random_walk_ = random_walk;
+  }
+
+  void SetAccelerometerNoiseDensity(value_type noise_density)
+  {
+    accelerometer_noise_density_ = noise_density;
+  }
+
+  void SetAccelerometerRandomWalk(value_type random_walk)
+  {
+    accelerometer_random_walk_ = random_walk;
+  }
+
   /**
    * @brief 每当收到新的 IMU 数据时调用
    * @param imu_data IMU 数据提供的角速度向量和线加速度向量
@@ -170,7 +190,7 @@ private:
 #pragma region 私有成员变量
 
 private:
-  // 重力加速度大小
+  // 重力加速度大小 (单位: m s^-2)
   value_type gravity_world_norm{9.81};
   // 世界坐标系下的重力加速度
   Vector3 gravity_world{-gravity_world_norm * Vector3::UnitZ()};
@@ -180,6 +200,14 @@ private:
   VariableImpl nominal_state_{};
   // 误差状态
   VariableImpl error_state_{};
+  // 陀螺仪白噪声密度 (单位: rad / s / sqrt(Hz))
+  value_type gyroscope_noise_density_{0.0};
+  // 陀螺仪零偏随机游走 (单位: rad / s^2 / sqrt(Hz))
+  value_type gyroscope_random_walk_{0.0};
+  // 加速度计白噪声密度 (单位: m / s^2 / sqrt(Hz))
+  value_type accelerometer_noise_density_{0.0};
+  // 加速度计零偏随机游走 (单位: m / s^3 / sqrt(Hz))
+  value_type accelerometer_random_walk_{0.0};
   // 加速度计噪声
   Vector3 accelerometer_noise_{Vector3::Zero()};
   // 陀螺仪噪声

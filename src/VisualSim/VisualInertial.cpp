@@ -36,6 +36,7 @@ using namespace std::chrono_literals;
 
 #include "yaml-cpp/yaml.h"
 
+#include "ErrorStateKalmanFilter.hpp"
 #include "ImuState.hpp"
 #include "LinearKalmanFilter.hpp"
 #include "euroc_vio/AbstractLoader.hpp"
@@ -254,9 +255,18 @@ struct DatumTruth
 
 struct SensorConfig
 {
-  Eigen::Matrix4d transform_matrix_;
+  // 姿态, 变换矩阵
+  Eigen::Matrix4d transform_matrix_{Eigen::Matrix4d::Identity()};
+  // 陀螺仪白噪声密度 (单位: rad / s / sqrt(Hz))
+  double gyroscope_noise_density_{0.0};
+  // 陀螺仪零偏随机游走 (单位: rad / s^2 / sqrt(Hz))
+  double gyroscope_random_walk_{0.0};
+  // 加速度计白噪声密度 (单位: m / s^2 / sqrt(Hz))
+  double accelerometer_noise_density_{0.0};
+  // 加速度计零偏随机游走 (单位: m / s^3 / sqrt(Hz))
+  double accelerometer_random_walk_{0.0};
 
-  SensorConfig() : transform_matrix_{Eigen::Matrix4d::Identity()} {}
+  SensorConfig() {}
 
   SensorConfig(const Eigen::Matrix4d &transform_matrix) :
     transform_matrix_{transform_matrix}
@@ -274,6 +284,18 @@ struct SensorConfig
   ReadSensorYaml(const std::string &path_sensor_yaml)
   {
     YAML::Node node_sensor{YAML::LoadFile(path_sensor_yaml)};
+    if (node_sensor["sensor_type"]
+        && node_sensor["sensor_type"].as<std::string>() == "imu")
+    {
+      gyroscope_noise_density_
+          = node_sensor["gyroscope_noise_density"].as<double>();
+      gyroscope_random_walk_
+          = node_sensor["gyroscope_random_walk"].as<double>();
+      accelerometer_noise_density_
+          = node_sensor["accelerometer_noise_density"].as<double>();
+      accelerometer_random_walk_
+          = node_sensor["accelerometer_random_walk"].as<double>();
+    }
     if (node_sensor["T_BS"] && node_sensor["T_BS"]["data"])
     {
       std::vector<double> T_BS_data{
@@ -553,7 +575,7 @@ private:
 
       Eigen::Vector3d delta_position{datum_fast.normalized_translation_};
 #if (USE_TRUE_SCALE_IN_FAST)
-      // TODO 利用插值查找函数 Interpolate 获取 delta_position 对应的真值的范数
+      // 利用插值查找函数 Interpolate 获取 delta_position 对应的真值的范数
       Eigen::Vector3d true_old_position{
           Interpolate(data_truth_, datum_fast.timestamp_).position_,
       };
@@ -1304,6 +1326,8 @@ private:
    */
   void EstimateFuse()
   {
+    // TODO 将 OpenCV 提供的线性卡尔曼滤波替换为 ErrorStateKalmanFilter<double>
+
     // 定义离线统一的时间轴事件结构体，用于交织对齐异步的视觉序列与高频 IMU 序列
     struct TimelineEvent
     {
