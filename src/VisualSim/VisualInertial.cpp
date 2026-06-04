@@ -260,9 +260,18 @@ struct SensorConfig
   Eigen::Matrix4d transform_matrix_;
 
   SensorConfig() : transform_matrix_{Eigen::Matrix4d::Identity()} {}
-  SensorConfig(const Eigen::Matrix4d &) = default;
-  SensorConfig(Eigen::Matrix4d &&)      = default;
-  ~SensorConfig()                       = default;
+
+  SensorConfig(const Eigen::Matrix4d &transform_matrix) :
+    transform_matrix_{transform_matrix}
+  {
+  }
+
+  SensorConfig(Eigen::Matrix4d &&transform_matrix) :
+    transform_matrix_{std::move(transform_matrix)}
+  {
+  }
+
+  ~SensorConfig() = default;
 
   static std::optional<SensorConfig>
   ReadSensorYaml(const std::string &path_sensor_yaml)
@@ -271,10 +280,10 @@ struct SensorConfig
     if (node_sensor["T_BS"] && node_sensor["T_BS"]["data"])
     {
       std::vector<double> T_BS_data{
-          config["T_BS"]["data"].as<std::vector<double>>()
+          node_sensor["T_BS"]["data"].as<std::vector<double>>()
       };
       Eigen::Map<Eigen::Matrix4d> T_BS_mat{T_BS_data.data()};
-      return T_BS_mat;
+      return std::make_optional<Eigen::Matrix4d>(T_BS_mat);
     }
     return std::nullopt;
   }
