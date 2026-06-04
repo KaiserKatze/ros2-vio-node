@@ -45,6 +45,7 @@ find_package(image_transport REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(Boost REQUIRED)
+find_package(yaml-cpp REQUIRED)
 find_package(Armadillo REQUIRED)
 
 # # --- ROS2 通信接口生成 ---
@@ -247,6 +248,7 @@ ament_target_dependencies(VisualInertial
 target_link_libraries(VisualInertial
   Eigen3::Eigen
   ${OpenCV_LIBS}
+  yaml-cpp
 )
 target_compile_options(VisualInertial PRIVATE -std=c++26 -freflection)
 
