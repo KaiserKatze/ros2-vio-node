@@ -175,6 +175,10 @@ public:
    */
   void ImuUpdate(const DatumImuImpl *imu_data)
   {
+    if (imu_data == nullptr)
+    {
+      return;
+    }
     if (!is_initialized_)
     {
       return;
@@ -270,6 +274,10 @@ public:
    */
   void MonocularUpdate(const DatumFastImpl *monocular_data)
   {
+    if (monocular_data == nullptr)
+    {
+      return;
+    }
     if (!is_initialized_)
     {
       return;
