@@ -498,7 +498,8 @@ private:
   SensorConfig sensor_config_truth_{};
 
   // 引入 ESKF 松耦合姿态解算器，替代原本精度较低的 opencv 线性卡尔曼解算模型
-  ErrorStateKalmanFilter<double> filter_;
+  using ESKF = ErrorStateKalmanFilter<double>;
+  ESKF filter_;
 
 #pragma endregion
 
@@ -1365,7 +1366,7 @@ private:
    */
   void EstimateFuse()
   {
-    // 将 OpenCV 提供的线性卡尔曼滤波替换为 ErrorStateKalmanFilter<double>
+#pragma region 建立事件序列
 
     // 定义离线统一的时间轴事件结构体，用于交织对齐异步的视觉序列与高频 IMU 序列
     struct TimelineEvent
@@ -1393,8 +1394,12 @@ private:
     std::ranges::sort(events, std::less<>{}, [](const TimelineEvent &e)
                       { return std::make_tuple(e.timestamp, !e.is_imu); });
 
+#pragma endregion
+
+#pragma region 初始化 ESKF
+
     // 初始化 ESKF 的标称状态
-    typename ErrorStateKalmanFilter<double>::NominalStateVariable init_state;
+    typename ESKF::NominalStateVariable init_state;
     if (use_true_init_pose_ && !data_truth_.empty())
     {
       init_state.position_           = data_truth_[0].position_;
@@ -1405,6 +1410,7 @@ private:
     }
     else
     {
+      // TODO 尚未编码专用的初始姿态解算机制
       if (!data_truth_.empty())
       {
         init_state.attitude_ = data_truth_[0].attitude_;
@@ -1424,14 +1430,16 @@ private:
         sensor_config_imu0_.accelerometer_random_walk_
     );
 
+#pragma endregion
+
     // 顺序迭代离线混合时间轴上的所有传感器事件
     for (const auto &event : events)
     {
       if (event.is_imu)
       {
         // 传递高频 IMU 采样数据，执行 ESKF 标称状态前推以及误差状态协方差的时间传播
-        const auto &datum_imu = data_imu_[event.index];
-        typename ErrorStateKalmanFilter<double>::DatumImuImpl imu_data;
+        const auto &datum_imu{data_imu_[event.index]};
+        typename ESKF::DatumImuImpl imu_data;
         imu_data.timestamp_           = datum_imu.timestamp_;
         imu_data.angular_velocity_    = datum_imu.angular_velocity_;
         imu_data.linear_acceleration_ = datum_imu.linear_acceleration_;
@@ -1441,8 +1449,8 @@ private:
       else
       {
         // 加载当前帧低频单目视觉观测信息并调用 ESKF 的观测融合与后验误差校正
-        const auto &datum_fast = data_fast_[event.index];
-        typename ErrorStateKalmanFilter<double>::DatumFastImpl fast_data;
+        const auto &datum_fast{data_fast_[event.index]};
+        typename ESKF::DatumFastImpl fast_data;
         fast_data.timestamp_              = datum_fast.timestamp_;
         fast_data.angular_displacement_   = datum_fast.angular_displacement_;
         fast_data.normalized_translation_ = datum_fast.normalized_translation_;
@@ -1450,7 +1458,7 @@ private:
         filter_.MonocularUpdate(&fast_data);
 
         // 获取融合后的最新名义状态
-        auto state = filter_.GetNominalState();
+        auto state{filter_.GetNominalState()};
 
         // 将离线同步得到的融合位姿有序加入轨迹容器，使得两路轨迹数据帧总数与索引保持绝对等同，规避崩溃
         PushPose(msg_path_fuse_, datum_fast.timestamp_, state.attitude_,
