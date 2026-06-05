@@ -893,22 +893,15 @@ private:
               * (previous_angular_velocity_in_body_frame
                  + current_angular_velocity_in_body_frame),
       };
-      // 载具参考系下两帧角速度的叉乘 (如果运动轨迹是光滑的，那么这一项是可以忽略的)
-      Eigen::Vector3d angular_velocity_cross{
-          previous_angular_velocity_in_body_frame.cross(
-              current_angular_velocity_in_body_frame
-          )
-      };
       // 朝向变化量
       Sophus::SO3d delta_attitude{
-          Sophus::SO3d::exp(median_angular_velocity_in_body_frame * dt)
-              + (dt * dt / 24.0)
-                    * Sophus::SO3d{Eigen::Quaterniond{
-                        0.0,
-                        angular_velocity_cross.x(),
-                        angular_velocity_cross.y(),
-                        angular_velocity_cross.z(),
-                    }},
+          Sophus::SO3d::exp(
+              median_angular_velocity_in_body_frame * dt
+              + (dt * dt / 12.0)
+                    * previous_angular_velocity_in_body_frame.cross(
+                        current_angular_velocity_in_body_frame
+                    )
+          ),
       };
       // 新的朝向
       Sophus::SO3d estimated_new_attitude_imu{
