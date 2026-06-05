@@ -95,8 +95,8 @@ private:
   // 具体取值由 ErrorStateVariable 中的成员变量的种类及数量决定
   static constexpr int dimErrorState{5 * 3};
 
-  // 实际参与运算的名义状态向量或误差状态向量 (每当需要从 ESKF 中读取数据时，用 Eigen::Map 进行转换)
-  using VariableImpl = Eigen::Vector<value_type, dimErrorState>;
+  // 实际参与运算的误差状态向量
+  using ErrorStateImpl = Eigen::Vector<value_type, dimErrorState>;
   // 误差状态的协方差矩阵
   using CovarianceErrorState
       = Eigen::Matrix<value_type, dimErrorState, dimErrorState>;
@@ -105,6 +105,8 @@ private:
       = Eigen::Matrix<value_type, dimMonocularData, dimErrorState>;
 
 #pragma endregion
+
+#pragma region 初始化
 
 public:
   ErrorStateKalmanFilter() : last_imu_time_{-1}
@@ -161,6 +163,11 @@ public:
     is_initialized_  = true;
   }
 
+#pragma endregion
+
+#pragma region 状态更新与观测更新
+
+public:
   /**
    * @brief 每当收到新的 IMU 数据时调用
    * @param imu_data IMU 数据提供的角速度向量和线加速度向量
@@ -320,6 +327,11 @@ public:
     InjectError();
   }
 
+#pragma endregion
+
+#pragma region 数据接口
+
+public:
   /**
    * @brief 获取当前名义状态
    */
@@ -327,6 +339,8 @@ public:
   {
     return nominal_state_;
   }
+
+#pragma endregion
 
 #pragma region 私有成员函数
 
@@ -383,7 +397,7 @@ private:
   // 名义状态 (由于 15 维向量表示四元数不便，直接使用 NominalStateVariable 实例)
   NominalStateVariable nominal_state_{};
   // 误差状态
-  VariableImpl error_state_{VariableImpl::Zero()};
+  ErrorStateImpl error_state_{ErrorStateImpl::Zero()};
   // 陀螺仪白噪声密度 (单位: rad / s / sqrt(Hz))
   value_type gyroscope_noise_density_{0.0};
   // 陀螺仪零偏随机游走 (单位: rad / s^2 / sqrt(Hz))
