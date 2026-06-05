@@ -109,7 +109,7 @@ private:
 #pragma region 初始化
 
 public:
-  ErrorStateKalmanFilter() : last_imu_time_{-1}
+  ErrorStateKalmanFilter()
   {
     // 初始协方差设定为相对保守的不确定性，避免系统初试积分发生剧烈波动
     error_state_covariance_ = CovarianceErrorState::Identity() * 1e-4;
@@ -191,69 +191,75 @@ public:
       return;
     }
 
-    double dt
-        = static_cast<double>(imu_data->timestamp_ - last_imu_time_) * 1e-9;
+    const value_type dt{
+        static_cast<value_type>((imu_data->timestamp_ - last_imu_time_) * 1e-9)
+    };
     if (dt <= 0.0)
     {
       return;
     }
 
     // 中值积分获取去偏差后的平均角速度与加速度
-    Vector3 unbias_gyro_prev
-        = last_imu_data_.angular_velocity_ - nominal_state_.gyroscope_bias_;
-    Vector3 unbias_gyro_curr
-        = imu_data->angular_velocity_ - nominal_state_.gyroscope_bias_;
-    Vector3 omega_m = 0.5 * (unbias_gyro_prev + unbias_gyro_curr);
+    Vector3 unbias_gyro_prev{last_imu_data_.angular_velocity_
+                             - nominal_state_.gyroscope_bias_};
+    Vector3 unbias_gyro_curr{imu_data->angular_velocity_
+                             - nominal_state_.gyroscope_bias_};
+    Vector3 omega_m{static_cast<value_type>(0.5)
+                    * (unbias_gyro_prev + unbias_gyro_curr)};
 
-    Vector3 unbias_acc_prev = last_imu_data_.linear_acceleration_
-                              - nominal_state_.accelerometer_bias_;
-    Vector3 unbias_acc_curr
-        = imu_data->linear_acceleration_ - nominal_state_.accelerometer_bias_;
-    Vector3 acc_m = 0.5 * (unbias_acc_prev + unbias_acc_curr);
+    Vector3 unbias_acc_prev{last_imu_data_.linear_acceleration_
+                            - nominal_state_.accelerometer_bias_};
+    Vector3 unbias_acc_curr{imu_data->linear_acceleration_
+                            - nominal_state_.accelerometer_bias_};
+    Vector3 acc_m{static_cast<value_type>(0.5)
+                  * (unbias_acc_prev + unbias_acc_curr)};
 
     // 更新名义状态中的朝向
-    Attitude R_old(nominal_state_.attitude_);
-    Attitude R_new           = R_old * Attitude::exp(omega_m * dt);
+    Attitude R_old{nominal_state_.attitude_};
+    Attitude R_new{R_old * Attitude::exp(omega_m * dt)};
     nominal_state_.attitude_ = R_new.unit_quaternion();
 
     // 更新名义状态中的位置与线速度 (积分转换至世界系)
-    Vector3 acc_world_prev = R_old * unbias_acc_prev + gravity_world;
-    Vector3 acc_world_curr = R_new * unbias_acc_curr + gravity_world;
-    Vector3 acc_world_m    = 0.5 * (acc_world_prev + acc_world_curr);
+    Vector3 acc_world_prev{R_old * unbias_acc_prev + gravity_world};
+    Vector3 acc_world_curr{R_new * unbias_acc_curr + gravity_world};
+    Vector3 acc_world_m{static_cast<value_type>(0.5)
+                        * (acc_world_prev + acc_world_curr)};
 
     nominal_state_.position_
-        += nominal_state_.linear_velocity_ * dt + 0.5 * acc_world_m * dt * dt;
+        += nominal_state_.linear_velocity_ * dt
+           + static_cast<value_type>(0.5) * acc_world_m * dt * dt;
     nominal_state_.linear_velocity_ += acc_world_m * dt;
 
     // 离散系统状态转移矩阵 F (15x15) 的快速构建
-    CovarianceErrorState F = CovarianceErrorState::Identity();
+    CovarianceErrorState F{CovarianceErrorState::Identity()};
 
     // F_pv = I * dt
     F.template block<3, 3>(0, 3) = Matrix3::Identity() * dt;
 
     // F_vtheta = -R_old * skew(acc_m) * dt
-    Matrix3 skew_acc             = SkewSymmetric(acc_m);
+    Matrix3 skew_acc{Attitude::hat(acc_m).matrix()};
     F.template block<3, 3>(3, 6) = -R_old.matrix() * skew_acc * dt;
 
     // F_vba = -R_old * dt
     F.template block<3, 3>(3, 9) = -R_old.matrix() * dt;
 
     // F_thetatheta = I - skew(omega_m) * dt
-    Matrix3 skew_omega           = SkewSymmetric(omega_m);
+    Matrix3 skew_omega{Attitude::hat(omega_m).matrix()};
     F.template block<3, 3>(6, 6) = Matrix3::Identity() - skew_omega * dt;
 
     // F_thetabg = -I * dt
     F.template block<3, 3>(6, 12) = -Matrix3::Identity() * dt;
 
     // 系统过程噪声协方差矩阵 Q (15x15)
-    CovarianceErrorState Q = CovarianceErrorState::Zero();
-    double var_v
-        = (accelerometer_noise_density_ * accelerometer_noise_density_) * dt;
-    double var_theta
-        = (gyroscope_noise_density_ * gyroscope_noise_density_) * dt;
-    double var_ba
-        = (accelerometer_random_walk_ * accelerometer_random_walk_) * dt;
-    double var_bg = (gyroscope_random_walk_ * gyroscope_random_walk_) * dt;
+    CovarianceErrorState Q{CovarianceErrorState::Zero()};
+    value_type var_v{
+        (accelerometer_noise_density_ * accelerometer_noise_density_) * dt
+    };
+    value_type var_theta{(gyroscope_noise_density_ * gyroscope_noise_density_)
+                         * dt};
+    value_type var_ba{(accelerometer_random_walk_ * accelerometer_random_walk_)
+                      * dt};
+    value_type var_bg{(gyroscope_random_walk_ * gyroscope_random_walk_) * dt};
 
     Q.template block<3, 3>(3, 3)   = var_v * Matrix3::Identity();
     Q.template block<3, 3>(6, 6)   = var_theta * Matrix3::Identity();
@@ -327,7 +333,7 @@ public:
     // 更新误差状态协方差并维持对称性特征
     error_state_covariance_
         = (CovarianceErrorState::Identity() - K * H) * error_state_covariance_;
-    error_state_covariance_ = 0.5
+    error_state_covariance_ = static_cast<value_type>(0.5)
                               * (error_state_covariance_
                                  + error_state_covariance_.transpose().eval());
 
@@ -363,7 +369,7 @@ private:
     // 2. 更新速度: v = v + dv
     nominal_state_.linear_velocity_ += error_state_.template segment<3>(3);
     // 3. 更新姿态: q = q * exp(d_theta)
-    Vector3 d_theta = error_state_.template segment<3>(6);
+    Vector3 d_theta{error_state_.template segment<3>(6)};
     nominal_state_.attitude_
         = (Attitude(nominal_state_.attitude_) * Attitude::exp(d_theta))
               .unit_quaternion();
@@ -372,23 +378,14 @@ private:
     nominal_state_.gyroscope_bias_ += error_state_.template segment<3>(12);
 
     // 5. 根据 Sola 理论，执行协方差重置 (G 映射矩阵校正)
-    CovarianceErrorState G = CovarianceErrorState::Identity();
+    CovarianceErrorState G{CovarianceErrorState::Identity()};
     G.template block<3, 3>(6, 6)
-        = Matrix3::Identity() - 0.5 * SkewSymmetric(d_theta);
+        = Matrix3::Identity()
+          - static_cast<value_type>(0.5) * Attitude::hat(d_theta).matrix();
     error_state_covariance_ = G * error_state_covariance_ * G.transpose();
 
     // 6. 重置 error_state_ 为零
     error_state_.setZero();
-  }
-
-  /**
-   * @brief 快速构建反对称矩阵
-   */
-  static Matrix3 SkewSymmetric(const Vector3 &v)
-  {
-    Matrix3 m;
-    m << 0, -v.z(), v.y(), v.z(), 0, -v.x(), -v.y(), v.x(), 0;
-    return m;
   }
 
 #pragma endregion
@@ -427,7 +424,7 @@ private:
       CovarianceErrorState::Identity()
   };
   // 上一帧 IMU 时间戳
-  std::int64_t last_imu_time_;
+  std::int64_t last_imu_time_{-1};
   // 视觉位置与朝向的增量积分状态变量
   Vector3 visual_position_{Vector3::Zero()};
   Quaternion visual_attitude_{Quaternion::Identity()};
