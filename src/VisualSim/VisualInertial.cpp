@@ -1646,15 +1646,21 @@ public:
 
     data_fast_ = DatumFast::Load(
         path_estimation_csv,
-        Sophus::SO3d{sensor_config_cam0_.transform_matrix_.block<3, 3>(0, 0)}
+        Sophus::SO3d{
+            sensor_config_cam0_.transform_matrix_.template block<3, 3>(0, 0),
+        }
     );
     data_imu_ = DatumImu::Load(
         path_imu_csv,
-        Sophus::SO3d{sensor_config_imu0_.transform_matrix_.block<3, 3>(0, 0)}
+        Sophus::SO3d{
+            sensor_config_imu0_.transform_matrix_.template block<3, 3>(0, 0),
+        }
     );
     data_truth_ = DatumTruth::Load(
         path_truth_csv,
-        Sophus::SO3d{sensor_config_truth_.transform_matrix_.block<3, 3>(0, 0)}
+        Sophus::SO3d{
+            sensor_config_truth_.transform_matrix_.template block<3, 3>(0, 0),
+        }
     );
 
     std::print(stderr, "VisualInertial ready ...\n");
