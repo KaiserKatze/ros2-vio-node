@@ -878,13 +878,34 @@ private:
                                     - datum_prev.timestamp_),
       };
 
-      // 传感器参考系下的角速度
-      Eigen::Vector3d angular_velocity_in_sensor_frame{
+      // 载具参考系下的角速度 = 传感器参考系下的角速度
+      // 载具参考系下前一帧角速度
+      Eigen::Vector3d previous_angular_velocity_in_body_frame{
           datum_prev.angular_velocity_,
+      };
+      // 载具参考系下后一帧角速度
+      Eigen::Vector3d current_angular_velocity_in_body_frame{
+          datum_imu.angular_velocity_,
+      };
+      // 载具参考系下两帧角速度的平均值
+      Eigen::Vector3d median_angular_velocity_in_body_frame{
+          0.5
+              * (previous_angular_velocity_in_body_frame
+                 + current_angular_velocity_in_body_frame),
+      };
+      // 载具参考系下两帧角速度的叉乘 (如果运动轨迹是光滑的，那么这一项是可以忽略的)
+      Eigen::Vector3d angular_velocity_cross{
+          previous_angular_velocity_in_body_frame.cross(
+              current_angular_velocity_in_body_frame
+          )
       };
       // 朝向变化量
       Sophus::SO3d delta_attitude{
-          Sophus::SO3d::exp(angular_velocity_in_sensor_frame * dt),
+          Sophus::SO3d::exp(median_angular_velocity_in_body_frame * dt)
+              + (dt * dt / 24.0)
+                    * Eigen::Quaterniond{0.0, angular_velocity_cross.x(),
+                                         angular_velocity_cross.y(),
+                                         angular_velocity_cross.z()},
       };
       // 新的朝向
       Sophus::SO3d estimated_new_attitude_imu{
