@@ -695,13 +695,13 @@ private:
                      estimated_attitude_fast);
     } // end for
 
-    evo_sim3.Flush();
+    evo_sim3.Flush(path_truth_csv_);
 
-    evo_sim3.Read([&msg_path{this->msg_path_fast_}](
-                      std::int64_t timestamp,
-                      const Eigen::Quaterniond &attitude,
-                      const Eigen::Vector3d &position
-                  ) { PushPose(msg_path, timestamp, attitude, position); });
+    evo_sim3.Read([&msg_path
+                   = this->msg_path_fast_](std::int64_t timestamp,
+                                           const Eigen::Quaterniond &attitude,
+                                           const Eigen::Vector3d &position)
+                  { PushPose(msg_path, timestamp, attitude, position); });
   }
 
   /**
@@ -1686,7 +1686,8 @@ public:
     PreintegrateImu();
     EstimateFuse();
 
-    for (const auto &&[path_name, path_inst] : {
+    for (const auto &&[path_name, path_inst] :
+         std::initializer_list<std::pair<std::string, nav_msgs::msg::Path>>{
              {"msg_path_fast_", msg_path_fast_},
              {"msg_path_imu_", msg_path_imu_},
              {"msg_path_rk4_", msg_path_rk4_},
@@ -1700,7 +1701,7 @@ public:
     }
 
 #if (PUBLISH_POSE)
-    size_t index_fast{0};
+    // size_t index_fast{0};
     size_t index_imu_euler{0};
     size_t index_preintegrate{0};
     size_t index_imu_rk4{0};
