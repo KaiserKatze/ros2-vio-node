@@ -1686,7 +1686,7 @@ public:
     PreintegrateImu();
     EstimateFuse();
 
-    for (const auto [path_name, path_inst] :
+    for (const auto &[path_name, path_inst] :
          std::initializer_list<std::pair<std::string, nav_msgs::msg::Path>>{
              {"msg_path_fast_", msg_path_fast_},
              {"msg_path_imu_", msg_path_imu_},
