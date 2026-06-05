@@ -697,11 +697,11 @@ private:
 
     evo_sim3.Flush(path_truth_csv_);
 
-    evo_sim3.Read([&msg_path
-                   = this->msg_path_fast_](std::int64_t timestamp,
-                                           const Eigen::Quaterniond &attitude,
-                                           const Eigen::Vector3d &position)
-                  { PushPose(msg_path, timestamp, attitude, position); });
+    evo_sim3.Read(
+        [this](std::int64_t timestamp, const Eigen::Quaterniond &attitude,
+               const Eigen::Vector3d &position)
+        { this->PushPose(this->msg_path_fast_, timestamp, attitude, position); }
+    );
   }
 
   /**
@@ -1686,7 +1686,7 @@ public:
     PreintegrateImu();
     EstimateFuse();
 
-    for (const auto &&[path_name, path_inst] :
+    for (const auto [path_name, path_inst] :
          std::initializer_list<std::pair<std::string, nav_msgs::msg::Path>>{
              {"msg_path_fast_", msg_path_fast_},
              {"msg_path_imu_", msg_path_imu_},
