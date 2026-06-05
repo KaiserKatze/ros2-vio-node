@@ -903,9 +903,12 @@ private:
       Sophus::SO3d delta_attitude{
           Sophus::SO3d::exp(median_angular_velocity_in_body_frame * dt)
               + (dt * dt / 24.0)
-                    * Eigen::Quaterniond{0.0, angular_velocity_cross.x(),
-                                         angular_velocity_cross.y(),
-                                         angular_velocity_cross.z()},
+                    * Sophus::SO3d{Eigen::Quaterniond{
+                        0.0,
+                        angular_velocity_cross.x(),
+                        angular_velocity_cross.y(),
+                        angular_velocity_cross.z(),
+                    }},
       };
       // 新的朝向
       Sophus::SO3d estimated_new_attitude_imu{
