@@ -902,7 +902,9 @@ private:
       };
       // 位置变化量
       Eigen::Vector3d delta_position{
-          (estimated_linear_velocity_imu + 0.5 * delta_velocity) * dt,
+          (estimated_linear_velocity_imu
+           + static_cast<value_type>(0.5) * delta_velocity)
+              * dt,
       };
 
       // 更新位置

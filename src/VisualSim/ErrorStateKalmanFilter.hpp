@@ -225,10 +225,12 @@ public:
     Vector3 acc_world_m{static_cast<value_type>(0.5)
                         * (acc_world_prev + acc_world_curr)};
 
+    Vector3 delta_velocity{acc_world_m * dt};
     nominal_state_.position_
-        += nominal_state_.linear_velocity_ * dt
-           + static_cast<value_type>(0.5) * acc_world_m * dt * dt;
-    nominal_state_.linear_velocity_ += acc_world_m * dt;
+        += (nominal_state_.linear_velocity_
+            + static_cast<value_type>(0.5) * delta_velocity)
+           * dt;
+    nominal_state_.linear_velocity_ += delta_velocity;
 
     // 离散系统状态转移矩阵 F (15x15) 的快速构建
     CovarianceErrorState F{CovarianceErrorState::Identity()};
