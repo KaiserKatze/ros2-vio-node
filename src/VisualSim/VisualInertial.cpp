@@ -296,7 +296,7 @@ private:
    */
   void EstimateFast()
   {
-    EvoSim3 evo_sim3{};
+    EvoSim3 evo_sim3_fast{};
 
     // 初始状态
     Eigen::Vector3d estimated_position_fast{Eigen::Vector3d::Zero()};
@@ -335,13 +335,13 @@ private:
           = estimated_position_fast + estimated_attitude_fast * delta_position;
       estimated_attitude_fast
           = (estimated_attitude_fast * delta_rotation).normalized();
-      evo_sim3.Write(datum_fast.timestamp_, estimated_position_fast,
-                     estimated_attitude_fast);
+      evo_sim3_fast.Write(datum_fast.timestamp_, estimated_position_fast,
+                          estimated_attitude_fast);
     } // end for
 
-    evo_sim3.Flush(path_truth_csv_);
+    evo_sim3_fast.Flush(path_truth_csv_);
 
-    evo_sim3.Read(
+    evo_sim3_fast.Read(
         [this](std::int64_t timestamp, const Eigen::Quaterniond &attitude,
                const Eigen::Vector3d &position)
         { this->PushPose(this->msg_path_fast_, timestamp, attitude, position); }
