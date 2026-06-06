@@ -182,38 +182,52 @@ public:
       return;
     }
 
+    // 假设 last_imu_data_ 中的角速度、线加速度都已经去除零偏
+    Vector3 unbias_gyro_prev{last_imu_data_.angular_velocity_};
+    Vector3 unbias_acc_prev{last_imu_data_.linear_acceleration_};
+
     // 中值积分获取去偏差后的平均角速度与加速度
-    Vector3 unbias_gyro_prev{last_imu_data_.angular_velocity_
-                             - nominal_state_.gyroscope_bias_};
     Vector3 unbias_gyro_curr{imu_data->angular_velocity_
                              - nominal_state_.gyroscope_bias_};
+    Vector3 unbias_acc_curr{imu_data->linear_acceleration_
+                            - nominal_state_.accelerometer_bias_};
+    // 将 `last_imu_data_ = *imu_data;` 改为存储去除零偏后的数据
+    last_imu_data_ = DatumImu{
+        imu_data->timestamp_,
+        unbias_gyro_curr,
+        unbias_acc_curr,
+    };
+
     Vector3 omega_m{static_cast<value_type>(0.5)
                     * (unbias_gyro_prev + unbias_gyro_curr)};
 
-    Vector3 unbias_acc_prev{last_imu_data_.linear_acceleration_
-                            - nominal_state_.accelerometer_bias_};
-    Vector3 unbias_acc_curr{imu_data->linear_acceleration_
-                            - nominal_state_.accelerometer_bias_};
     Vector3 acc_m{static_cast<value_type>(0.5)
                   * (unbias_acc_prev + unbias_acc_curr)};
 
-    // 更新名义状态中的朝向
     Attitude R_old{nominal_state_.attitude_};
     Attitude R_new{R_old * Attitude::exp(omega_m * dt)};
-    nominal_state_.attitude_ = R_new.unit_quaternion();
 
-    // 更新名义状态中的位置与线速度 (积分转换至世界系)
-    Vector3 acc_world_prev{R_old * unbias_acc_prev + gravity_world};
-    Vector3 acc_world_curr{R_new * unbias_acc_curr + gravity_world};
-    Vector3 acc_world_m{static_cast<value_type>(0.5)
-                        * (acc_world_prev + acc_world_curr)};
+    Vector3 acc_world_m{
+        static_cast<value_type>(0.5)
+                * (R_old * unbias_acc_prev + R_new * unbias_acc_curr)
+            + gravity_world_,
+    };
 
     Vector3 delta_velocity{acc_world_m * dt};
-    Vector3 delta_position{(nominal_state_.linear_velocity_
-                            + static_cast<value_type>(0.5) * delta_velocity)
-                           * dt};
+    Vector3 delta_position{
+        (nominal_state_.linear_velocity_
+         + static_cast<value_type>(0.5) * delta_velocity)
+            * dt,
+    };
+
+    // 更新名义状态中的位置
     nominal_state_.position_ += delta_position;
+    // 更新名义状态中的线速度
     nominal_state_.linear_velocity_ += delta_velocity;
+    // 更新名义状态中的朝向
+    nominal_state_.attitude_ = R_new.unit_quaternion();
+    // 不更新加速度计零偏
+    // 不更新陀螺仪零偏
 
     // 离散系统状态转移矩阵 F (15x15) 的快速构建
     CovarianceErrorState F{CovarianceErrorState::Identity()};
@@ -255,7 +269,6 @@ public:
     error_state_covariance_ = F * error_state_covariance_ * F.transpose() + Q;
 
     last_imu_time_ = imu_data->timestamp_;
-    last_imu_data_ = *imu_data;
   }
 
   /**
@@ -382,9 +395,9 @@ private:
 
 private:
   // 重力加速度大小 (单位: m s^-2)
-  value_type gravity_world_norm{9.81};
+  value_type gravity_world_norm_{9.81};
   // 世界坐标系下的重力加速度
-  Vector3 gravity_world{-gravity_world_norm * Vector3::UnitZ()};
+  Vector3 gravity_world_{-gravity_world_norm_ * Vector3::UnitZ()};
   // 对获取的第一帧 IMU 数据作特殊处理
   bool is_initialized_{false};
   // 名义状态 (由于 15 维向量表示四元数不便，直接使用 NominalStateVariable 实例)
