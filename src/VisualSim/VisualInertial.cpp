@@ -35,8 +35,6 @@ using namespace std::chrono_literals;
 #include <rclcpp/time.hpp>
 #include <sensor_msgs/msg/image.hpp>
 
-#include "yaml-cpp/yaml.h"
-
 #include "ErrorStateKalmanFilter.hpp"
 #include "ImuState.hpp"
 #include "euroc_vio/AbstractLoader.hpp"
@@ -47,6 +45,8 @@ using namespace std::chrono_literals;
 #include "DatumFast.hpp"
 #include "DatumImu.hpp"
 #include "DatumTruth.hpp"
+#include "EvoSim3.hpp"
+#include "SensorYaml.hpp"
 
 #define PUBLISH_POSE 1
 #define USE_TRUE_SCALE_IN_FAST 0
@@ -54,166 +54,6 @@ using namespace std::chrono_literals;
 #define DATASOURCE_EUROC 0x01
 #define DATASOURCE_SIM 0x10
 #define DATASOURCE DATASOURCE_SIM
-
-class EvoSim3
-{
-public:
-  EvoSim3() {}
-
-  ~EvoSim3() noexcept
-  {
-    // 删除临时文件
-    std::error_code ec;
-    std::filesystem::remove(path_temp_tum_file_, ec);
-  }
-
-  void Write(std::int64_t timestamp,
-             const Eigen::Vector3d &estimated_position_fast,
-             const Eigen::Quaterniond &estimated_attitude_fast)
-  {
-    std::print(fout_temp_evo_sim3_,
-               // 时间戳
-               "{:020d}, "
-               // 位置
-               "{:.18f}, {:.18f}, {:.18f}, "
-               // 朝向
-               "{:.18f}, {:.18f}, {:.18f}, {:.18f}\n",
-               timestamp, estimated_position_fast.x(),
-               estimated_position_fast.y(), estimated_position_fast.z(),
-               estimated_attitude_fast.w(), estimated_attitude_fast.x(),
-               estimated_attitude_fast.y(), estimated_attitude_fast.z());
-  }
-
-  void Flush(std::string_view path_truth_csv)
-  {
-    fout_temp_evo_sim3_.flush();
-    fout_temp_evo_sim3_.close();
-    std::print(stderr, "[INFO] 估计轨迹已写入 {}\n",
-               std::filesystem::absolute(path_temp_tum_file_).string());
-    // 利用 evo 提供的 SIM(3) 变换调整轨迹
-    std::system(
-        std::format("bash -c '"
-                    "source .venv/bin/activate && "
-                    "yes 'y' | evo_traj euroc {} --ref={} "
-                    "--align --correct_scale --save_as_tum'",
-                    std::filesystem::absolute(path_temp_tum_file_).string(),
-                    std::filesystem::absolute(path_truth_csv).string())
-            .c_str()
-    );
-  }
-
-  template <typename Callback>
-  void Read(Callback callback)
-  {
-    std::ifstream fin_temp_evo_sim3{path_temp_tum_file_};
-    std::string line;
-    size_t line_num{0};
-    while (std::getline(fin_temp_evo_sim3, line))
-    {
-      ++line_num;
-      std::stringstream ss(line);
-      try
-      {
-        // 读取时间戳
-        const std::int64_t timestamp{
-            static_cast<std::int64_t>(
-                AbstractLoader::get_item_as_double(ss, ' ')
-            ), // in nanoseconds
-        };
-        // 读取位置
-        const double px{AbstractLoader::get_item_as_double(ss, ' ')};
-        const double py{AbstractLoader::get_item_as_double(ss, ' ')};
-        const double pz{AbstractLoader::get_item_as_double(ss, ' ')};
-        // 读取朝向
-        const double qw{AbstractLoader::get_item_as_double(ss, ' ')};
-        const double qx{AbstractLoader::get_item_as_double(ss, ' ')};
-        const double qy{AbstractLoader::get_item_as_double(ss, ' ')};
-        const double qz{AbstractLoader::get_item_as_double(ss, ' ')};
-        callback(timestamp, Eigen::Quaterniond{qw, qx, qy, qz},
-                 Eigen::Vector3d{px, py, pz});
-      }
-      catch (const std::runtime_error &ex)
-      {
-        throw std::runtime_error{
-            std::format("Fail to parse line #{} of file '{}':\n{}.\n"
-                        "Triggered by:\n{}",
-                        line_num, path_temp_tum_file_.string(), line, //
-                        ex.what()),
-        };
-      }
-    } // end while
-    std::print(stderr, "[INFO] 估计轨迹已缩放.\n");
-  }
-
-private:
-  // 在工作目录下，用临时文件 path_temp_evo_sim3.tum 存储 TUM 格式的数据
-  // 它是利用 python 模块 evo，经过 SIM(3) 变换得到的相机轨迹数据
-  const std::filesystem::path path_temp_tum_file_{
-      "path_temp_evo_sim3.tum",
-  };
-  std::ofstream fout_temp_evo_sim3_{path_temp_tum_file_};
-};
-
-#pragma region DATA_LOADER
-
-struct SensorConfig
-{
-  // 姿态, 变换矩阵
-  Eigen::Matrix4d transform_matrix_{Eigen::Matrix4d::Identity()};
-  // 陀螺仪白噪声密度 (单位: rad / s / sqrt(Hz))
-  double gyroscope_noise_density_{0.0};
-  // 陀螺仪零偏随机游走 (单位: rad / s^2 / sqrt(Hz))
-  double gyroscope_random_walk_{0.0};
-  // 加速度计白噪声密度 (单位: m / s^2 / sqrt(Hz))
-  double accelerometer_noise_density_{0.0};
-  // 加速度计零偏随机游走 (单位: m / s^3 / sqrt(Hz))
-  double accelerometer_random_walk_{0.0};
-
-  SensorConfig() {}
-
-  SensorConfig(const Eigen::Matrix4d &transform_matrix) :
-    transform_matrix_{transform_matrix}
-  {
-  }
-
-  SensorConfig(Eigen::Matrix4d &&transform_matrix) :
-    transform_matrix_{std::move(transform_matrix)}
-  {
-  }
-
-  ~SensorConfig() = default;
-
-  static std::optional<SensorConfig>
-  ReadSensorYaml(const std::string &path_sensor_yaml)
-  {
-    SensorConfig result_sensor_config;
-    YAML::Node node_sensor{YAML::LoadFile(path_sensor_yaml)};
-    if (node_sensor["sensor_type"]
-        && node_sensor["sensor_type"].as<std::string>() == "imu")
-    {
-      result_sensor_config.gyroscope_noise_density_
-          = node_sensor["gyroscope_noise_density"].as<double>();
-      result_sensor_config.gyroscope_random_walk_
-          = node_sensor["gyroscope_random_walk"].as<double>();
-      result_sensor_config.accelerometer_noise_density_
-          = node_sensor["accelerometer_noise_density"].as<double>();
-      result_sensor_config.accelerometer_random_walk_
-          = node_sensor["accelerometer_random_walk"].as<double>();
-    }
-    if (node_sensor["T_BS"] && node_sensor["T_BS"]["data"])
-    {
-      std::vector<double> T_BS_data{
-          node_sensor["T_BS"]["data"].as<std::vector<double>>()
-      };
-      Eigen::Map<Eigen::Matrix4d> T_BS_mat{T_BS_data.data()};
-      result_sensor_config.transform_matrix_ = std::move(T_BS_mat);
-      return result_sensor_config;
-    }
-    return std::nullopt;
-  }
-};
-
-#pragma endregion
 
 /**
  * @brief 从指定文件中，读取角位移向量和单位化平移向量，通过一阶积分计算姿态、轨迹
@@ -296,9 +136,9 @@ private:
   std::vector<DatumFast> data_fast_{};
   std::vector<DatumImu> data_imu_{};
   std::vector<DatumTruth> data_truth_{};
-  SensorConfig sensor_config_cam0_{};
-  SensorConfig sensor_config_imu0_{};
-  SensorConfig sensor_config_truth_{};
+  SensorYaml sensor_config_cam0_{};
+  SensorYaml sensor_config_imu0_{};
+  SensorYaml sensor_config_truth_{};
 
   // 引入 ESKF 松耦合姿态解算器，替代原本精度较低的 opencv 线性卡尔曼解算模型
   using ESKF = ErrorStateKalmanFilter<double>;
@@ -722,9 +562,7 @@ private:
       };
       // 位置变化量
       Eigen::Vector3d delta_position{
-          (estimated_linear_velocity_imu
-           + 0.5 * delta_velocity)
-              * dt,
+          (estimated_linear_velocity_imu + 0.5 * delta_velocity) * dt,
       };
 
       // 更新位置
@@ -1358,7 +1196,7 @@ public:
       throw std::runtime_error{std::format("FileNotFound: {}!", path_obj)};
     }
 
-    auto opt_sensor_config_cam0{SensorConfig::ReadSensorYaml(path_cam0_yaml)};
+    auto opt_sensor_config_cam0{SensorYaml::ReadSensorYaml(path_cam0_yaml)};
     if (opt_sensor_config_cam0.has_value())
     {
       sensor_config_cam0_ = std::move(opt_sensor_config_cam0.value());
@@ -1390,7 +1228,7 @@ public:
       throw std::runtime_error{std::format("Fail to parse {}!",
                                            path_cam0_yaml)};
     }
-    auto opt_sensor_config_imu0{SensorConfig::ReadSensorYaml(path_imu_yaml)};
+    auto opt_sensor_config_imu0{SensorYaml::ReadSensorYaml(path_imu_yaml)};
     if (opt_sensor_config_imu0.has_value())
     {
       sensor_config_imu0_ = std::move(opt_sensor_config_imu0.value());
@@ -1421,7 +1259,7 @@ public:
     {
       throw std::runtime_error{std::format("Fail to parse {}!", path_imu_yaml)};
     }
-    auto opt_sensor_config_truth{SensorConfig::ReadSensorYaml(path_truth_yaml)};
+    auto opt_sensor_config_truth{SensorYaml::ReadSensorYaml(path_truth_yaml)};
     if (opt_sensor_config_truth.has_value())
     {
       sensor_config_truth_ = std::move(opt_sensor_config_truth.value());
