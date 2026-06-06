@@ -339,7 +339,7 @@ private:
                           estimated_attitude_fast);
     } // end for
 
-    evo_sim3_fast.Flush(path_truth_csv_);
+    evo_sim3_fast.TransformSim3(path_truth_csv_);
 
     evo_sim3_fast.Read(
         [this](std::int64_t timestamp, const Eigen::Quaterniond &attitude,
@@ -1117,7 +1117,7 @@ private:
       }
     } // end for
 
-    evo_sim3_fuse.Flush(path_truth_csv_);
+    evo_sim3_fuse.TransformSim3(path_truth_csv_);
 
     evo_sim3_fuse.Read(
         [this](std::int64_t timestamp, const Eigen::Quaterniond &attitude,

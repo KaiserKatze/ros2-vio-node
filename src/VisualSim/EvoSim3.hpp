@@ -51,7 +51,11 @@ public:
                estimated_attitude_fast.y(), estimated_attitude_fast.z());
   }
 
-  void Flush(std::string_view path_truth_csv)
+  /**
+   * @brief 根据给定的真实轨迹，对估计轨迹进行 SIM(3) 变换
+   * @param path_truth_csv 真实轨迹
+   */
+  void TransformSim3(std::string_view path_truth_csv)
   {
     fout_temp_evo_sim3_.flush();
     fout_temp_evo_sim3_.close();
