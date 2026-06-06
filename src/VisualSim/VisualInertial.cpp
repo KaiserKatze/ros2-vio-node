@@ -49,7 +49,6 @@ using namespace std::chrono_literals;
 #include "SensorYaml.hpp"
 
 #define PUBLISH_POSE 1
-#define USE_TRUE_SCALE_IN_FAST 0
 
 #define DATASOURCE_EUROC 0x01
 #define DATASOURCE_SIM 0x10
@@ -65,6 +64,7 @@ struct VisualInertial : public rclcpp::Node
 private:
 #pragma region PRIVATE_MEMBER_VARIABLES
 
+  bool use_true_translation_in_fast_{false};
   bool use_true_init_pose_{false};
 
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_fast_{
@@ -305,9 +305,6 @@ private:
     for (size_t i = 0; i + 1 < data_fast_.size(); ++i)
     {
       const DatumFast &datum_fast{data_fast_[i]};
-#if (USE_TRUE_SCALE_IN_FAST)
-      const DatumFast &datum_fast_next{data_fast_[i + 1]};
-#endif
       const Eigen::Quaterniond delta_rotation{
           Eigen::AngleAxisd{
               datum_fast.angular_displacement_.norm(),
@@ -316,18 +313,19 @@ private:
       };
 
       Eigen::Vector3d delta_position{datum_fast.normalized_translation_};
-#if (USE_TRUE_SCALE_IN_FAST)
-      // 利用插值查找函数 Interpolate 获取 delta_position 对应的真值的范数
-      Eigen::Vector3d true_old_position{
-          Interpolate(data_truth_, datum_fast.timestamp_).position_,
-      };
-      Eigen::Vector3d true_new_position{
-          // 时间戳 + 50 毫秒
-          Interpolate(data_truth_, datum_fast_next.timestamp_).position_,
-      };
-      delta_position
-          = (true_new_position - true_old_position).norm() * delta_position;
-#endif
+      if (use_true_translation_in_fast_)
+      {
+        const DatumFast &datum_fast_next{data_fast_[i + 1]};
+        // 利用插值查找函数 Interpolate 获取 delta_position 对应的真值的范数
+        Eigen::Vector3d true_old_position{
+            Interpolate(data_truth_, datum_fast.timestamp_).position_,
+        };
+        Eigen::Vector3d true_new_position{
+            // 时间戳 + 50 毫秒
+            Interpolate(data_truth_, datum_fast_next.timestamp_).position_,
+        };
+        delta_position = true_new_position - true_old_position;
+      }
 
       // 因为数据集 path_estimation_csv 提供的旋转向量、平移向量是在相机坐标系下的表示
       // 所以应该使用以下状态更新方程
@@ -1131,6 +1129,10 @@ private:
 public:
   VisualInertial() : Node("StereoSlam1")
   {
+    this->declare_parameter("use_true_translation_in_fast", false);
+    use_true_translation_in_fast_
+        = this->get_parameter("use_true_translation_in_fast").as_bool();
+
     this->declare_parameter("use_true_init_pose", false);
     use_true_init_pose_ = this->get_parameter("use_true_init_pose").as_bool();
 
