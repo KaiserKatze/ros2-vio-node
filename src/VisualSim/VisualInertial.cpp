@@ -1026,6 +1026,8 @@ private:
    */
   void EstimateFuse()
   {
+    EvoSim3 evo_sim3_fuse{};
+
 #pragma region 建立事件序列
 
     // 定义离线统一的时间轴事件结构体，用于交织对齐异步的视觉序列与高频 IMU 序列
@@ -1110,11 +1112,18 @@ private:
         // 获取融合后的最新名义状态
         auto state{filter_.GetNominalState()};
 
-        // 将离线同步得到的融合位姿有序加入轨迹容器，使得两路轨迹数据帧总数与索引保持绝对等同，规避崩溃
-        PushPose(msg_path_fuse_, datum_fast.timestamp_, state.attitude_,
-                 state.position_);
+        evo_sim3_fuse.Write(datum_fast.timestamp_, state.position_,
+                            state.attitude_);
       }
-    }
+    } // end for
+
+    evo_sim3_fuse.Flush(path_truth_csv_);
+
+    evo_sim3_fuse.Read(
+        [this](std::int64_t timestamp, const Eigen::Quaterniond &attitude,
+               const Eigen::Vector3d &position)
+        { this->PushPose(this->msg_path_fuse_, timestamp, attitude, position); }
+    );
   }
 
 #pragma endregion
