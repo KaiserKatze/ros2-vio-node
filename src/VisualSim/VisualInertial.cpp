@@ -1261,23 +1261,13 @@ private:
       {
         // 传递高频 IMU 采样数据，执行 ESKF 标称状态前推以及误差状态协方差的时间传播
         const auto &datum_imu{data_imu_[event.index]};
-        typename ESKF::DatumImuImpl imu_data;
-        imu_data.timestamp_           = datum_imu.timestamp_;
-        imu_data.angular_velocity_    = datum_imu.angular_velocity_;
-        imu_data.linear_acceleration_ = datum_imu.linear_acceleration_;
-
-        filter_.ImuUpdate(&imu_data);
+        filter_.ImuUpdate(&datum_imu);
       }
       else
       {
         // 加载当前帧低频单目视觉观测信息并调用 ESKF 的观测融合与后验误差校正
         const auto &datum_fast{data_fast_[event.index]};
-        typename ESKF::DatumFastImpl fast_data;
-        fast_data.timestamp_              = datum_fast.timestamp_;
-        fast_data.angular_displacement_   = datum_fast.angular_displacement_;
-        fast_data.normalized_translation_ = datum_fast.normalized_translation_;
-
-        filter_.MonocularUpdate(&fast_data);
+        filter_.MonocularUpdate(&datum_fast);
 
         // 获取融合后的最新名义状态
         auto state{filter_.GetNominalState()};
