@@ -313,21 +313,24 @@ public:
                                .log();
 
     // 构造 6x15 维稠密卡尔曼观测雅可比阵 H
-    JacobiMeasurement H          = JacobiMeasurement::Zero();
+    JacobiMeasurement H{JacobiMeasurement::Zero()};
     H.template block<3, 3>(0, 0) = Matrix3::Identity();
     H.template block<3, 3>(3, 6) = Matrix3::Identity();
 
     // 观测协方差设定为与视觉前端相称的较高置信度 (1e-4)
-    Eigen::Matrix<value_type, 6, 6> R
-        = Eigen::Matrix<value_type, 6, 6>::Identity() * 1e-4;
+    Eigen::Matrix<value_type, 6, 6> R{
+        Eigen::Matrix<value_type, 6, 6>::Identity() * 1e-4
+    };
 
     // 预测残差协方差阵 S
-    Eigen::Matrix<value_type, 6, 6> S
-        = H * error_state_covariance_ * H.transpose() + R;
+    Eigen::Matrix<value_type, 6, 6> S{
+        H * error_state_covariance_ * H.transpose() + R
+    };
 
     // 求解卡尔曼增益 K (15x6)
-    Eigen::Matrix<value_type, dimErrorState, 6> K
-        = error_state_covariance_ * H.transpose() * S.inverse();
+    Eigen::Matrix<value_type, dimErrorState, 6> K{
+        error_state_covariance_ * H.transpose() * S.inverse()
+    };
 
     // 更新计算后验误差状态
     error_state_ = K * z;
