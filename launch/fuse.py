@@ -33,6 +33,7 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
+                "use_evo_sim3": False,
                 "use_true_translation_in_fast": True,
                 "use_true_init_pose": True,
                 "path_estimation_csv": str(

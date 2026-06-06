@@ -64,6 +64,7 @@ struct VisualInertial : public rclcpp::Node
 private:
 #pragma region PRIVATE_MEMBER_VARIABLES
 
+  bool use_evo_sim3_{false};
   bool use_true_translation_in_fast_{false};
   bool use_true_init_pose_{false};
 
@@ -333,17 +334,31 @@ private:
           = estimated_position_fast + estimated_attitude_fast * delta_position;
       estimated_attitude_fast
           = (estimated_attitude_fast * delta_rotation).normalized();
-      evo_sim3_fast.Write(datum_fast.timestamp_, estimated_position_fast,
-                          estimated_attitude_fast);
+
+      if (use_evo_sim3_)
+      {
+        evo_sim3_fast.Write(datum_fast.timestamp_, estimated_position_fast,
+                            estimated_attitude_fast);
+      }
+      else
+      {
+        PushPose(msg_path_fast_, datum_fast.timestamp_, estimated_attitude_fast,
+                 estimated_position_fast);
+      }
     } // end for
 
-    evo_sim3_fast.TransformSim3(path_truth_csv_);
+    if (use_evo_sim3_)
+    {
+      evo_sim3_fast.TransformSim3(path_truth_csv_);
 
-    evo_sim3_fast.Read(
-        [this](std::int64_t timestamp, const Eigen::Quaterniond &attitude,
-               const Eigen::Vector3d &position)
-        { this->PushPose(this->msg_path_fast_, timestamp, attitude, position); }
-    );
+      evo_sim3_fast.Read(
+          [this](std::int64_t timestamp, const Eigen::Quaterniond &attitude,
+                 const Eigen::Vector3d &position)
+          {
+            this->PushPose(this->msg_path_fast_, timestamp, attitude, position);
+          }
+      );
+    }
   }
 
   /**
@@ -1110,18 +1125,31 @@ private:
         // 获取融合后的最新名义状态
         auto state{filter_.GetNominalState()};
 
-        evo_sim3_fuse.Write(datum_fast.timestamp_, state.position_,
-                            state.attitude_);
+        if (use_evo_sim3_)
+        {
+          evo_sim3_fuse.Write(datum_fast.timestamp_, state.position_,
+                              state.attitude_);
+        }
+        else
+        {
+          PushPose(msg_path_fuse_, datum_fast.timestamp_, state.attitude_,
+                   state.position_);
+        }
       }
     } // end for
 
-    evo_sim3_fuse.TransformSim3(path_truth_csv_);
+    if (use_evo_sim3_)
+    {
+      evo_sim3_fuse.TransformSim3(path_truth_csv_);
 
-    evo_sim3_fuse.Read(
-        [this](std::int64_t timestamp, const Eigen::Quaterniond &attitude,
-               const Eigen::Vector3d &position)
-        { this->PushPose(this->msg_path_fuse_, timestamp, attitude, position); }
-    );
+      evo_sim3_fuse.Read(
+          [this](std::int64_t timestamp, const Eigen::Quaterniond &attitude,
+                 const Eigen::Vector3d &position)
+          {
+            this->PushPose(this->msg_path_fuse_, timestamp, attitude, position);
+          }
+      );
+    }
   }
 
 #pragma endregion
