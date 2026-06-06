@@ -15,6 +15,9 @@
 
 #include "euroc_vio/Interpolation.hpp"
 
+#include "DatumFast.hpp"
+#include "DatumImu.hpp"
+
 /**
  * @brief 基于松耦合的误差状态卡尔曼滤波，为短航程无人机提供姿态解算功能
  */
@@ -64,32 +67,12 @@ public:
 
   // 目前不考虑将重力加速度加入状态空间!
 
-  struct DatumImuImpl
-  {
-    // 时间戳 (单位: 纳秒)
-    std::int64_t timestamp_;
-    // 角速度向量 (单位: rad s^-1)
-    Vector3 angular_velocity_;
-    // 线加速度向量 (单位: m s^-2)
-    Vector3 linear_acceleration_;
-  };
-
-  struct DatumFastImpl
-  {
-    // 时间戳 (单位: 纳秒)
-    std::int64_t timestamp_;
-    // 角位移向量 (单位: rad)
-    Vector3 angular_displacement_;
-    // 单位化平移向量 (无单位)
-    Vector3 normalized_translation_;
-  };
-
 #pragma endregion
 
 #pragma region 私有类型
 
 private:
-  // 具体取值由 DatumFastImpl 中的成员变量的种类及数量决定
+  // 具体取值由 DatumFast 中的成员变量的种类及数量决定
   static constexpr int dimMonocularData{2 * 3};
 
   // 具体取值由 ErrorStateVariable 中的成员变量的种类及数量决定
@@ -173,7 +156,7 @@ public:
    * @param imu_data IMU 数据提供的角速度向量和线加速度向量
    * @note 调用者必须保证 IMU 数据是在“体坐标系”下的表示
    */
-  void ImuUpdate(const DatumImuImpl *imu_data)
+  void ImuUpdate(const DatumImu *imu_data)
   {
     if (imu_data == nullptr)
     {
@@ -280,7 +263,7 @@ public:
    * @param monocular_data 单目视觉数据提供的角位移向量和单位化平移向量
    * @note 调用者必须保证单目视觉数据是在“体坐标系”下的表示
    */
-  void MonocularUpdate(const DatumFastImpl *monocular_data)
+  void MonocularUpdate(const DatumFast *monocular_data)
   {
     if (monocular_data == nullptr)
     {
@@ -434,7 +417,7 @@ private:
   Vector3 visual_position_{Vector3::Zero()};
   Quaternion visual_attitude_{Quaternion::Identity()};
   // 上一帧 IMU 数据的缓存结构
-  DatumImuImpl last_imu_data_{};
+  DatumImu last_imu_data_{};
 
 #pragma endregion
 };
