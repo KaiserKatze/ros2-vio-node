@@ -306,7 +306,9 @@ private:
     for (size_t i = 0; i + 1 < data_fast_.size(); ++i)
     {
       const DatumFast &datum_fast{data_fast_[i]};
-      const auto angular_displacement_norm{angular_displacement_.norm()};
+      const auto angular_displacement_norm{
+          datum_fast.angular_displacement_.norm(),
+      };
       const Eigen::Quaterniond delta_rotation{
           Eigen::AngleAxisd{
               angular_displacement_norm,
