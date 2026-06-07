@@ -42,15 +42,19 @@ public:
                             const Eigen::Vector3d &estimated_linear_velocity)
   {
     const DatumTruth datum_true{Interpolate(data_truth_, timestamp)};
+    // 局部轴角误差 (估计当前局部坐标系下，需要绕哪个轴、转动多少角度才能对齐到真实姿态)
     const Eigen::Vector3d angle_error{
-        (Sophus::SO3d{datum_true.attitude_}.inverse() * estimated_attitude)
-            .log()
+        (estimated_attitude.inverse() * Sophus::SO3d{datum_true.attitude_})
+            .log(),
     };
     const Eigen::Vector3d position_error{
         (estimated_position - datum_true.position_).cwiseAbs()
     };
     const Eigen::Vector3d linear_velocity_error{
         (estimated_linear_velocity - datum_true.velocity_).cwiseAbs()
+    };
+    const Eigen::Quaterniond estimated_quaternion{
+        estimated_attitude.unit_quaternion()
     };
     // 更新统计信息
     std::print(
@@ -69,7 +73,7 @@ public:
         "{:.18f},{:.18f},{:.18f},"
         // 线速度绝对误差
         "{:.18f},{:.18f},{:.18f}\n",
-        datum_imu.timestamp_,          // 时间戳
+        timestamp,                     // 时间戳
         estimated_quaternion.w(),      // 朝向
         estimated_quaternion.x(),      //
         estimated_quaternion.y(),      //

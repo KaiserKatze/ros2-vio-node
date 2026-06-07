@@ -305,7 +305,7 @@ private:
     Eigen::Quaterniond estimated_attitude_fast{Eigen::Quaterniond::Identity()};
 
     // 统计信息
-    ErrorEvaluation err_eval_fast{"VisualInertial-Fast-Error.csv"};
+    ErrorEvaluation err_eval_fast{"VisualInertial-Fast-Error.csv", data_truth_};
 
     for (size_t i = 0; i + 1 < data_fast_.size(); ++i)
     {
@@ -343,10 +343,12 @@ private:
       estimated_attitude_fast
           = (estimated_attitude_fast * delta_rotation).normalized();
 
-      err_eval_fast.WriteErrorEvaluation(datum_fast.timestamp_,   //
-                                         estimated_attitude_fast, //
-                                         estimated_position_fast, //
-                                         Eigen::Vector3d::Zero());
+      err_eval_fast.WriteErrorEvaluation(
+          datum_fast.timestamp_,                 //
+          Sophus::SO3d{estimated_attitude_fast}, //
+          estimated_position_fast,               //
+          Eigen::Vector3d::Zero()
+      );
 
       if (use_evo_sim3_)
       {
@@ -778,7 +780,8 @@ private:
     }
 
     // 统计信息 (记录使用龙格贝塔法估计位置、线速度产生的绝对误差)
-    ErrorEvaluation err_eval_rk4{"VisualInertial-Imu-RK4-Error.csv"};
+    ErrorEvaluation err_eval_rk4{"VisualInertial-Imu-RK4-Error.csv",
+                                 data_truth_};
 
     DatumImu datum_prev;
     for (bool first_loop{true}; const DatumImu &datum_rk : data_imu_)
@@ -788,9 +791,9 @@ private:
         datum_prev = datum_rk;
         first_loop = false;
 
-        err_eval_rk4.WriteErrorEvaluation(datum_rk.timestamp_, //
-                                          state.GetAttitude(), //
-                                          state.GetPosition(), //
+        err_eval_rk4.WriteErrorEvaluation(datum_rk.timestamp_,               //
+                                          Sophus::SO3d{state.GetAttitude()}, //
+                                          state.GetPosition(),               //
                                           state.GetVelocity());
 
         continue;
@@ -811,9 +814,9 @@ private:
       PushPose(msg_path_rk4_, datum_rk.timestamp_, state.GetAttitude(),
                state.GetPosition());
 
-      err_eval_rk4.WriteErrorEvaluation(datum_rk.timestamp_, //
-                                        state.GetAttitude(), //
-                                        state.GetPosition(), //
+      err_eval_rk4.WriteErrorEvaluation(datum_rk.timestamp_,               //
+                                        Sophus::SO3d{state.GetAttitude()}, //
+                                        state.GetPosition(),               //
                                         state.GetVelocity());
 
       datum_prev = datum_rk;
