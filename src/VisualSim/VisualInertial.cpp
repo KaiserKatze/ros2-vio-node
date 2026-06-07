@@ -45,6 +45,7 @@ using namespace std::chrono_literals;
 #include "DatumFast.hpp"
 #include "DatumImu.hpp"
 #include "DatumTruth.hpp"
+#include "ErrorEvaluation.hpp"
 #include "EvoSim3.hpp"
 #include "SensorYaml.hpp"
 
@@ -455,18 +456,8 @@ private:
     }
 
     // 统计信息 (记录使用欧拉法估计位置、线速度产生的绝对误差)
-    std::filesystem::path path_estimation_error{"VisualInertial-Imu-Error.csv"};
-    std::ofstream fout_imu_euler_estimation_error(path_estimation_error);
-    std::print(fout_imu_euler_estimation_error,
-               "time [s],"
-               "qw [],qx [],qy [],qz[],"
-               "x [m],y [m],z [m],"
-               "vx [m s^-1],vy [m s^-1],vz [m s^-1],"
-               "ax [m s^-2], ay [m s^-2], az [m s^-2],"
-               "dvx [m s^-1],dvy [m s^-1],dvz [m s^-1],"
-               "dx [m s^-1],dy [m s^-1],dz [m s^-1],"
-               "err(x) [m],err(y) [m],err(z) [m],"
-               "err(vx) [m s^-1],err(vy) [m s^-1],err(vz) [m s^-1]\n");
+    ErrorEvaluation err_eval_imu{"VisualInertial-Imu-Euler-Error.csv",
+                                 data_truth_};
 
     DatumImu datum_prev;
     for (bool first_loop{true}; const DatumImu &datum_imu : data_imu_)
@@ -476,57 +467,10 @@ private:
         datum_prev = datum_imu;
         first_loop = false;
 
-        const auto datum_true{Interpolate(data_truth_, datum_imu.timestamp_)};
-        Eigen::Vector3d true_position{datum_true.position_};
-        Eigen::Vector3d true_velocity{datum_true.velocity_};
-        // 更新统计信息
-        std::print(
-            fout_imu_euler_estimation_error,
-            // 时间戳
-            "{:020d}, "
-            // 朝向
-            "{:.18f},{:.18f},{:.18f},{:.18f},"
-            // 位置
-            "{:.18f},{:.18f},{:.18f},"
-            // 线速度
-            "{:.18f},{:.18f},{:.18f},"
-            // 线加速度
-            "{:.18f},{:.18f},{:.18f},"
-            // 线速度变化量
-            "{:.18f},{:.18f},{:.18f},"
-            // 位置变化量
-            "{:.18f},{:.18f},{:.18f},"
-            // 位置绝对误差
-            "{:.18f},{:.18f},{:.18f},"
-            // 线速度绝对误差
-            "{:.18f},{:.18f},{:.18f}\n",
-            datum_imu.timestamp_,                         //
-            estimated_attitude_imu.unit_quaternion().w(), //
-            estimated_attitude_imu.unit_quaternion().x(), //
-            estimated_attitude_imu.unit_quaternion().y(), //
-            estimated_attitude_imu.unit_quaternion().z(), //
-            estimated_position_imu.x(),                   //
-            estimated_position_imu.y(),                   //
-            estimated_position_imu.z(),                   //
-            estimated_linear_velocity_imu.x(),            //
-            estimated_linear_velocity_imu.y(),            //
-            estimated_linear_velocity_imu.z(),            //
-            datum_imu.linear_acceleration_.x(),           //
-            datum_imu.linear_acceleration_.y(),           //
-            datum_imu.linear_acceleration_.z(),           //
-            0.0,                                          //
-            0.0,                                          //
-            0.0,                                          //
-            0.0,                                          //
-            0.0,                                          //
-            0.0,                                          //
-            std::abs(estimated_position_imu.x() - true_position.x()),
-            std::abs(estimated_position_imu.y() - true_position.y()),
-            std::abs(estimated_position_imu.z() - true_position.z()),
-            std::abs(estimated_linear_velocity_imu.x() - true_velocity.x()),
-            std::abs(estimated_linear_velocity_imu.y() - true_velocity.y()),
-            std::abs(estimated_linear_velocity_imu.z() - true_velocity.z())
-        );
+        err_eval_imu.WriteErrorEvaluation(datum_imu.timestamp_,   //
+                                          estimated_attitude_imu, //
+                                          estimated_position_imu, //
+                                          estimated_linear_velocity_imu);
 
         continue;
       }
@@ -593,64 +537,13 @@ private:
                estimated_attitude_imu.unit_quaternion(),
                estimated_position_imu);
 
-      const auto datum_true{Interpolate(data_truth_, datum_imu.timestamp_)};
-      Eigen::Vector3d true_position{datum_true.position_};
-      Eigen::Vector3d true_velocity{datum_true.velocity_};
-      // 更新统计信息
-      std::print(
-          fout_imu_euler_estimation_error,
-          // 时间戳
-          "{:020d}, "
-          // 朝向
-          "{:.18f},{:.18f},{:.18f},{:.18f},"
-          // 位置
-          "{:.18f},{:.18f},{:.18f},"
-          // 线速度
-          "{:.18f},{:.18f},{:.18f},"
-          // 线加速度
-          "{:.18f},{:.18f},{:.18f},"
-          // 线速度变化量
-          "{:.18f},{:.18f},{:.18f},"
-          // 位置变化量
-          "{:.18f},{:.18f},{:.18f},"
-          // 位置绝对误差
-          "{:.18f},{:.18f},{:.18f},"
-          // 线速度绝对误差
-          "{:.18f},{:.18f},{:.18f}\n",
-          datum_imu.timestamp_,                         //
-          estimated_attitude_imu.unit_quaternion().w(), //
-          estimated_attitude_imu.unit_quaternion().x(), //
-          estimated_attitude_imu.unit_quaternion().y(), //
-          estimated_attitude_imu.unit_quaternion().z(), //
-          estimated_position_imu.x(),                   //
-          estimated_position_imu.y(),                   //
-          estimated_position_imu.z(),                   //
-          estimated_linear_velocity_imu.x(),            //
-          estimated_linear_velocity_imu.y(),            //
-          estimated_linear_velocity_imu.z(),            //
-          datum_imu.linear_acceleration_.x(),           //
-          datum_imu.linear_acceleration_.y(),           //
-          datum_imu.linear_acceleration_.z(),           //
-          delta_velocity.x(),                           //
-          delta_velocity.y(),                           //
-          delta_velocity.z(),                           //
-          delta_position.x(),                           //
-          delta_position.y(),                           //
-          delta_position.z(),                           //
-          std::abs(estimated_position_imu.x() - true_position.x()),
-          std::abs(estimated_position_imu.y() - true_position.y()),
-          std::abs(estimated_position_imu.z() - true_position.z()),
-          std::abs(estimated_linear_velocity_imu.x() - true_velocity.x()),
-          std::abs(estimated_linear_velocity_imu.y() - true_velocity.y()),
-          std::abs(estimated_linear_velocity_imu.z() - true_velocity.z())
-      );
+      err_eval_imu.WriteErrorEvaluation(datum_imu.timestamp_,   //
+                                        estimated_attitude_imu, //
+                                        estimated_position_imu, //
+                                        estimated_linear_velocity_imu);
 
       datum_prev = datum_imu;
     } // end for
-
-    fout_imu_euler_estimation_error.flush();
-    std::print(stderr, "误差评估文件已写入 {}\n",
-               std::filesystem::absolute(path_estimation_error).string());
   }
 
   void PreintegrateImu()
@@ -877,18 +770,7 @@ private:
     }
 
     // 统计信息 (记录使用龙格贝塔法估计位置、线速度产生的绝对误差)
-    std::filesystem::path path_estimation_error{
-        "VisualInertial-Imu-RK4-Error.csv"
-    };
-    std::ofstream fout_rk_estimation_error(path_estimation_error);
-    std::print(fout_rk_estimation_error,
-               "time [s],"
-               "qw [],qx [],qy [],qz[],"
-               "x [m],y [m],z [m],"
-               "vx [m s^-1],vy [m s^-1],vz [m s^-1],"
-               "ax [m s^-2], ay [m s^-2], az [m s^-2],"
-               "err(x) [m],err(y) [m],err(z) [m],"
-               "err(vx) [m s^-1],err(vy) [m s^-1],err(vz) [m s^-1]\n");
+    ErrorEvaluation err_eval_rk4{"VisualInertial-Imu-RK4-Error.csv"};
 
     DatumImu datum_prev;
     for (bool first_loop{true}; const DatumImu &datum_rk : data_imu_)
@@ -898,45 +780,10 @@ private:
         datum_prev = datum_rk;
         first_loop = false;
 
-        const auto datum_true{Interpolate(data_truth_, datum_rk.timestamp_)};
-        Eigen::Vector3d true_position{datum_true.position_};
-        Eigen::Vector3d true_velocity{datum_true.velocity_};
-        // 更新统计信息
-        std::print(fout_rk_estimation_error,
-                   // 时间戳
-                   "{:020d}, "
-                   // 朝向
-                   "{:.18f},{:.18f},{:.18f},{:.18f},"
-                   // 位置
-                   "{:.18f},{:.18f},{:.18f},"
-                   // 线速度
-                   "{:.18f},{:.18f},{:.18f},"
-                   // 线加速度
-                   "{:.18f},{:.18f},{:.18f},"
-                   // 位置绝对误差
-                   "{:.18f},{:.18f},{:.18f},"
-                   // 线速度绝对误差
-                   "{:.18f},{:.18f},{:.18f}\n",
-                   datum_rk.timestamp_,               //
-                   state.GetAttitude().w(),           //
-                   state.GetAttitude().x(),           //
-                   state.GetAttitude().y(),           //
-                   state.GetAttitude().z(),           //
-                   state.GetPosition().x(),           //
-                   state.GetPosition().y(),           //
-                   state.GetPosition().z(),           //
-                   state.GetVelocity().x(),           //
-                   state.GetVelocity().y(),           //
-                   state.GetVelocity().z(),           //
-                   datum_rk.linear_acceleration_.x(), //
-                   datum_rk.linear_acceleration_.y(), //
-                   datum_rk.linear_acceleration_.z(), //
-                   std::abs(state.GetPosition().x() - true_position.x()),
-                   std::abs(state.GetPosition().y() - true_position.y()),
-                   std::abs(state.GetPosition().z() - true_position.z()),
-                   std::abs(state.GetVelocity().x() - true_velocity.x()),
-                   std::abs(state.GetVelocity().y() - true_velocity.y()),
-                   std::abs(state.GetVelocity().z() - true_velocity.z()));
+        err_eval_rk4.WriteErrorEvaluation(datum_rk.timestamp_, //
+                                          state.GetAttitude(), //
+                                          state.GetPosition(), //
+                                          state.GetVelocity());
 
         continue;
       }
@@ -956,52 +803,13 @@ private:
       PushPose(msg_path_rk4_, datum_rk.timestamp_, state.GetAttitude(),
                state.GetPosition());
 
-      const auto datum_true{Interpolate(data_truth_, datum_rk.timestamp_)};
-      Eigen::Vector3d true_position{datum_true.position_};
-      Eigen::Vector3d true_velocity{datum_true.velocity_};
-      // 更新统计信息
-      std::print(fout_rk_estimation_error,
-                 // 时间戳
-                 "{:020d}, "
-                 // 朝向
-                 "{:.18f},{:.18f},{:.18f},{:.18f},"
-                 // 位置
-                 "{:.18f},{:.18f},{:.18f},"
-                 // 线速度
-                 "{:.18f},{:.18f},{:.18f},"
-                 // 线加速度
-                 "{:.18f},{:.18f},{:.18f},"
-                 // 位置绝对误差
-                 "{:.18f},{:.18f},{:.18f},"
-                 // 线速度绝对误差
-                 "{:.18f},{:.18f},{:.18f}\n",
-                 datum_rk.timestamp_,               //
-                 state.GetAttitude().w(),           //
-                 state.GetAttitude().x(),           //
-                 state.GetAttitude().y(),           //
-                 state.GetAttitude().z(),           //
-                 state.GetPosition().x(),           //
-                 state.GetPosition().y(),           //
-                 state.GetPosition().z(),           //
-                 state.GetVelocity().x(),           //
-                 state.GetVelocity().y(),           //
-                 state.GetVelocity().z(),           //
-                 datum_rk.linear_acceleration_.x(), //
-                 datum_rk.linear_acceleration_.y(), //
-                 datum_rk.linear_acceleration_.z(), //
-                 std::abs(state.GetPosition().x() - true_position.x()),
-                 std::abs(state.GetPosition().y() - true_position.y()),
-                 std::abs(state.GetPosition().z() - true_position.z()),
-                 std::abs(state.GetVelocity().x() - true_velocity.x()),
-                 std::abs(state.GetVelocity().y() - true_velocity.y()),
-                 std::abs(state.GetVelocity().z() - true_velocity.z()));
+      err_eval_rk4.WriteErrorEvaluation(datum_rk.timestamp_, //
+                                        state.GetAttitude(), //
+                                        state.GetPosition(), //
+                                        state.GetVelocity());
 
       datum_prev = datum_rk;
     } // end for
-
-    fout_rk_estimation_error.flush();
-    std::print(stderr, "误差评估文件已写入 {}\n",
-               std::filesystem::absolute(path_estimation_error).string());
   }
 
   /**
