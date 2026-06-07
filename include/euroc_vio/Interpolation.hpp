@@ -6,10 +6,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <meta>
+#include <print>
 #include <stdexcept>
 
 // 辅助工具：判断一个反射类型是否是特定的 Eigen 类型
-template <typename T> consteval bool is_type_of(std::meta::info member_reflect)
+template <typename T>
+consteval bool is_type_of(std::meta::info member_reflect)
 {
   return std::meta::type_of(member_reflect) == ^^T;
 }
@@ -25,10 +27,18 @@ static DataType Interpolate(const std::vector<DataType> &data,
   }
   if (timestamp <= data.front().timestamp_)
   {
+    if (timestamp < data.front().timestamp_)
+    {
+      std::print(stderr, "[WARN] 插值时间戳早于真实数据!\n");
+    }
     return data.front();
   }
   if (timestamp >= data.back().timestamp_)
   {
+    if (timestamp > data.back().timestamp_)
+    {
+      std::print(stderr, "[WARN] 插值时间戳晚于真实数据!\n");
+    }
     return data.back();
   }
 
@@ -60,7 +70,8 @@ static DataType Interpolate(const std::vector<DataType> &data,
   DataType interp;
   template for (constexpr auto /* std::meta::info */ member :
                 std::define_static_array(std::meta::nonstatic_data_members_of(
-                    ^^DataType, std::meta::access_context::current())))
+                    ^^DataType, std::meta::access_context::current()
+                )))
   {
     // 如果成员是时间戳本身，直接赋值为目标时间戳
     if constexpr (std::meta::identifier_of(member) == "timestamp_")
