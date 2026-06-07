@@ -25,13 +25,16 @@
 class EvoSim3
 {
 public:
-  EvoSim3() {}
+  EvoSim3(bool do_clean_up = true) : do_clean_up_{do_clean_up} {}
 
   ~EvoSim3() noexcept
   {
     // 删除临时文件
     std::error_code ec;
-    std::filesystem::remove(path_temp_tum_file_, ec);
+    if (do_clean_up_)
+    {
+      std::filesystem::remove(path_temp_tum_file_, ec);
+    }
   }
 
   void Write(std::int64_t timestamp,
@@ -117,6 +120,7 @@ public:
   }
 
 private:
+  bool do_clean_up_{true};
   // 在工作目录下，用临时文件 path_temp_evo_sim3.tum 存储 TUM 格式的数据
   // 它是利用 python 模块 evo，经过 SIM(3) 变换得到的相机轨迹数据
   const std::filesystem::path path_temp_tum_file_{
