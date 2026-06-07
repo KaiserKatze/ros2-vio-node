@@ -248,7 +248,7 @@ ament_target_dependencies(VisualInertial
 target_link_libraries(VisualInertial
   Eigen3::Eigen
   ${OpenCV_LIBS}
-  yaml-cpp
+  yaml-cpp::yaml-cpp
 )
 target_compile_options(VisualInertial PRIVATE -std=c++26 -freflection)
 

@@ -27,6 +27,8 @@ def generate_launch_description():
     path_imu_yaml = str(imu0_path / "sensor.yaml")
     path_truth_csv = str(truth_path / "data.csv")
     path_truth_yaml = str(truth_path / "sensor.yaml")
+    # 使用 GDB 查错
+    prefix = ["xterm -e gdb -ex run --args"]
 
     params = {
         # 是否使用 Python 工具 evo 实施 Sim(3) 变换
@@ -55,6 +57,7 @@ def generate_launch_description():
         name="VisualInertial",
         output="screen",
         parameters=[params],
+        prefix=prefix,  # 关键配置
     )
 
     rviz_node = Node(
