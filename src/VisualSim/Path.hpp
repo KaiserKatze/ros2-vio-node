@@ -183,7 +183,7 @@ public:
   value_type GetDefaultDuration() const override
   {
     const value_type distance{(position_end_ - position_start_).norm()};
-    if (std::abs(linear_acceleration_norm_) < 1e-6)
+    if (linear_acceleration_norm_ < 1e-6)
     { // 当线加速度范数足够小时，视作匀速直线运动
       return distance / linear_velocity_start_norm_;
     }

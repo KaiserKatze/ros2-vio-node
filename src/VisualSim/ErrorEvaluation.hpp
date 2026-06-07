@@ -32,7 +32,7 @@ public:
   ~ErrorEvaluation()
   {
     fout_err_eval_.flush();
-    std::print(stderr, "误差评估文件已写入 {}\n",
+    std::print(stderr, "[INFO] 误差评估文件已写入 {}\n",
                std::filesystem::absolute(path_err_eval_).string());
   }
 

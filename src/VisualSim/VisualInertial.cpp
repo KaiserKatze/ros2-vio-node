@@ -316,7 +316,7 @@ private:
           datum_fast.angular_displacement_.norm(),
       };
       Eigen::Quaterniond delta_rotation{Eigen::Quaterniond::Identity()};
-      if (std::abs(angular_displacement_norm) > 1e-6)
+      if (angular_displacement_norm > 1e-6)
       {
         delta_rotation = Eigen::AngleAxisd{
             angular_displacement_norm,

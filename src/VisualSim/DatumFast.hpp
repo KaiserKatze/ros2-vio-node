@@ -46,6 +46,8 @@ using namespace std::chrono_literals;
 #include "euroc_vio/main.h"
 #include "zupt.hpp"
 
+#define DEBUG 1
+
 struct DatumFast
 {
   std::int64_t timestamp_;
@@ -62,6 +64,10 @@ struct DatumFast
 
     std::ifstream file(path_estimation_csv);
     std::string line;
+
+#if (DEBUG)
+    std::ofstream log_reflect{"Reflect-DatumFast.csv"};
+#endif
 
     // 跳过表头
     std::getline(file, line);
@@ -85,12 +91,21 @@ struct DatumFast
         const double ty{AbstractLoader::get_item_as_double(ss)};
         const double tz{AbstractLoader::get_item_as_double(ss)};
 
-        const DatumFast datum_fast{
-            timestamp,
+        const Eigen::Vector3d wt{
             sensor_rotation_wrt_body * Eigen::Vector3d{wxt, wyt, wzt},
+        };
+        const Eigen::Vector3d t{
             sensor_rotation_wrt_body * Eigen::Vector3d{tx, ty, tz},
         };
+
+        const DatumFast datum_fast{timestamp, wt, t};
         data.push_back(datum_fast);
+
+#if (DEBUG)
+        std::print(log_reflect,
+                   "{:.6f}, {:.6f}, {:.6f}, {:.6f}, {:.6f}, {:.6f}\n", //
+                   wt.x(), wt.y(), wt.z(), t.x(), t.y(), t.z());
+#endif
       }
       catch (const std::runtime_error &ex)
       {
@@ -102,6 +117,11 @@ struct DatumFast
         };
       }
     } // end while
+
+#if (DEBUG)
+    log_reflect.flush();
+    std::print(stderr, "[DEBUG] 回写世界坐标系下的角位移和单位化平移向量 ...\n");
+#endif
     return data;
   }
 };
