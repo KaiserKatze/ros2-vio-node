@@ -95,7 +95,7 @@ struct VisualSim
     // 2. 匀加速直线运动状态
     // 3. 匀速圆周运动状态
 
-    const value_type radius{static_cast<value_type>(0.45)
+    const value_type radius{static_cast<value_type>(0.4)
                             * std::min<value_type>(room_.depth_, room_.width_)};
     const Point3 pos_all_start{
         room_.center_.x() + radius,
