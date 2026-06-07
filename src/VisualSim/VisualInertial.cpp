@@ -304,6 +304,9 @@ private:
     Eigen::Vector3d estimated_position_fast{Eigen::Vector3d::Zero()};
     Eigen::Quaterniond estimated_attitude_fast{Eigen::Quaterniond::Identity()};
 
+    // 统计信息
+    ErrorEvaluation err_eval_fast{"VisualInertial-Fast-Error.csv"};
+
     for (size_t i = 0; i + 1 < data_fast_.size(); ++i)
     {
       const DatumFast &datum_fast{data_fast_[i]};
@@ -339,6 +342,11 @@ private:
           = estimated_position_fast + estimated_attitude_fast * delta_position;
       estimated_attitude_fast
           = (estimated_attitude_fast * delta_rotation).normalized();
+
+      err_eval_fast.WriteErrorEvaluation(datum_fast.timestamp_,   //
+                                         estimated_attitude_fast, //
+                                         estimated_position_fast, //
+                                         Eigen::Vector3d::Zero());
 
       if (use_evo_sim3_)
       {
