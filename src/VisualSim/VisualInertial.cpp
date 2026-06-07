@@ -306,10 +306,11 @@ private:
     for (size_t i = 0; i + 1 < data_fast_.size(); ++i)
     {
       const DatumFast &datum_fast{data_fast_[i]};
+      const auto angular_displacement_norm{angular_displacement_.norm()};
       const Eigen::Quaterniond delta_rotation{
           Eigen::AngleAxisd{
-              datum_fast.angular_displacement_.norm(),
-              datum_fast.angular_displacement_.normalized(),
+              angular_displacement_norm,
+              datum_fast.angular_displacement_ / angular_displacement_norm,
           },
       };
 
@@ -322,7 +323,6 @@ private:
             Interpolate(data_truth_, datum_fast.timestamp_).position_,
         };
         Eigen::Vector3d true_new_position{
-            // 时间戳 + 50 毫秒
             Interpolate(data_truth_, datum_fast_next.timestamp_).position_,
         };
         delta_position = true_new_position - true_old_position;
@@ -1389,19 +1389,18 @@ public:
     PreintegrateImu();
     EstimateFuse();
 
-    for (const auto &[path_name, path_inst] :
-         std::initializer_list<std::pair<std::string, nav_msgs::msg::Path>>{
-             {"msg_path_fast_", msg_path_fast_},
-             {"msg_path_imu_", msg_path_imu_},
-             {"msg_path_rk4_", msg_path_rk4_},
-             {"msg_path_preintegrate_", msg_path_preintegrate_},
-             {"msg_path_fuse_", msg_path_fuse_},
-             {"msg_path_truth_", msg_path_truth_},
-         })
-    {
-      std::print(stderr, "[INFO] Path '{}' has {} poses.", //
-                 path_name, path_inst.poses.size());
-    }
+    std::print(stderr, "[INFO] Path '{}' has {} poses.", //
+               "msg_path_fast_", msg_path_fast_.poses.size());
+    std::print(stderr, "[INFO] Path '{}' has {} poses.", //
+               "msg_path_imu_", msg_path_imu_.poses.size());
+    std::print(stderr, "[INFO] Path '{}' has {} poses.", //
+               "msg_path_rk4_", msg_path_rk4_.poses.size());
+    std::print(stderr, "[INFO] Path '{}' has {} poses.",
+               "msg_path_preintegrate_", msg_path_preintegrate_.poses.size());
+    std::print(stderr, "[INFO] Path '{}' has {} poses.", //
+               "msg_path_fuse_", msg_path_fuse_.poses.size());
+    std::print(stderr, "[INFO] Path '{}' has {} poses.", //
+               "msg_path_truth_", msg_path_truth_.poses.size());
 
 #if (PUBLISH_POSE)
     size_t index_fast{0};
