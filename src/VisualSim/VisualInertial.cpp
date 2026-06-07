@@ -298,6 +298,8 @@ private:
    */
   void EstimateFast()
   {
+    std::print(stderr, "[INFO] EstimateFast invoked ...\n");
+
     EvoSim3 evo_sim3_fast{};
 
     // 初始状态
@@ -381,6 +383,8 @@ private:
    */
   void EstimateImuEuler()
   {
+    std::print(stderr, "[INFO] EstimateImuEuler invoked ...\n");
+
     // 世界坐标系下的重力加速度
     const Eigen::Vector3d gravity_world{0.0, 0.0, -gravity_world_norm};
 
@@ -558,6 +562,8 @@ private:
 
   void PreintegrateImu()
   {
+    std::print(stderr, "[INFO] PreintegrateImu invoked ...\n");
+
     // 世界坐标系下的重力加速度
     const Eigen::Vector3d gravity_world{0.0, 0.0, -gravity_world_norm};
 
@@ -630,6 +636,8 @@ private:
    */
   void EstimateImuRK4()
   {
+    std::print(stderr, "[INFO] EstimateImuRK4 invoked ...\n");
+
     if (data_imu_.empty())
     {
       return;
@@ -862,6 +870,8 @@ private:
    */
   void EstimateFuse()
   {
+    std::print(stderr, "[INFO] EstimateFuse invoked ...\n");
+
     EvoSim3 evo_sim3_fuse{};
 
 #pragma region 建立事件序列
@@ -1063,7 +1073,7 @@ public:
     {
       sensor_config_cam0_ = std::move(opt_sensor_config_cam0.value());
       std::print(stderr,
-                 "T_BS_cam0 =\n"
+                 "[INFO] T_BS_cam0 =\n"
                  "\t[[{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
@@ -1095,7 +1105,7 @@ public:
     {
       sensor_config_imu0_ = std::move(opt_sensor_config_imu0.value());
       std::print(stderr,
-                 "T_BS_imu0 =\n"
+                 "[INFO] T_BS_imu0 =\n"
                  "\t[[{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
@@ -1126,7 +1136,7 @@ public:
     {
       sensor_config_truth_ = std::move(opt_sensor_config_truth.value());
       std::print(stderr,
-                 "T_BS_truth =\n"
+                 "[INFO] T_BS_truth =\n"
                  "\t[[{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
@@ -1173,7 +1183,7 @@ public:
         }
     );
 
-    std::print(stderr, "VisualInertial ready ...\n");
+    std::print(stderr, "[INFO] VisualInertial ready ...\n");
     msg_path_fast_.header.frame_id         = DEFAULT_FRAME_ID;
     msg_path_imu_.header.frame_id          = DEFAULT_FRAME_ID;
     msg_path_preintegrate_.header.frame_id = DEFAULT_FRAME_ID;
