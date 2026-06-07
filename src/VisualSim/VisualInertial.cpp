@@ -309,12 +309,14 @@ private:
       const auto angular_displacement_norm{
           datum_fast.angular_displacement_.norm(),
       };
-      const Eigen::Quaterniond delta_rotation{
-          Eigen::AngleAxisd{
-              angular_displacement_norm,
-              datum_fast.angular_displacement_ / angular_displacement_norm,
-          },
-      };
+      Eigen::Quaterniond delta_rotation{Eigen::Quaterniond::Identity()};
+      if (std::abs(angular_displacement_norm) > 1e-6)
+      {
+        delta_rotation = Eigen::AngleAxisd{
+            angular_displacement_norm,
+            datum_fast.angular_displacement_ / angular_displacement_norm,
+        };
+      }
 
       Eigen::Vector3d delta_position{datum_fast.normalized_translation_};
       if (use_true_translation_in_fast_)
