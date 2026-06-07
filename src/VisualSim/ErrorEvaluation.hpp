@@ -43,9 +43,12 @@ public:
   {
     const DatumTruth datum_true{Interpolate(data_truth_, timestamp)};
     // 局部轴角误差 (估计当前局部坐标系下，需要绕哪个轴、转动多少角度才能对齐到真实姿态)
+    const Sophus::SO3d true_attitude{
+        datum_true.attitude_.norm() < 1e-6 ? Eigen::Quaterniond::Identity()
+                                           : datum_true.attitude_,
+    };
     const Eigen::Vector3d angle_error{
-        (estimated_attitude.inverse() * Sophus::SO3d{datum_true.attitude_})
-            .log(),
+        (estimated_attitude.inverse() * true_attitude).log(),
     };
     const Eigen::Vector3d position_error{
         (estimated_position - datum_true.position_).cwiseAbs()
