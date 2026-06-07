@@ -1385,23 +1385,25 @@ public:
 
   void Start()
   {
+    std::print(stderr, "[INFO] VisualInertial started.\n");
+
     EstimateFast();
     EstimateImuEuler();
     EstimateImuRK4();
     PreintegrateImu();
     EstimateFuse();
 
-    std::print(stderr, "[INFO] Path '{}' has {} poses.", //
+    std::print(stderr, "[INFO] Path '{}' has {} poses.\n", //
                "msg_path_fast_", msg_path_fast_.poses.size());
-    std::print(stderr, "[INFO] Path '{}' has {} poses.", //
+    std::print(stderr, "[INFO] Path '{}' has {} poses.\n", //
                "msg_path_imu_", msg_path_imu_.poses.size());
-    std::print(stderr, "[INFO] Path '{}' has {} poses.", //
+    std::print(stderr, "[INFO] Path '{}' has {} poses.\n", //
                "msg_path_rk4_", msg_path_rk4_.poses.size());
-    std::print(stderr, "[INFO] Path '{}' has {} poses.",
+    std::print(stderr, "[INFO] Path '{}' has {} poses.\n",
                "msg_path_preintegrate_", msg_path_preintegrate_.poses.size());
-    std::print(stderr, "[INFO] Path '{}' has {} poses.", //
+    std::print(stderr, "[INFO] Path '{}' has {} poses.\n", //
                "msg_path_fuse_", msg_path_fuse_.poses.size());
-    std::print(stderr, "[INFO] Path '{}' has {} poses.", //
+    std::print(stderr, "[INFO] Path '{}' has {} poses.\n", //
                "msg_path_truth_", msg_path_truth_.poses.size());
 
 #if (PUBLISH_POSE)
