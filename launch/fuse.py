@@ -8,6 +8,7 @@ from launch.logging import get_logger
 import pathlib
 import os
 
+debug = False
 
 def generate_launch_description():
     logger = get_logger("euroc_vio")
@@ -28,7 +29,7 @@ def generate_launch_description():
     path_truth_csv = str(truth_path / "data.csv")
     path_truth_yaml = str(truth_path / "sensor.yaml")
     # 使用 GDB 查错
-    prefix = ["xterm -e gdb -ex run --args"]
+    prefix = ["xterm -e gdb -ex run --args"] if debug else []
 
     params = {
         # 是否使用 Python 工具 evo 实施 Sim(3) 变换
