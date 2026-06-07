@@ -1383,7 +1383,7 @@ public:
 
   void Start()
   {
-    // EstimateFast();
+    EstimateFast();
     EstimateImuEuler();
     EstimateImuRK4();
     PreintegrateImu();
@@ -1404,7 +1404,7 @@ public:
     }
 
 #if (PUBLISH_POSE)
-    // size_t index_fast{0};
+    size_t index_fast{0};
     size_t index_imu_euler{0};
     size_t index_preintegrate{0};
     size_t index_imu_rk4{0};
@@ -1414,7 +1414,7 @@ public:
 
     while (rclcpp::ok())
     {
-      // PublishPathFast();
+      PublishPathFast();
       PublishPathImuEuler();
       PublishPathImuRK4();
       PublishPathPreintegrate();
@@ -1422,14 +1422,14 @@ public:
       PublishPathTruth();
 
 #if (PUBLISH_POSE)
-      // PublishPoseFast(index_fast);
+      PublishPoseFast(index_fast);
       PublishPoseImuEuler(index_imu_euler);
       PublishPosePreintegrate(index_preintegrate);
       PublishPoseImuRK4(index_imu_rk4);
       PublishPoseFuse(index_fuse);
       PublishPoseTruth(index_truth);
 
-      // index_fast      = (index_fast + 1) % msg_path_fast_.poses.size();
+      index_fast      = (index_fast + 1) % msg_path_fast_.poses.size();
       index_imu_euler = (index_imu_euler + 1) % msg_path_imu_.poses.size();
       index_preintegrate
           = (index_preintegrate + 1) % msg_path_preintegrate_.poses.size();
