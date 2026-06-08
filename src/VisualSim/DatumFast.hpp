@@ -46,7 +46,7 @@ using namespace std::chrono_literals;
 #include "euroc_vio/main.h"
 #include "zupt.hpp"
 
-#define DEBUG 1
+#define DEBUG 0
 
 struct DatumFast
 {

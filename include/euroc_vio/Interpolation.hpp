@@ -27,18 +27,18 @@ static DataType Interpolate(const std::vector<DataType> &data,
   }
   if (timestamp <= data.front().timestamp_)
   {
-    if (timestamp < data.front().timestamp_)
-    {
-      std::print(stderr, "[WARN] 插值时间戳早于真实数据!\n");
-    }
+    // if (timestamp < data.front().timestamp_)
+    // {
+    //   std::print(stderr, "[WARN] 插值时间戳早于真实数据!\n");
+    // }
     return data.front();
   }
   if (timestamp >= data.back().timestamp_)
   {
-    if (timestamp > data.back().timestamp_)
-    {
-      std::print(stderr, "[WARN] 插值时间戳晚于真实数据!\n");
-    }
+    // if (timestamp > data.back().timestamp_)
+    // {
+    //   std::print(stderr, "[WARN] 插值时间戳晚于真实数据!\n");
+    // }
     return data.back();
   }
 
@@ -59,13 +59,11 @@ static DataType Interpolate(const std::vector<DataType> &data,
 
   const auto &datum0{data[left]};
   const auto &datum1{data[right]};
-  const double t0 = static_cast<double>(datum0.timestamp_);
-  const double t1 = static_cast<double>(datum1.timestamp_);
-  const double alpha
-      = (t1 > t0)
-            ? std::clamp((static_cast<double>(timestamp) - t0) / (t1 - t0), 0.0,
-                         1.0)
-            : 0.0;
+  const double t{static_cast<double>(timestamp)};
+  const double t0{static_cast<double>(datum0.timestamp_)};
+  const double t1{static_cast<double>(datum1.timestamp_)};
+  const double alpha{(t1 > t0) ? std::clamp((t - t0) / (t1 - t0), 0.0, 1.0)
+                               : 0.0};
 
   DataType interp;
   template for (constexpr auto /* std::meta::info */ member :
@@ -85,11 +83,22 @@ static DataType Interpolate(const std::vector<DataType> &data,
           * (1.0f - static_cast<float>(alpha)) + datum1.[:member:]
           * static_cast<float>(alpha);
     }
+    // 如果成员是 Eigen::Vector3d，执行线性插值 (LERP)
+    else if constexpr (is_type_of<Eigen::Vector3d>(member))
+    {
+      interp.[:member:]
+          = datum0.[:member:] * (1.0 - alpha) + datum1.[:member:] * alpha;
+    }
     // 如果成员是 Eigen::Quaternionf，执行球面线性插值 (SLERP)
     else if constexpr (is_type_of<Eigen::Quaternionf>(member))
     {
       interp.[:member:] = datum0.[:member:].slerp(static_cast<float>(alpha),
                                                   datum1.[:member:]);
+    }
+    // 如果成员是 Eigen::Quaterniond，执行球面线性插值 (SLERP)
+    else if constexpr (is_type_of<Eigen::Quaterniond>(member))
+    {
+      interp.[:member:] = datum0.[:member:].slerp(alpha, datum1.[:member:]);
     }
   }
 

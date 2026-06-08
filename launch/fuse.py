@@ -35,7 +35,7 @@ def generate_launch_description():
         # 是否使用 Python 工具 evo 实施 Sim(3) 变换
         "use_evo_sim3": False,
         # 是否在本方法中使用真实平移向量
-        "use_true_translation_in_fast": True,
+        "use_true_translation_in_fast": False,
         # 是否使用真实姿态进行初始化
         "use_true_init_pose": True,
         # 利用本方法 (单目视觉) 估计得到的角位移向量和单位化平移向量的数据文件

@@ -304,7 +304,7 @@ private:
 
     // 初始状态
     Eigen::Vector3d estimated_position_fast{Eigen::Vector3d::Zero()};
-    Eigen::Quaterniond estimated_attitude_fast{Eigen::Quaterniond::Identity()};
+    Sophus::SO3d estimated_attitude_fast{};
 
     // 统计信息
     ErrorEvaluation err_eval_fast{"VisualInertial-Fast-Error.csv", data_truth_};
@@ -315,13 +315,10 @@ private:
       const auto angular_displacement_norm{
           datum_fast.angular_displacement_.norm(),
       };
-      Eigen::Quaterniond delta_rotation{Eigen::Quaterniond::Identity()};
+      Sophus::SO3d delta_rotation{};
       if (angular_displacement_norm > 1e-6)
       {
-        delta_rotation = Eigen::AngleAxisd{
-            angular_displacement_norm,
-            datum_fast.angular_displacement_ / angular_displacement_norm,
-        };
+        delta_rotation = Sophus::SO3d::exp(datum_fast.angular_displacement_);
       }
 
       Eigen::Vector3d delta_position{datum_fast.normalized_translation_};
@@ -342,25 +339,25 @@ private:
       // 所以应该使用以下状态更新方程
       estimated_position_fast
           = estimated_position_fast + estimated_attitude_fast * delta_position;
-      estimated_attitude_fast
-          = (estimated_attitude_fast * delta_rotation).normalized();
+      estimated_attitude_fast = estimated_attitude_fast * delta_rotation;
 
-      err_eval_fast.WriteErrorEvaluation(
-          datum_fast.timestamp_,                 //
-          Sophus::SO3d{estimated_attitude_fast}, //
-          estimated_position_fast,               //
-          Eigen::Vector3d::Zero()
-      );
+      err_eval_fast.WriteErrorEvaluation(datum_fast.timestamp_,   //
+                                         estimated_attitude_fast, //
+                                         estimated_position_fast, //
+                                         Eigen::Vector3d::Zero());
 
+      Eigen::Quaterniond estimated_quaternion_fast{
+          estimated_attitude_fast.unit_quaternion()
+      };
       if (use_evo_sim3_)
       {
         evo_sim3_fast.Write(datum_fast.timestamp_, estimated_position_fast,
-                            estimated_attitude_fast);
+                            estimated_quaternion_fast);
       }
       else
       {
-        PushPose(msg_path_fast_, datum_fast.timestamp_, estimated_attitude_fast,
-                 estimated_position_fast);
+        PushPose(msg_path_fast_, datum_fast.timestamp_,
+                 estimated_quaternion_fast, estimated_position_fast);
       }
     } // end for
 
