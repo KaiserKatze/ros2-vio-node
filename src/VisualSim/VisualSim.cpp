@@ -192,6 +192,10 @@ struct VisualSim
       return;
     }
 
+    const auto total_duration{path_stationary->GetDuration()
+                              + path_acceleration->GetDuration()
+                              + path_circle->GetDuration()};
+
     // 输出 mav0/README.md 说明文件
     std::ofstream fout_readme{path_mav0_ / "README.txt"};
     std::print(
@@ -208,25 +212,35 @@ struct VisualSim
         "Movement Stage #1\n"
         "\tTime: {:.2f} [s]  "
         "<!-- 无人机起飞前处于静止状态的时间长度 (单位: 秒) -->\n"
+        "\t<!-- 无人机起飞前所处位置、朝向的世界坐标 -->\n"
         "\tPosition: [{:.2f}, {:.2f}, {:.2f}]\n"
         "\tAttitude: [[{:.2f}, {:.2f}, {:.2f}],\n"
         "\t           [{:.2f}, {:.2f}, {:.2f}],\n"
         "\t           [{:.2f}, {:.2f}, {:.2f}]]\n"
         "Movement Stage #2\n"
         "\tTime: {:.2f} [s]\n"
+        "\t<!-- 匀加速直线运动的起点的世界坐标 -->\n"
         "\tPosition Start: [{:.2f}, {:.2f}, {:.2f}]\n"
+        "\t<!-- 匀加速直线运动的终点的世界坐标 -->\n"
         "\tPosition End: [{:.2f}, {:.2f}, {:.2f}]\n"
+        "\t<!-- 匀加速直线运动的初始线速度大小 -->\n"
         "\tLinear Velocity Start Norm: {:.2f} [m s^-1]\n"
+        "\t<!-- 匀加速直线运动的线加速度大小 -->\n"
         "\tLinear Acceleration Norm: {:.2f} [m s^-2]\n"
         "Movement Stage #3\n"
         "\tTime: {:.2f} [s]\n"
+        "\t<!-- 匀速圆周运动的角速度大小 -->\n"
         "\tAngular Velocity Norm: {:.2f} [rad s^-1]\n"
+        "\t<!-- 匀速圆周运动的线速度大小 -->\n"
         "\tLinear Velocity Norm: {:.2f} [m s^-1]\n"
+        "\t<!-- 匀速圆周运动的轨迹圆圆心位置的世界坐标 -->\n"
         "\tPosition Center: [{:.2f}, {:.2f}, {:.2f}]\n"
+        "\t<!-- 匀速圆周运动的轨迹起点的世界坐标 -->\n"
         "\tPosition Start: [{:.2f}, {:.2f}, {:.2f}]\n"
+        "\t<!-- 匀速圆周运动的轨迹圆所在平面的法向量 -->\n"
         "\tTrajectory Norm: [{:.2f}, {:.2f}, {:.2f}]\n"
         "\tMovement Paradigm: {}  <!-- 无人机的运动范式 -->\n",
-        path_manager_.GetDuration(),                             //
+        total_duration,                                          //
         gravity_world_norm_,                                     //
         room_.width_, room_.depth_, room_.height_,               //
         room_.center_.x(), room_.center_.y(), room_.center_.z(), //
