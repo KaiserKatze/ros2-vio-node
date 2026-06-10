@@ -1,6 +1,8 @@
 #pragma once
 
 #include <algorithm>
+#include <cassert>
+#include <cmath>
 #include <optional>
 #include <string>
 #include <vector>
@@ -52,6 +54,19 @@ struct SensorYaml
           = node_sensor["accelerometer_noise_density"].as<double>();
       result_sensor_config.accelerometer_random_walk_
           = node_sensor["accelerometer_random_walk"].as<double>();
+
+      assert(result_sensor_config.gyroscope_noise_density_ >= 0.0
+             && !std::isnan(result_sensor_config.gyroscope_noise_density_)
+             && !std::isinf(result_sensor_config.gyroscope_noise_density_)
+             && result_sensor_config.gyroscope_random_walk_ >= 0.0
+             && !std::isnan(result_sensor_config.gyroscope_random_walk_)
+             && !std::isinf(result_sensor_config.gyroscope_random_walk_)
+             && result_sensor_config.accelerometer_noise_density_ >= 0.0
+             && !std::isnan(result_sensor_config.accelerometer_noise_density_)
+             && !std::isinf(result_sensor_config.accelerometer_noise_density_)
+             && result_sensor_config.accelerometer_random_walk_ >= 0.0
+             && !std::isnan(result_sensor_config.accelerometer_random_walk_)
+             && !std::isinf(result_sensor_config.accelerometer_random_walk_));
     }
     if (!(node_sensor["T_BS"] && node_sensor["T_BS"]["data"]))
     {

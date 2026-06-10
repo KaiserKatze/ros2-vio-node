@@ -389,9 +389,6 @@ private:
     Eigen::Vector3d estimated_position_imu{Eigen::Vector3d::Zero()};
     Sophus::SO3d estimated_attitude_imu{/* Eigen::Quaterniond::Identity() */};
     Eigen::Vector3d estimated_linear_velocity_imu{Eigen::Vector3d::Zero()};
-    Eigen::Vector3d estimated_linear_acceleration_imu{Eigen::Vector3d::Zero()};
-    Eigen::Vector3d estimated_angular_velocity_imu{Eigen::Vector3d::Zero()};
-    Eigen::Vector3d estimated_angular_acceleration_imu{Eigen::Vector3d::Zero()};
 
     if (use_true_init_pose_ && !data_truth_.empty())
     {
@@ -871,7 +868,7 @@ private:
 
     EvoSim3 evo_sim3_fuse{};
 
-#pragma region 建立事件序列
+#pragma region CREATE_EVENT_SEQUENCE
 
     // 定义离线统一的时间轴事件结构体，用于交织对齐异步的视觉序列与高频 IMU 序列
     struct TimelineEvent
@@ -901,7 +898,7 @@ private:
 
 #pragma endregion
 
-#pragma region 初始化 ESKF
+#pragma region INITIALIZE_ESKF
 
     // 初始化 ESKF 的标称状态
     typename ESKF::NominalStateVariable init_state;
@@ -912,6 +909,7 @@ private:
       init_state.attitude_           = data_truth_[0].attitude_;
       init_state.accelerometer_bias_ = data_truth_[0].bias_accel_;
       init_state.gyroscope_bias_     = data_truth_[0].bias_gyro_;
+      init_state.gravity_ = -gravity_world_norm * Eigen::Vector3d::UnitZ();
     }
     else
     {

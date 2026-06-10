@@ -1,12 +1,15 @@
 #pragma once
 
+#include <cassert>
 #include <cmath>
+#include <concepts>
 #include <cstdint>
 #include <cstdio>
 #include <format>
 #include <meta>
 #include <print>
 #include <stdexcept>
+#include <type_traits>
 
 #include <Eigen/Dense>
 
@@ -24,10 +27,11 @@
 template <typename value_type = double>
 class ErrorStateKalmanFilter
 {
-#pragma region 公有类型
+#pragma region PUBLIC_TYPE
 
 public:
   using Vector3 = Eigen::Vector<value_type, 3>;
+  using Vector6 = Eigen::Vector<value_type, 6>;
   using Matrix3 = Eigen::Matrix<value_type, 3, 3>;
 
   // 朝向的四元数形式 (仅用于存储，不用于运算)
@@ -48,6 +52,8 @@ public:
     Vector3 accelerometer_bias_{Vector3::Zero()};
     // 陀螺仪零偏
     Vector3 gyroscope_bias_{Vector3::Zero()};
+    // 重力加速度 (初始化使用错误值; 由使用者调用 SetNominalState 函数时给出实际取值)
+    Vector3 gravity_{-Vector3::UnitZ()};
   };
 
   // 误差状态变量 (指真实状态与估计状态之差，即 $\delta x = x_true - x_est$)
@@ -63,43 +69,72 @@ public:
     Vector3 accelerometer_bias_error_{Vector3::Zero()};
     // 陀螺仪零偏误差
     Vector3 gyroscope_bias_error_{Vector3::Zero()};
+    // 重力加速度误差
+    Vector3 gravity_error_{Vector3::Zero()};
   };
-
-  // 目前不考虑将重力加速度加入状态空间!
 
 #pragma endregion
 
-#pragma region 私有类型
+#pragma region PRIVATE_TYPE
 
 private:
   // 具体取值由 DatumFast 中的成员变量的种类及数量决定
   static constexpr int dimMonocularData{2 * 3};
 
   // 具体取值由 ErrorStateVariable 中的成员变量的种类及数量决定
-  static constexpr int dimErrorState{5 * 3};
+  static constexpr int dimErrorState{6 * 3};
 
   // 实际参与运算的误差状态向量
   using ErrorStateImpl = Eigen::Vector<value_type, dimErrorState>;
-  // 误差状态的协方差矩阵
-  using CovarianceErrorState
+  // 状态转移矩阵
+  using TransitionMatrix
       = Eigen::Matrix<value_type, dimErrorState, dimErrorState>;
   // 观测雅可比矩阵
   using JacobiMeasurement
       = Eigen::Matrix<value_type, dimMonocularData, dimErrorState>;
+  // 观测协方差矩阵
+  using CovarianceMeasurement
+      = Eigen::Matrix<value_type, dimMonocularData, dimMonocularData>;
+  // 卡尔曼增益矩阵
+  using KalmanGain = Eigen::Matrix<value_type, dimErrorState, dimMonocularData>;
 
 #pragma endregion
 
-#pragma region 初始化
+#pragma region INITIALIZATION
 
 public:
   ErrorStateKalmanFilter()
   {
-    // 初始协方差设定为相对保守的不确定性，避免系统初试积分发生剧烈波动
-    error_state_covariance_ = CovarianceErrorState::Identity() * 1e-4;
+    assert(error_state_covariance_.allFinite());
+  }
+
+  void SetGyroscopeNoiseDensity(value_type noise_density) noexcept
+  {
+    gyroscope_noise_density_ = noise_density;
+    std::print(stderr, "[DEBUG] 修改陀螺仪噪声密度 <- {:.6f}\n", noise_density);
+  }
+
+  void SetGyroscopeRandomWalk(value_type random_walk) noexcept
+  {
+    gyroscope_random_walk_ = random_walk;
+    std::print(stderr, "[DEBUG] 修改陀螺仪随机游走 <- {:.6f}\n", random_walk);
+  }
+
+  void SetAccelerometerNoiseDensity(value_type noise_density) noexcept
+  {
+    accelerometer_noise_density_ = noise_density;
+    std::print(stderr, "[DEBUG] 修改加速度计噪声密度 <- {:.6f}\n",
+               noise_density);
+  }
+
+  void SetAccelerometerRandomWalk(value_type random_walk) noexcept
+  {
+    accelerometer_random_walk_ = random_walk;
+    std::print(stderr, "[DEBUG] 修改加速度计随机游走 <- {:.6f}\n", random_walk);
   }
 
   /**
-   * @brief 设置初始朝向
+   * @brief 手动初始化名义状态，用于外部更精准地赋予初值
    * @note 调用者必须在启动 ESKF 以前，首先对静止状态下的无人机校准重力方向，估计初始朝向。
    * @note 特别是 EuRoC MAV 数据集，在它提供的数据中，
    *       静止状态下的无人机的 IMU 传感器参考系的坐标轴与世界参考系的坐标轴不是平行的。
@@ -108,47 +143,29 @@ public:
    *       IMU 参考系的 Z 轴正方向与世界参考系的 X 轴正方向近似同向。
    *       从 ESKF 的角度来看，无法保证重力加速度方向是沿 IMU 参考系的 Z 轴负方向的。
    */
-  void AttitudeUpdate(const Attitude &attitude)
+  void SetNominalState(const NominalStateVariable &state) noexcept
   {
-    nominal_state_.attitude_ = attitude.unit_quaternion();
-    visual_attitude_         = attitude.unit_quaternion();
-    is_initialized_          = true;
-  }
-
-  void SetGyroscopeNoiseDensity(value_type noise_density)
-  {
-    gyroscope_noise_density_ = noise_density;
-  }
-
-  void SetGyroscopeRandomWalk(value_type random_walk)
-  {
-    gyroscope_random_walk_ = random_walk;
-  }
-
-  void SetAccelerometerNoiseDensity(value_type noise_density)
-  {
-    accelerometer_noise_density_ = noise_density;
-  }
-
-  void SetAccelerometerRandomWalk(value_type random_walk)
-  {
-    accelerometer_random_walk_ = random_walk;
-  }
-
-  /**
-   * @brief 手动初始化名义状态，用于外部更精准地赋予初值
-   */
-  void SetNominalState(const NominalStateVariable &state)
-  {
-    nominal_state_   = state;
-    visual_position_ = state.position_;
-    visual_attitude_ = state.attitude_;
-    is_initialized_  = true;
+    nominal_state_ = state;
+    // 如果初始坐标系是水平的，我们可以将其初始化为 g = [0, 0, -9.81]
+    // 但如果初始时刻并非水平，我们可以选择将初始姿态初始化为单位阵
+    // 并让初始重力向量 g 来承担关于初始姿态的所有不确定性
+    // 这种处理方式的好处在于提高了系统的线性度
+    // 在初始姿态未知的情况下，处理一个未知的重力向量（已知旋转）
+    // 比处理一个未知的旋转（已知重力）在线性化效果上更好
+    const Vector3 gravity_body{state.attitude_.conjugate() * state.gravity_};
+    const Vector3 linear_velocity_body{state.attitude_.conjugate()
+                                       * state.linear_velocity_};
+    nominal_state_.gravity_         = gravity_body;
+    nominal_state_.attitude_        = Quaternion::Identity();
+    nominal_state_.linear_velocity_ = linear_velocity_body;
+    nominal_state_.position_        = Vector3::Zero();
+    prev_position_                  = nominal_state_.position_;
+    prev_attitude_                  = nominal_state_.attitude_;
   }
 
 #pragma endregion
 
-#pragma region 状态更新与观测更新
+#pragma region STATE_UPDATE
 
 public:
   /**
@@ -156,18 +173,16 @@ public:
    * @param imu_data IMU 数据提供的角速度向量和线加速度向量
    * @note 调用者必须保证 IMU 数据是在“体坐标系”下的表示
    */
-  void ImuUpdate(const DatumImu *imu_data)
+  void ImuUpdate(const DatumImu *imu_data) noexcept
   {
+#pragma region FOOL_PROOF
+
     if (imu_data == nullptr)
     {
       return;
     }
-    if (!is_initialized_)
-    {
-      return;
-    }
 
-    if (last_imu_time_ == -1 || last_imu_time_ == 0)
+    if (last_imu_time_ < 0)
     {
       last_imu_time_ = imu_data->timestamp_;
       last_imu_data_ = *imu_data;
@@ -181,6 +196,10 @@ public:
     {
       return;
     }
+
+#pragma endregion
+
+#pragma region WORLD_ANGULAR_VELOCITY_AND_LINEAR_ACCELERATION
 
     // 假设 last_imu_data_ 中的角速度、线加速度都已经去除零偏
     Vector3 unbias_gyro_prev{last_imu_data_.angular_velocity_};
@@ -210,8 +229,12 @@ public:
     Vector3 acc_world_m{
         static_cast<value_type>(0.5)
                 * (R_old * unbias_acc_prev + R_new * unbias_acc_curr)
-            + gravity_world_,
+            + nominal_state_.gravity_,
     };
+
+#pragma endregion
+
+#pragma region UPDATE_NOMINAL_STATE
 
     Vector3 delta_velocity{acc_world_m * dt};
     Vector3 delta_position{
@@ -220,53 +243,35 @@ public:
             * dt,
     };
 
-    // 更新名义状态中的位置
+    // 更新的位置
     nominal_state_.position_ += delta_position;
-    // 更新名义状态中的线速度
+    // 更新的线速度
     nominal_state_.linear_velocity_ += delta_velocity;
-    // 更新名义状态中的朝向
+    // 更新的朝向
     nominal_state_.attitude_ = R_new.unit_quaternion();
     // 不更新加速度计零偏
     // 不更新陀螺仪零偏
 
-    // 离散系统状态转移矩阵 F (15x15) 的快速构建
-    CovarianceErrorState F{CovarianceErrorState::Identity()};
+#pragma endregion
 
-    // F_pv = I * dt
-    F.template block<3, 3>(0, 3) = Matrix3::Identity() * dt;
+#pragma region UPDATE_ERROR_STATE_COVARIANCE
 
-    // F_vtheta = -R_old * skew(acc_m) * dt
-    Matrix3 skew_acc{Attitude::hat(acc_m).matrix()};
-    F.template block<3, 3>(3, 6) = -R_old.matrix() * skew_acc * dt;
+    // 离散系统状态转移矩阵 $F_x$
+    TransitionMatrix Fx{prediction_create_transition(dt, R_old.matrix(),
+                                                     omega_m, acc_m)};
 
-    // F_vba = -R_old * dt
-    F.template block<3, 3>(3, 9) = -R_old.matrix() * dt;
-
-    // F_thetatheta = I - skew(omega_m) * dt
-    Matrix3 skew_omega{Attitude::hat(omega_m).matrix()};
-    F.template block<3, 3>(6, 6) = Matrix3::Identity() - skew_omega * dt;
-
-    // F_thetabg = -I * dt
-    F.template block<3, 3>(6, 12) = -Matrix3::Identity() * dt;
-
-    // 系统过程噪声协方差矩阵 Q (15x15)
-    CovarianceErrorState Q{CovarianceErrorState::Zero()};
-    value_type var_v{
-        (accelerometer_noise_density_ * accelerometer_noise_density_) * dt
-    };
-    value_type var_theta{(gyroscope_noise_density_ * gyroscope_noise_density_)
-                         * dt};
-    value_type var_ba{(accelerometer_random_walk_ * accelerometer_random_walk_)
-                      * dt};
-    value_type var_bg{(gyroscope_random_walk_ * gyroscope_random_walk_) * dt};
-
-    Q.template block<3, 3>(3, 3)   = var_v * Matrix3::Identity();
-    Q.template block<3, 3>(6, 6)   = var_theta * Matrix3::Identity();
-    Q.template block<3, 3>(9, 9)   = var_ba * Matrix3::Identity();
-    Q.template block<3, 3>(12, 12) = var_bg * Matrix3::Identity();
+    TransitionMatrix Q{prediction_create_covariance(dt)};
 
     // 协方差的离散时间递推更新
-    error_state_covariance_ = F * error_state_covariance_ * F.transpose() + Q;
+    TransitionMatrix new_error_state_covariance{
+        Fx * error_state_covariance_ * Fx.transpose() + Q
+    };
+
+    assert(new_error_state_covariance.allFinite());
+
+    error_state_covariance_ = new_error_state_covariance;
+
+#pragma endregion
 
     last_imu_time_ = imu_data->timestamp_;
   }
@@ -276,130 +281,316 @@ public:
    * @param monocular_data 单目视觉数据提供的角位移向量和单位化平移向量
    * @note 调用者必须保证单目视觉数据是在“体坐标系”下的表示
    */
-  void MonocularUpdate(const DatumFast *monocular_data)
+  void MonocularUpdate(const DatumFast *monocular_data) noexcept
   {
+#pragma region FOOL_PROOF
+
     if (monocular_data == nullptr)
     {
       return;
     }
-    if (!is_initialized_)
+    if (last_cam_time_ < 0)
+    {
+      last_cam_time_ = monocular_data->timestamp_;
+      return;
+    }
+
+    const value_type dt{static_cast<value_type>(
+        (monocular_data->timestamp_ - last_cam_time_) * 1e-9
+    )};
+    if (dt <= 0.0)
     {
       return;
     }
 
-    // 视觉帧相对增量积分，计算连续的全局视觉名义参考位置与姿态
-    const Eigen::Quaternion<value_type> delta_rotation{
-        Eigen::AngleAxis<value_type>{
-            static_cast<value_type>(
-                monocular_data->angular_displacement_.norm()
-            ),
-            monocular_data->angular_displacement_.normalized(),
-        }
+#pragma endregion
+
+    // 构造 6x18 观测雅可比阵
+    JacobiMeasurement H{measurement_jacobian(dt)};
+
+    // 构造 6x6 观测协方差 (数字越小，置信度越高)
+    CovarianceMeasurement V{CovarianceMeasurement::Identity()};
+    // 角位移估计量     较高置信度 (1e-5)
+    V.template block<3, 3>(0, 0) *= static_cast<value_type>(1e-5);
+    // 平移方向估计量   较低置信度 (1e-3)
+    V.template block<3, 3>(3, 3) *= static_cast<value_type>(1e-3);
+
+    // 卡尔曼增益
+    KalmanGain K{kalman_gain(error_state_covariance_, H, V)};
+
+    // 由 IMU 数据计算得到的角位移
+    Attitude d_attitude{
+        // 因为在体坐标系下，$q_t = q_0 \otimes \delta q$
+        // 所以 $\delta q = q_0^* \otimes q_t$
+        (prev_attitude_.conjugate() * nominal_state_.attitude_).normalized()
     };
-    visual_position_
-        = visual_position_
-          + visual_attitude_ * monocular_data->normalized_translation_;
-    visual_attitude_ = (visual_attitude_ * delta_rotation).normalized();
+    Vector3 angular_displacement{d_attitude.log()};
 
-    // 求解 6x1 维观测残差向量 z (位置残差和李代数切空间朝向残差)
-    Eigen::Vector<value_type, 6> z;
-    z.template head<3>() = visual_position_ - nominal_state_.position_;
-    z.template tail<3>() = (Attitude(nominal_state_.attitude_).inverse()
-                            * Attitude(visual_attitude_))
-                               .log();
-
-    // 构造 6x15 维稠密卡尔曼观测雅可比阵 H
-    JacobiMeasurement H{JacobiMeasurement::Zero()};
-    H.template block<3, 3>(0, 0) = Matrix3::Identity();
-    H.template block<3, 3>(3, 6) = Matrix3::Identity();
-
-    // 观测协方差设定为与视觉前端相称的较高置信度 (1e-4)
-    Eigen::Matrix<value_type, 6, 6> R{
-        Eigen::Matrix<value_type, 6, 6>::Identity() * 1e-4
+    // 由 IMU 数据计算得到的平移方向
+    Vector3 delta_position{
+        nominal_state_.position_ - prev_position_,
     };
+    value_type delta_position_norm{delta_position.norm()};
+    Vector3 normalized_translation{Vector3::Zero()};
+    if (delta_position_norm > static_cast<value_type>(1e-6))
+    {
+      normalized_translation = delta_position / delta_position_norm;
+    }
 
-    // 预测残差协方差阵 S
-    Eigen::Matrix<value_type, 6, 6> S{
-        H * error_state_covariance_ * H.transpose() + R
-    };
+    // 更新记录
+    prev_attitude_ = nominal_state_.attitude_;
+    prev_position_ = nominal_state_.position_;
 
-    // 求解卡尔曼增益 K (15x6)
-    Eigen::Matrix<value_type, dimErrorState, 6> K{
-        error_state_covariance_ * H.transpose() * S.inverse()
-    };
+    // 观测残差向量 = (由相机观测到的角位移和平移方向) - (由 IMU 数据计算得到的角位移和平移方向)
+    Vector6 measurement_residue;
+    measurement_residue.template head<3>()
+        = monocular_data->angular_displacement_ - angular_displacement;
+    measurement_residue.template tail<3>()
+        = monocular_data->normalized_translation_ - normalized_translation;
 
     // 更新计算后验误差状态
-    error_state_ = K * z;
+    error_state_ = K * measurement_residue;
 
-    // 更新误差状态协方差并维持对称性特征
-    error_state_covariance_
-        = (CovarianceErrorState::Identity() - K * H) * error_state_covariance_;
-    error_state_covariance_ = static_cast<value_type>(0.5)
-                              * (error_state_covariance_
-                                 + error_state_covariance_.transpose().eval());
+    // 更新误差状态协方差
+    measurement_update_covariance(error_state_covariance_, K, H, V);
 
     // 立即向标称状态进行负反馈注入复位，重置误差空间
     InjectError();
+
+    last_cam_time_ = monocular_data->timestamp_;
   }
 
 #pragma endregion
 
-#pragma region 数据接口
+#pragma region DATA_INTERFACE
 
 public:
   /**
    * @brief 获取当前名义状态
    */
-  NominalStateVariable GetNominalState() const
+  NominalStateVariable GetNominalState() const noexcept
   {
     return nominal_state_;
   }
 
 #pragma endregion
 
-#pragma region 私有成员函数
+#pragma region PRIVATE_METHOD
 
 private:
   /**
    * @brief 将误差状态注入名义状态
    */
-  void InjectError()
+  void InjectError() noexcept
   {
-    // 1. 更新位置: r = r + dr
+    // 更新位置: r = r + dr
     nominal_state_.position_ += error_state_.template segment<3>(0);
-    // 2. 更新速度: v = v + dv
+    // 更新速度: v = v + dv
     nominal_state_.linear_velocity_ += error_state_.template segment<3>(3);
-    // 3. 更新姿态: q = q * exp(d_theta)
-    Vector3 d_theta{error_state_.template segment<3>(6)};
+    // 更新姿态: q = q * exp(d_theta)
+    auto d_theta{error_state_.template segment<3>(6)};
+    value_type d_theta_norm{d_theta.norm()};
+    Attitude d_attitude{};
+    if (d_theta_norm > static_cast<value_type>(1e-6))
+    {
+      d_attitude = Attitude::exp(d_theta);
+    }
     nominal_state_.attitude_
-        = (Attitude(nominal_state_.attitude_) * Attitude::exp(d_theta))
-              .unit_quaternion();
-    // 4. 更新零偏: b = b + db
+        = (Attitude{nominal_state_.attitude_} * d_attitude).unit_quaternion();
+    // 更新零偏: b = b + db
     nominal_state_.accelerometer_bias_ += error_state_.template segment<3>(9);
     nominal_state_.gyroscope_bias_ += error_state_.template segment<3>(12);
+    // 更新重力加速度
+    nominal_state_.gravity_ += error_state_.template segment<3>(15);
 
-    // 5. 根据 Sola 理论，执行协方差重置 (G 映射矩阵校正)
-    CovarianceErrorState G{CovarianceErrorState::Identity()};
+    ResetESKF();
+  }
+
+  /**
+   * @brief 执行协方差重置
+   */
+  void ResetESKF() noexcept
+  {
+    TransitionMatrix G{TransitionMatrix::Identity()};
+    auto d_theta{error_state_.template segment<3>(6)};
     G.template block<3, 3>(6, 6)
         = Matrix3::Identity()
-          - static_cast<value_type>(0.5) * Attitude::hat(d_theta).matrix();
-    error_state_covariance_ = G * error_state_covariance_ * G.transpose();
+          - Attitude::hat(static_cast<value_type>(0.5) * d_theta).matrix();
+    // 更新误差状态协方差矩阵
+    TransitionMatrix new_error_state_covariance{G * error_state_covariance_
+                                                * G.transpose()};
 
-    // 6. 重置 error_state_ 为零
+    assert(new_error_state_covariance.allFinite());
+
+    error_state_covariance_ = new_error_state_covariance;
+
+    // 重置 error_state_ 为零
     error_state_.setZero();
+  }
+
+  /**
+   * @brief 计算离散系统状态转移矩阵
+   * @param dt 时间步长
+   * @param R 旋转矩阵
+   * @param gyro 角速度
+   * @param acc 线加速度
+   */
+  TransitionMatrix prediction_create_transition(value_type dt, const Matrix3 &R,
+                                                const Vector3 &gyro,
+                                                const Vector3 &acc) noexcept
+  {
+    TransitionMatrix Fx{TransitionMatrix::Identity()};
+    // F_p_v = I * dt
+    Fx.template block<3, 3>(0, 3) = Matrix3::Identity() * dt;
+    // F_v_theta
+    Fx.template block<3, 3>(3, 6) = -R * Attitude::hat(acc).matrix() * dt;
+    // F_v_ba = -R * dt
+    Fx.template block<3, 3>(3, 9) = -R * dt;
+    // F_v_g
+    Fx.template block<3, 3>(3, 15) = Matrix3::Identity() * dt;
+    // F_theta_theta
+    Fx.template block<3, 3>(6, 6)
+        = Attitude::exp(gyro * dt).matrix().transpose();
+    // F_theta_bg
+    Fx.template block<3, 3>(6, 12) = -Matrix3::Identity() * dt;
+    return Fx;
+  }
+
+  /**
+   * @brief 计算系统过程噪声协方差矩阵
+   * @param dt 时间步长
+   * @note 等于 (状态转移函数对扰动的雅可比矩阵) * (扰动脉冲协方差矩阵) * (状态转移函数对扰动的雅可比矩阵).转置
+   */
+  TransitionMatrix prediction_create_covariance(value_type dt) noexcept
+  {
+    TransitionMatrix Q{TransitionMatrix::Zero()};
+    // 加速度计测量值噪声的方差与时间步长的乘积
+    const value_type var_v{
+        (accelerometer_noise_density_ * accelerometer_noise_density_) * dt,
+    };
+    // 陀螺仪测量值噪声的方差与时间步长的乘积
+    const value_type var_theta{
+        (gyroscope_noise_density_ * gyroscope_noise_density_) * dt,
+    };
+    // 加速度计零偏噪声的方差与时间步长的乘积
+    const value_type var_ba{
+        (accelerometer_random_walk_ * accelerometer_random_walk_) * dt,
+    };
+    // 陀螺仪零偏噪声的方差与时间步长的乘积
+    const value_type var_bg{
+        (gyroscope_random_walk_ * gyroscope_random_walk_) * dt,
+    };
+    // 将 $V_i$, $\Theta_i$, $A_i$, $\Omega_i$ 填入系统过程噪声协方差矩阵中
+    template for (int i = 1;
+                  value_type var : {var_v, var_theta, var_ba, var_bg})
+    {
+      Q.template block<3, 3>(3 * i, 3 * i) = var * Matrix3::Identity();
+      ++i;
+    }
+    return Q;
+  }
+
+  /**
+   * @brief 计算朝向更新函数对轴角误差的雅可比矩阵
+   * @param q 朝向
+   */
+  static auto measurement_jacobian_Q_wrt_dtheta(const Quaternion &q) noexcept
+  {
+    using RetType = Eigen::Matrix<value_type, 4, 3>;
+    RetType result{
+        {-q.x(), -q.y(), -q.z()},
+        {q.w(), -q.z(), q.y()},
+        {q.z(), q.w(), -q.x()},
+        {-q.y(), q.x(), q.w()},
+    };
+    return static_cast<value_type>(0.5) * result;
+  }
+
+  /**
+   * @brief 计算测量函数的雅可比矩阵
+   */
+  JacobiMeasurement measurement_jacobian(value_type dt) const noexcept
+  {
+    JacobiMeasurement result{JacobiMeasurement::Zero()};
+
+    // 角位移对旋转误差的导数
+    result.template block<3, 3>(0, 6) = Matrix3::Identity();
+
+    // 角位移对陀螺仪零偏的导数 $-I_3 * \delta t$
+    result.template block<3, 3>(0, 12) = -Matrix3::Identity() * dt;
+
+    auto velocity_norm{nominal_state_.linear_velocity_.norm()};
+    if (velocity_norm > static_cast<value_type>(1e-6))
+    {
+      auto velocity_direction{nominal_state_.linear_velocity_ / velocity_norm};
+      // 单位化平移向量对线速度的导数
+      result.template block<3, 3>(3, 3)
+          = (Matrix3::Identity()
+             - velocity_direction * velocity_direction.transpose())
+            / velocity_norm;
+    }
+
+    // 四元数项没有用上？
+    // const auto derivative_Q_dtheta{
+    //     measurement_jacobian_Q_wrt_dtheta(state.attitude_)
+    // };
+    return result;
+  }
+
+  /**
+   * @brief 求解旋转 $q \otimes a \otimes q^*$ 对四元数 $q$ 的雅可比矩阵
+   * @return 雅克比矩阵 3x4
+   */
+  static auto rotation_jacobian_wrt_quat(const Vector3 &a,
+                                         const Quaternion &q) noexcept
+  {
+    using RetType = Eigen::Matrix<value_type, 3, 4>;
+    const value_type w{q.w()};
+    const Vector3 v{q.x(), q.y(), q.z()};
+    RetType result{RetType::Zero()};
+    result.template block<3, 1>(0, 0) = w * a + v.cross(a);
+    result.template block<3, 3>(0, 1)
+        = v.transpose() * a * Eigen::Matrix3d::Identity() + v * a.transpose()
+          - a * v.transpose() - w * Sophus::SO3d::hat(a).matrix();
+    return result;
+  }
+
+  /**
+   * @brief 计算卡尔曼增益
+   * @param P 测量函数的协方差矩阵
+   * @param H 测量函数的雅可比矩阵
+   * @param V 测量噪声的协方差矩阵
+   */
+  static KalmanGain kalman_gain(const TransitionMatrix &P,
+                                const JacobiMeasurement &H,
+                                const CovarianceMeasurement &V) noexcept
+  {
+    auto hphv{H * P * H.transpose() + V};
+    return hphv.ldlt().solve(H * P.transpose()).transpose();
+    // return P * H.transpose() * hphv.inverse();
+  }
+
+  /**
+   * @brief 更新测量函数的协方差矩阵 $P$
+   * @param P 测量函数的协方差矩阵
+   * @param K 卡尔曼增益
+   * @param H 测量函数的雅可比矩阵
+   * @param V 测量噪声的协方差矩阵
+   */
+  static void
+  measurement_update_covariance(TransitionMatrix &P, const KalmanGain &K,
+                                const JacobiMeasurement &H,
+                                const CovarianceMeasurement &V) noexcept
+  {
+    TransitionMatrix ikh{TransitionMatrix::Identity() - K * H};
+    P = ikh * P * ikh.transpose() + K * V * K.transpose();
   }
 
 #pragma endregion
 
-#pragma region 私有成员变量
+#pragma region PRIVATE_VARIABLE
 
 private:
-  // 重力加速度大小 (单位: m s^-2)
-  value_type gravity_world_norm_{9.81};
-  // 世界坐标系下的重力加速度
-  Vector3 gravity_world_{-gravity_world_norm_ * Vector3::UnitZ()};
-  // 对获取的第一帧 IMU 数据作特殊处理
-  bool is_initialized_{false};
   // 名义状态 (由于 15 维向量表示四元数不便，直接使用 NominalStateVariable 实例)
   NominalStateVariable nominal_state_{};
   // 误差状态
@@ -420,15 +611,16 @@ private:
   Vector3 accelerometer_bias_noise_{Vector3::Zero()};
   // 陀螺仪零偏噪声
   Vector3 gyroscope_bias_noise_{Vector3::Zero()};
-  // 误差状态协方差矩阵
-  CovarianceErrorState error_state_covariance_{
-      CovarianceErrorState::Identity()
-  };
+  // 误差状态协方差矩阵 $P$ (初始协方差设定为相对保守的不确定性，避免系统初试积分发生剧烈波动)
+  TransitionMatrix error_state_covariance_{TransitionMatrix::Identity()
+                                           * static_cast<value_type>(1e-4)};
   // 上一帧 IMU 时间戳
   std::int64_t last_imu_time_{-1};
-  // 视觉位置与朝向的增量积分状态变量
-  Vector3 visual_position_{Vector3::Zero()};
-  Quaternion visual_attitude_{Quaternion::Identity()};
+  // 上一帧图像时间戳
+  std::int64_t last_cam_time_{-1};
+  // 上一帧图像帧的姿态
+  Vector3 prev_position_{Vector3::Zero()};
+  Quaternion prev_attitude_{Quaternion::Identity()};
   // 上一帧 IMU 数据的缓存结构
   DatumImu last_imu_data_{};
 

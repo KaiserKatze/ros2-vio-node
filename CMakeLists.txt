@@ -20,7 +20,6 @@ endif()
 add_compile_options(-Wshadow)
 add_compile_options(-Wuninitialized)
 add_compile_options(-Wno-maybe-uninitialized)
-add_compile_options(-O3)
 add_compile_options(-march=native)
 
 if(MSVC)
