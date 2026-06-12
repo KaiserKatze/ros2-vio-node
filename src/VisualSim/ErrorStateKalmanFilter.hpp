@@ -589,6 +589,16 @@ private:
 
 #pragma endregion
 
+#pragma region PUBLIC_VARIABLE
+
+public:
+  // 单目视觉估计角位移置信度
+  value_type confidence_angular_displacement_{1e-4};
+  // 单目视觉估计平移方向置信度
+  value_type confidence_normalized_translation_{1e-4};
+
+#pragma endregion
+
 #pragma region PRIVATE_VARIABLE
 
 private:
@@ -596,10 +606,6 @@ private:
   NominalStateVariable nominal_state_{};
   // 误差状态
   ErrorStateImpl error_state_{ErrorStateImpl::Zero()};
-  // 单目视觉估计角位移置信度
-  value_type confidence_angular_displacement_{1e-4};
-  // 单目视觉估计平移方向置信度
-  value_type confidence_normalized_translation_{1e-4};
   // 陀螺仪白噪声密度 (单位: rad / s / sqrt(Hz))
   value_type gyroscope_noise_density_{0.0};
   // 陀螺仪零偏随机游走 (单位: rad / s^2 / sqrt(Hz))

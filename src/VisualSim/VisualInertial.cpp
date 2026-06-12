@@ -949,6 +949,11 @@ private:
         sensor_config_imu0_.accelerometer_random_walk_
     );
 
+    filter_.confidence_angular_displacement_
+        = this->confidence_angular_displacement_;
+    filter_.confidence_normalized_translation_
+        = this->confidence_normalized_translation_;
+
 #pragma endregion
 
     // 顺序迭代离线混合时间轴上的所有传感器事件
