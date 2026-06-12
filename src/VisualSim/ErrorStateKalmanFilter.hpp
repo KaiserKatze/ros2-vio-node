@@ -225,7 +225,12 @@ public:
                   * (unbias_acc_prev + unbias_acc_curr)};
 
     Attitude R_old{nominal_state_.attitude_};
-    Attitude R_new{R_old * Attitude::exp(omega_m * dt)};
+    Attitude R_new{
+        R_old
+        * Attitude::exp(omega_m * dt
+                        + (dt * dt / 12.0)
+                              * unbias_gyro_prev.cross(unbias_gyro_curr))
+    };
 
     Vector3 acc_world_m{
         static_cast<value_type>(0.5)
