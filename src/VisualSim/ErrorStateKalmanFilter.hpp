@@ -311,8 +311,16 @@ public:
 
 #pragma endregion
 
+    // 由 IMU 数据计算得到的角位移
+    Attitude d_attitude{
+        // 因为在体坐标系下，$q_t = q_0 \otimes \delta q$
+        // 所以 $\delta q = q_0^* \otimes q_t$
+        (prev_attitude_.conjugate() * nominal_state_.attitude_).normalized()
+    };
+    Vector3 angular_displacement{d_attitude.log()};
+
     // 构造 6x18 观测雅可比阵
-    JacobiMeasurement H{measurement_jacobian(dt)};
+    JacobiMeasurement H{measurement_jacobian(dt, angular_displacement)};
 
     // 构造 6x6 观测协方差 (数字越小，置信度越高)
     CovarianceMeasurement V{CovarianceMeasurement::Identity()};
@@ -323,14 +331,6 @@ public:
 
     // 卡尔曼增益
     KalmanGain K{kalman_gain(error_state_covariance_, H, V)};
-
-    // 由 IMU 数据计算得到的角位移
-    Attitude d_attitude{
-        // 因为在体坐标系下，$q_t = q_0 \otimes \delta q$
-        // 所以 $\delta q = q_0^* \otimes q_t$
-        (prev_attitude_.conjugate() * nominal_state_.attitude_).normalized()
-    };
-    Vector3 angular_displacement{d_attitude.log()};
 
     // 由 IMU 数据计算得到的平移方向
     Vector3 delta_position{
@@ -510,15 +510,18 @@ private:
   /**
    * @brief 计算测量函数的雅可比矩阵
    */
-  JacobiMeasurement measurement_jacobian(value_type dt) const noexcept
+  JacobiMeasurement
+  measurement_jacobian(value_type dt,
+                       const Vector3 &angular_displacement) const noexcept
   {
     JacobiMeasurement result{JacobiMeasurement::Zero()};
 
     // 角位移对旋转误差的导数
-    result.template block<3, 3>(0, 6) = Matrix3::Identity();
+    result.template block<3, 3>(0, 6)
+        = Attitude::leftJacobianInverse(-angular_displacement);
 
-    // 角位移对陀螺仪零偏的导数 $-I_3 * \delta t$
-    result.template block<3, 3>(0, 12) = -Matrix3::Identity() * dt;
+    // // 角位移对陀螺仪零偏的导数 $-I_3 * \delta t$
+    // result.template block<3, 3>(0, 12) = -Matrix3::Identity() * dt;
 
     auto velocity_norm{nominal_state_.linear_velocity_.norm()};
     if (velocity_norm > static_cast<value_type>(1e-6))
