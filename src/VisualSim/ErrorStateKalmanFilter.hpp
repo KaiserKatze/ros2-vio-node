@@ -63,7 +63,8 @@ public:
     Vector3 position_error_{Vector3::Zero()};
     // 线速度误差
     Vector3 linear_velocity_error_{Vector3::Zero()};
-    // 旋转误差的轴角表示
+    // 旋转误差的轴角表示 $\delta\theta$
+    // 满足 $\delta R = \Exp(\hat{\delta\theta})$ 和 $R_t = R \delta R$
     Vector3 rotation_error_{Vector3::Zero()};
     // 加速度计零偏误差
     Vector3 accelerometer_bias_error_{Vector3::Zero()};
@@ -389,14 +390,9 @@ private:
     nominal_state_.linear_velocity_ += error_state_.template segment<3>(3);
     // 更新姿态: q = q * exp(d_theta)
     auto d_theta{error_state_.template segment<3>(6)};
-    value_type d_theta_norm{d_theta.norm()};
-    Attitude d_attitude{};
-    if (d_theta_norm > static_cast<value_type>(1e-6))
-    {
-      d_attitude = Attitude::exp(d_theta);
-    }
     nominal_state_.attitude_
-        = (Attitude{nominal_state_.attitude_} * d_attitude).unit_quaternion();
+        = (Attitude{nominal_state_.attitude_} * Attitude::exp(d_theta))
+              .unit_quaternion();
     // 更新零偏: b = b + db
     nominal_state_.accelerometer_bias_ += error_state_.template segment<3>(9);
     nominal_state_.gyroscope_bias_ += error_state_.template segment<3>(12);
