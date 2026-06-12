@@ -320,7 +320,7 @@ public:
     Vector3 angular_displacement{d_attitude.log()};
 
     // 构造 6x18 观测雅可比阵
-    JacobiMeasurement H{measurement_jacobian(dt, angular_displacement)};
+    JacobiMeasurement H{measurement_jacobian(angular_displacement)};
 
     // 构造 6x6 观测协方差 (数字越小，置信度越高)
     CovarianceMeasurement V{CovarianceMeasurement::Identity()};
@@ -509,19 +509,16 @@ private:
 
   /**
    * @brief 计算测量函数的雅可比矩阵
+   * @param angular_displacement 利用 IMU 数据估计得到的相邻两个图像帧间的角位移
    */
   JacobiMeasurement
-  measurement_jacobian(value_type dt,
-                       const Vector3 &angular_displacement) const noexcept
+  measurement_jacobian(const Vector3 &angular_displacement) const noexcept
   {
     JacobiMeasurement result{JacobiMeasurement::Zero()};
 
     // 角位移对旋转误差的导数
     result.template block<3, 3>(0, 6)
         = Attitude::leftJacobianInverse(-angular_displacement);
-
-    // // 角位移对陀螺仪零偏的导数 $-I_3 * \delta t$
-    // result.template block<3, 3>(0, 12) = -Matrix3::Identity() * dt;
 
     auto velocity_norm{nominal_state_.linear_velocity_.norm()};
     if (velocity_norm > static_cast<value_type>(1e-6))
