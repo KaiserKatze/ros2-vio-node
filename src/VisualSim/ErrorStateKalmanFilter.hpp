@@ -325,9 +325,9 @@ public:
     // 构造 6x6 观测协方差 (数字越小，置信度越高)
     CovarianceMeasurement V{CovarianceMeasurement::Identity()};
     // 角位移估计量     较高置信度 (1e-5)
-    V.template block<3, 3>(0, 0) *= static_cast<value_type>(1e-5);
+    V.template block<3, 3>(0, 0) *= confidence_angular_displacement_;
     // 平移方向估计量   较低置信度 (1e-3)
-    V.template block<3, 3>(3, 3) *= static_cast<value_type>(1e-3);
+    V.template block<3, 3>(3, 3) *= confidence_normalized_translation_;
 
     // 卡尔曼增益
     KalmanGain K{kalman_gain(error_state_covariance_, H, V)};
@@ -596,6 +596,10 @@ private:
   NominalStateVariable nominal_state_{};
   // 误差状态
   ErrorStateImpl error_state_{ErrorStateImpl::Zero()};
+  // 单目视觉估计角位移置信度
+  value_type confidence_angular_displacement_{1e-4};
+  // 单目视觉估计平移方向置信度
+  value_type confidence_normalized_translation_{1e-4};
   // 陀螺仪白噪声密度 (单位: rad / s / sqrt(Hz))
   value_type gyroscope_noise_density_{0.0};
   // 陀螺仪零偏随机游走 (单位: rad / s^2 / sqrt(Hz))

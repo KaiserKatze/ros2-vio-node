@@ -142,6 +142,9 @@ private:
   SensorYaml sensor_config_imu0_{};
   SensorYaml sensor_config_truth_{};
 
+  double confidence_angular_displacement_{1e-4};
+  double confidence_normalized_translation_{1e-4};
+
   // 引入 ESKF 松耦合姿态解算器，替代原本精度较低的 opencv 线性卡尔曼解算模型
   using ESKF = ErrorStateKalmanFilter<double>;
   ESKF filter_;
@@ -1040,6 +1043,14 @@ public:
     const std::string path_truth_yaml{
         this->get_parameter("path_truth_yaml").as_string(),
     };
+
+    this->declare_parameter("confidence_angular_displacement", 1e-4);
+    confidence_angular_displacement_
+        = this->get_parameter("confidence_angular_displacement").as_double();
+
+    this->declare_parameter("confidence_normalized_translation", 1e-4);
+    confidence_normalized_translation_
+        = this->get_parameter("confidence_normalized_translation").as_double();
 
     if (path_estimation_csv.empty())
     {

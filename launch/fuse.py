@@ -51,6 +51,10 @@ def generate_launch_description():
         "path_truth_csv": path_truth_csv,
         # 真实数据变换矩阵
         "path_truth_yaml": path_truth_yaml,
+        # 单目视觉估计角位移置信度
+        "confidence_angular_displacement": 1e-4,
+        # 单目视觉估计平移方向置信度
+        "confidence_normalized_translation": 1e-4,
     }
 
     fuse_node = Node(
@@ -76,8 +80,7 @@ def generate_launch_description():
     return LaunchDescription(
         [fuse_node]
         if debug
-        else
-        [
+        else [
             rviz_node,
             fuse_node,
         ]
