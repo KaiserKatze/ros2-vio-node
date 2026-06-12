@@ -561,18 +561,25 @@ private:
     // 世界坐标系下的重力加速度
     const Eigen::Vector3d gravity_world{0.0, 0.0, -gravity_world_norm};
 
-    // 初始状态
-    Eigen::Vector3d estimated_position_pi{Eigen::Vector3d::Zero()};
-    Eigen::Vector3d estimated_velocity_pi{Eigen::Vector3d::Zero()};
-    Eigen::Quaterniond estimated_attitude_pi{Eigen::Quaterniond::Identity()};
+    // 显式分离并固定预积分的“参考基准”（起始状态 P0, V0, R0）
+    Eigen::Vector3d P0{Eigen::Vector3d::Zero()};
+    Eigen::Vector3d V0{Eigen::Vector3d::Zero()};
+    Eigen::Quaterniond R0{Eigen::Quaterniond::Identity()};
+
+    // 如果启用了真值初始位姿，则将真值赋给起始状态
+    if (use_true_init_pose_ && !data_truth_.empty())
+    {
+      P0 = data_truth_[0].position_;
+      R0 = data_truth_[0].attitude_;
+      V0 = data_truth_[0].velocity_;
+    }
+
+    // 预积分的相对变化量（从 P0 时刻到当前时刻）
     Eigen::Quaterniond delta_R{Eigen::Quaterniond::Identity()};
     Eigen::Vector3d delta_p{Eigen::Vector3d::Zero()};
     Eigen::Vector3d delta_v{Eigen::Vector3d::Zero()};
     double delta_t{0.0};
     double t_prev{0.0};
-
-    // 统计信息
-    Eigen::Vector3d bound_pi{Eigen::Vector3d::Zero()};
 
     for (bool first_loop{true}; const DatumImu &datum_imu : data_imu_)
     {
@@ -586,43 +593,49 @@ private:
 
       // 时间步长
       const double dt{t_samp - t_prev};
+      // 严谨来说需减去陀螺仪零偏
       auto drotvec{dt * datum_imu.angular_velocity_};
-      Eigen::Quaterniond dR{
-          Eigen::AngleAxisd{
-              drotvec.norm(),
-              drotvec.normalized(),
-          },
-      };
+      double angle = drotvec.norm();
+
+      // 仿照 ORB-SLAM3 增加小角度奇异性防范（避免 NaN 污染）
+      Eigen::Quaterniond dR;
+      if (angle > 1e-6)
+      {
+        dR = Eigen::Quaterniond{Eigen::AngleAxisd{angle, drotvec / angle}};
+      }
+      else
+      {
+        // 极小角速度退化为一阶泰勒近似
+        dR = Eigen::Quaterniond{1.0, 0.5 * drotvec.x(), 0.5 * drotvec.y(),
+                                0.5 * drotvec.z()};
+        dR.normalize();
+      }
+
+      // 严谨来说需减去加速度计零偏
       auto dv{dt * datum_imu.linear_acceleration_};
       auto dp{0.5 * dt * dv};
+
+      // 累积相对预积分量
       delta_t += dt;
       delta_p += delta_v * dt + delta_R * dp;
       delta_v += delta_R * dv;
       delta_R = delta_R * dR;
       t_prev  = t_samp;
 
-      estimated_position_pi = estimated_position_pi
-                              + delta_t * estimated_velocity_pi
-                              + 0.5 * delta_t * delta_t * gravity_world
-                              + estimated_attitude_pi * delta_p;
-      estimated_velocity_pi = estimated_velocity_pi + delta_t * gravity_world
-                              + estimated_attitude_pi * delta_v;
-      estimated_attitude_pi = estimated_attitude_pi * delta_R;
+      // 利用固定的初始态 (P0, V0, R0) 以及 预积分量 计算当前时刻的全局位姿。
+      // 绝不要把计算出的 current_xxx 又反向赋值回去进行递归！
+      Eigen::Vector3d current_position{P0 + V0 * delta_t
+                                       + 0.5 * delta_t * delta_t * gravity_world
+                                       + R0 * delta_p};
 
-      PushPose(msg_path_preintegrate_, datum_imu.timestamp_,
-               estimated_attitude_pi, estimated_position_pi);
+      Eigen::Vector3d current_velocity{V0 + delta_t * gravity_world
+                                       + R0 * delta_v};
 
-      // 更新统计信息
-      bound_pi.x()
-          = std::max(bound_pi.x(), std::abs(estimated_position_pi.x()));
-      bound_pi.y()
-          = std::max(bound_pi.y(), std::abs(estimated_position_pi.y()));
-      bound_pi.z()
-          = std::max(bound_pi.z(), std::abs(estimated_position_pi.z()));
+      Eigen::Quaterniond current_attitude{R0 * delta_R};
+
+      PushPose(msg_path_preintegrate_, datum_imu.timestamp_, current_attitude,
+               current_position);
     } // end for
-
-    std::print(stderr, "\nBoundary[PI]: [x: {:.4e}, y: {:.4e}, z: {:.4e}]\n",
-               bound_pi.x(), bound_pi.y(), bound_pi.z());
   }
 
   /**
