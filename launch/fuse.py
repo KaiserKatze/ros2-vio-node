@@ -22,8 +22,7 @@ def generate_launch_description():
     cam0_path = mav0_path / "cam1"
     imu0_path = mav0_path / "imu0"
     truth_path = mav0_path / "state_groundtruth_estimate0"
-
-    path_estimation_csv = str(path_workdir / "estimated_motion.csv")
+    path_estimation_csv = str(mav0_path / "estimated_motion.csv")
     path_cam0_yaml = str(cam0_path / "sensor.yaml")
     path_imu_csv = str(imu0_path / "data.csv")
     path_imu_yaml = str(imu0_path / "sensor.yaml")
@@ -63,60 +62,20 @@ def generate_launch_description():
         # 单目视觉估计角位移置信度
         "confidence_angular_displacement": 1e-4,
         # 单目视觉估计平移方向置信度
-        "confidence_normalized_translation": 1e-4,
+        "confidence_normalized_translation": 1e+6,
         # 轨迹估计类的输出目录
         "output_dir": output_dir,
         # 启用的轨迹估计类列表
         "estimators": active_estimators,
     }
 
-    # 构建将在 factory_node 结束后启动的节点列表
-    post_nodes = []
-
-    # 定义各个估计输出对应的 ROS Topic 话题映射
-    topic_mappings = {
-        "FastEstimator": "/fast_est",
-        "EulerEstimator": "/midpoint_est",
-        "RK4Estimator": "/rk4_est",
-        "Preintegrator": "/preintegrate_est",
-        "FuseEstimator": "/fuse_est",
-    }
-
-    # 动态启动各估计轨迹的数据加载与发布器
-    for est_name in active_estimators:
-        csv_filepath = os.path.join(output_dir, f"{est_name}.csv")
-        post_nodes.append(
-            Node(
-                package="euroc_vio",
-                executable="SimpleDataLoader",
-                name=f"loader_{est_name}",
-                output="screen",
-                parameters=[
-                    {
-                        "csv_file": csv_filepath,
-                        "topic_name": topic_mappings[est_name],
-                        "skip_header": True,
-                        "delim": ",",
-                    }
-                ],
-            )
-        )
-
-    post_nodes.append(
-        Node(
-            package="euroc_vio",
-            executable="SimpleDataLoader",
-            name="loader_ground_truth",
-            output="screen",
-            parameters=[
-                {
-                    "csv_file": path_truth_csv,
-                    "topic_name": "/ground_truth",
-                    "skip_header": True,
-                    "delim": ",",
-                }
-            ],
-        )
+    fuse_node = Node(
+        package="euroc_vio",
+        executable="VisualInertial",
+        name="VisualInertial",
+        output="screen",
+        parameters=[params],
+        prefix=prefix,  # 关键配置
     )
 
     if not debug:

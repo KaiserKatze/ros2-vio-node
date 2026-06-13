@@ -87,12 +87,7 @@ struct EstimatorConfig
 class AbstractEstimator
 {
 public:
-  AbstractEstimator(const EstimatorConfig &config) :
-    config_{config}, file_(std::filesystem::path{config.output_dir_}
-                               / std::format("{}.csv", GetName()),
-                           std::ios::trunc)
-  {
-  }
+  AbstractEstimator(const EstimatorConfig &config) : config_{config} {}
 
   virtual ~AbstractEstimator() = default;
 
@@ -107,11 +102,16 @@ public:
    */
   virtual std::string GetName() const = 0;
 
-private:
-  std::ofstream file_;
-
 protected:
   const EstimatorConfig config_;
+  std::ofstream file_;
+
+  std::ofstream OpenFile() const
+  {
+    return std::filesystem::path{config_.output_dir_}
+               / std::format("{}.csv", GetName()),
+           std::ios::trunc;
+  }
 
   /**
    * @brief 初始化导出的 CSV 文件并写入统一的格式头部。
@@ -156,6 +156,11 @@ protected:
 class FastEstimator : public AbstractEstimator
 {
 public:
+  FastEstimator(const EstimatorConfig &config) :
+    AbstractEstimator(config), file_{OpenFile()}
+  {
+  }
+
   /**
    * @brief 通过单目估计相邻相机位姿实现位置与旋转递推。
    */
@@ -175,9 +180,6 @@ public:
     for (size_t i = 0; i + 1 < config_.data_fast_.size(); ++i)
     {
       const DatumFast &datum_fast{config_.data_fast_[i]};
-      const auto angular_displacement_norm{
-          datum_fast.angular_displacement_.norm(),
-      };
       Sophus::SO3d delta_rotation{
           Sophus::SO3d::exp(datum_fast.angular_displacement_)
       };
@@ -207,6 +209,11 @@ public:
 class EulerEstimator : public AbstractEstimator
 {
 public:
+  EulerEstimator(const EstimatorConfig &config) :
+    AbstractEstimator(config), file_{OpenFile()}
+  {
+  }
+
   /**
    * @brief 一阶中值积分法估算状态转移。
    */
@@ -350,6 +357,11 @@ public:
 class Preintegrator : public AbstractEstimator
 {
 public:
+  Preintegrator(const EstimatorConfig &config) :
+    AbstractEstimator(config), file_{OpenFile()}
+  {
+  }
+
   /**
    * @brief 通过固定某一时刻相对累积预积分完成位姿解算。
    */
@@ -498,6 +510,11 @@ private:
   };
 
 public:
+  RK4Estimator(const EstimatorConfig &config) :
+    AbstractEstimator(config), file_{OpenFile()}
+  {
+  }
+
   /**
    * @brief 采用 Boost ODE 求解器实现高精度的姿态和位置推算。
    */
@@ -599,6 +616,11 @@ private:
   using ESKF = ErrorStateKalmanFilter<double>;
 
 public:
+  FuseEstimator(const EstimatorConfig &config) :
+    AbstractEstimator(config), file_{OpenFile()}
+  {
+  }
+
   /**
    * @brief 采用时序异步对齐方式，进行 ESKF 标称状态前推以及视觉观测融合计算。
    */
@@ -659,18 +681,23 @@ public:
     eskf.SetNominalState(init_state);
 
     // 将 YAML 中读取的传感器物理特征噪声传入 ESKF 进行精确的过程协方差计算
-    eskf.SetGyroscopeNoiseDensity(sensor_config_imu0_.gyroscope_noise_density_);
-    eskf.SetGyroscopeRandomWalk(sensor_config_imu0_.gyroscope_random_walk_);
+    eskf.SetGyroscopeNoiseDensity(
+        config_.sensor_config_imu0_.gyroscope_noise_density_
+    );
+    eskf.SetGyroscopeRandomWalk(
+        config_.sensor_config_imu0_.gyroscope_random_walk_
+    );
     eskf.SetAccelerometerNoiseDensity(
-        sensor_config_imu0_.accelerometer_noise_density_
+        config_.sensor_config_imu0_.accelerometer_noise_density_
     );
     eskf.SetAccelerometerRandomWalk(
-        sensor_config_imu0_.accelerometer_random_walk_
+        config_.sensor_config_imu0_.accelerometer_random_walk_
     );
 
-    eskf.confidence_angular_displacement_ = confidence_angular_displacement_;
+    eskf.confidence_angular_displacement_
+        = config_.confidence_angular_displacement_;
     eskf.confidence_normalized_translation_
-        = confidence_normalized_translation_;
+        = config_.confidence_normalized_translation_;
 
     // 顺序迭代离线混合时间轴上的所有传感器事件
     for (const auto &event : events)
@@ -889,23 +916,23 @@ public:
       )};
     }
 
-    estimator_config_.data_fast_ = DatumFast::Load(
-        path_estimation_csv,
-        Sophus::SO3d{
-            sensor_config_cam0_.transform_matrix_.template block<3, 3>(0, 0),
-        }
-    );
-    estimator_config_.data_imu_ = DatumImu::Load(
-        path_imu_csv,
-        Sophus::SO3d{
-            sensor_config_imu0_.transform_matrix_.template block<3, 3>(0, 0),
-        }
-    );
+    estimator_config_.data_fast_
+        = DatumFast::Load(path_estimation_csv,
+                          Sophus::SO3d{
+                              estimator_config_.sensor_config_cam0_
+                                  .transform_matrix_.template block<3, 3>(0, 0),
+                          });
+    estimator_config_.data_imu_
+        = DatumImu::Load(path_imu_csv,
+                         Sophus::SO3d{
+                             estimator_config_.sensor_config_imu0_
+                                 .transform_matrix_.template block<3, 3>(0, 0),
+                         });
     estimator_config_.data_truth_ = DatumTruth::Load(
-        path_truth_csv,
-        Sophus::SO3d{
-            sensor_config_truth_.transform_matrix_.template block<3, 3>(0, 0),
-        }
+        path_truth_csv, Sophus::SO3d{
+                            estimator_config_.sensor_config_truth_
+                                .transform_matrix_.template block<3, 3>(0, 0),
+                        }
     );
 
     // 根据 Launch 动态生成需要的具体评估器。
@@ -962,7 +989,7 @@ public:
     }
     std::print(stderr,
                "[INFO] Estimation finished. CSVs saved to directory: {}\n",
-               output_dir_);
+               estimator_config_.output_dir_);
   }
 };
 

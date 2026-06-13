@@ -8,7 +8,7 @@
 
 #include <Eigen/Dense>
 
-#include <geometry_msgs/msg/pose_stamped>
+#include <geometry_msgs/msg/pose_stamped.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <rclcpp/publisher.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -95,7 +95,7 @@ public:
     this->declare_parameter("delim", ",");
     delim_ = this->get_parameter("delim").as_string()[0];
 
-    const rclcpp::Qos qos{10};
+    const rclcpp::QoS qos{10};
 
     publisher_path_ = this->create_publisher<nav_msgs::msg::Path>(
         std::format("{}/path", topic_name_), qos
