@@ -49,6 +49,7 @@ using namespace std::chrono_literals;
 #include "EvoSim3.hpp"
 #include "SensorYaml.hpp"
 
+#define ENABLE_ERROR_EVALUATION 0
 #define PUBLISH_POSE 1
 
 #define DATASOURCE_EUROC 0x01
@@ -309,8 +310,10 @@ private:
     Eigen::Vector3d estimated_position_fast{Eigen::Vector3d::Zero()};
     Sophus::SO3d estimated_attitude_fast{};
 
+#if (ENABLE_ERROR_EVALUATION)
     // 统计信息
     ErrorEvaluation err_eval_fast{"VisualInertial-Fast-Error.csv", data_truth_};
+#endif
 
     for (size_t i = 0; i + 1 < data_fast_.size(); ++i)
     {
@@ -344,10 +347,12 @@ private:
           = estimated_position_fast + estimated_attitude_fast * delta_position;
       estimated_attitude_fast = estimated_attitude_fast * delta_rotation;
 
+#if (ENABLE_ERROR_EVALUATION)
       err_eval_fast.WriteErrorEvaluation(datum_fast.timestamp_,   //
                                          estimated_attitude_fast, //
                                          estimated_position_fast, //
                                          Eigen::Vector3d::Zero());
+#endif
 
       Eigen::Quaterniond estimated_quaternion_fast{
           estimated_attitude_fast.unit_quaternion()
@@ -466,9 +471,11 @@ private:
       }
     }
 
+#if (ENABLE_ERROR_EVALUATION)
     // 统计信息 (记录使用欧拉法估计位置、线速度产生的绝对误差)
     ErrorEvaluation err_eval_imu{"VisualInertial-Imu-Euler-Error.csv",
                                  data_truth_};
+#endif
 
     DatumImu datum_prev;
     for (bool first_loop{true}; const DatumImu &datum_imu : data_imu_)
@@ -478,10 +485,12 @@ private:
         datum_prev = datum_imu;
         first_loop = false;
 
+#if (ENABLE_ERROR_EVALUATION)
         err_eval_imu.WriteErrorEvaluation(datum_imu.timestamp_,   //
                                           estimated_attitude_imu, //
                                           estimated_position_imu, //
                                           estimated_linear_velocity_imu);
+#endif
 
         continue;
       }
@@ -548,10 +557,12 @@ private:
                estimated_attitude_imu.unit_quaternion(),
                estimated_position_imu);
 
+#if (ENABLE_ERROR_EVALUATION)
       err_eval_imu.WriteErrorEvaluation(datum_imu.timestamp_,   //
                                         estimated_attitude_imu, //
                                         estimated_position_imu, //
                                         estimated_linear_velocity_imu);
+#endif
 
       datum_prev = datum_imu;
     } // end for
@@ -797,9 +808,11 @@ private:
       }
     }
 
+#if (ENABLE_ERROR_EVALUATION)
     // 统计信息 (记录使用龙格贝塔法估计位置、线速度产生的绝对误差)
     ErrorEvaluation err_eval_rk4{"VisualInertial-Imu-RK4-Error.csv",
                                  data_truth_};
+#endif
 
     DatumImu datum_prev;
     for (bool first_loop{true}; const DatumImu &datum_rk : data_imu_)
@@ -809,10 +822,12 @@ private:
         datum_prev = datum_rk;
         first_loop = false;
 
+#if (ENABLE_ERROR_EVALUATION)
         err_eval_rk4.WriteErrorEvaluation(datum_rk.timestamp_,               //
                                           Sophus::SO3d{state.GetAttitude()}, //
                                           state.GetPosition(),               //
                                           state.GetVelocity());
+#endif
 
         continue;
       }
@@ -832,10 +847,12 @@ private:
       PushPose(msg_path_rk4_, datum_rk.timestamp_, state.GetAttitude(),
                state.GetPosition());
 
+#if (ENABLE_ERROR_EVALUATION)
       err_eval_rk4.WriteErrorEvaluation(datum_rk.timestamp_,               //
                                         Sophus::SO3d{state.GetAttitude()}, //
                                         state.GetPosition(),               //
                                         state.GetVelocity());
+#endif
 
       datum_prev = datum_rk;
     } // end for

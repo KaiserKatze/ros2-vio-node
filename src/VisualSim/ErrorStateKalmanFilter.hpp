@@ -567,7 +567,7 @@ private:
     return result;
   }
 
-  static CovarianceMeasurement covariance_measurement() noexcept
+  CovarianceMeasurement covariance_measurement() const noexcept
   {
     CovarianceMeasurement V{CovarianceMeasurement::Identity()};
 #if (ONLY_USE_ANGULAR_DISPLACEMENT)
