@@ -21,6 +21,9 @@
 #include "DatumFast.hpp"
 #include "DatumImu.hpp"
 
+// 选择“只使用角位移”还是“使用角位移和平移方向”
+#define ONLY_USE_ANGULAR_DISPLACEMENT 0
+
 /**
  * @brief 基于松耦合的误差状态卡尔曼滤波，为短航程无人机提供姿态解算功能
  */
@@ -80,7 +83,9 @@ public:
 
 private:
   // 具体取值由 DatumFast 中的成员变量的种类及数量决定
-  static constexpr int dimMonocularData{2 * 3};
+  static constexpr int dimMonocularData{(ONLY_USE_ANGULAR_DISPLACEMENT)
+                                            ? 3
+                                            : 2 * 3};
 
   // 具体取值由 ErrorStateVariable 中的成员变量的种类及数量决定
   static constexpr int dimErrorState{6 * 3};
@@ -319,19 +324,21 @@ public:
     };
     Vector3 angular_displacement{d_attitude.log()};
 
-    // 构造 6x18 观测雅可比阵
+    // 构造观测雅可比阵
     JacobiMeasurement H{measurement_jacobian(angular_displacement)};
 
-    // 构造 6x6 观测协方差 (数字越小，置信度越高)
-    CovarianceMeasurement V{CovarianceMeasurement::Identity()};
-    // 角位移估计量     较高置信度 (1e-5)
-    V.template block<3, 3>(0, 0) *= confidence_angular_displacement_;
-    // 平移方向估计量   较低置信度 (1e-3)
-    V.template block<3, 3>(3, 3) *= confidence_normalized_translation_;
+    // 构造观测协方差 (数字越小，置信度越高)
+    CovarianceMeasurement V{covariance_measurement()};
 
     // 卡尔曼增益
     KalmanGain K{kalman_gain(error_state_covariance_, H, V)};
 
+    // 观测残差向量 = (由相机观测到的角位移和平移方向) - (由 IMU 数据计算得到的角位移和平移方向)
+
+#if (ONLY_USE_ANGULAR_DISPLACEMENT)
+    Vector3 measurement_residue{monocular_data->angular_displacement_
+                                - angular_displacement};
+#else
     // 由 IMU 数据计算得到的平移方向
     Vector3 delta_position{
         nominal_state_.position_ - prev_position_,
@@ -343,16 +350,16 @@ public:
       normalized_translation = delta_position / delta_position_norm;
     }
 
-    // 更新记录
-    prev_attitude_ = nominal_state_.attitude_;
-    prev_position_ = nominal_state_.position_;
-
-    // 观测残差向量 = (由相机观测到的角位移和平移方向) - (由 IMU 数据计算得到的角位移和平移方向)
     Vector6 measurement_residue;
     measurement_residue.template head<3>()
         = monocular_data->angular_displacement_ - angular_displacement;
     measurement_residue.template tail<3>()
         = monocular_data->normalized_translation_ - normalized_translation;
+#endif
+
+    // 更新记录
+    prev_attitude_ = nominal_state_.attitude_;
+    prev_position_ = nominal_state_.position_;
 
     // 更新计算后验误差状态
     error_state_ = K * measurement_residue;
@@ -520,6 +527,8 @@ private:
     result.template block<3, 3>(0, 6)
         = Attitude::leftJacobianInverse(-angular_displacement);
 
+#if (!ONLY_USE_ANGULAR_DISPLACEMENT)
+
     auto velocity_norm{nominal_state_.linear_velocity_.norm()};
     if (velocity_norm > static_cast<value_type>(1e-6))
     {
@@ -530,6 +539,8 @@ private:
              - velocity_direction * velocity_direction.transpose())
             / velocity_norm;
     }
+
+#endif
 
     // 四元数项没有用上？
     // const auto derivative_Q_dtheta{
@@ -554,6 +565,25 @@ private:
         = v.transpose() * a * Eigen::Matrix3d::Identity() + v * a.transpose()
           - a * v.transpose() - w * Sophus::SO3d::hat(a).matrix();
     return result;
+  }
+
+  static CovarianceMeasurement covariance_measurement() noexcept
+  {
+    CovarianceMeasurement V{CovarianceMeasurement::Identity()};
+#if (ONLY_USE_ANGULAR_DISPLACEMENT)
+    // 设置[角位移估计量]的置信度
+    V.diagonal().setConstant(confidence_angular_displacement_);
+#else
+    // 设置[角位移估计量]的置信度
+    V.diagonal().template segment<3>(0).setConstant(
+        confidence_angular_displacement_
+    );
+    // 设置[平移方向估计量]的置信度
+    V.diagonal().template segment<3>(3).setConstant(
+        confidence_normalized_translation_
+    );
+#endif
+    return V;
   }
 
   /**
