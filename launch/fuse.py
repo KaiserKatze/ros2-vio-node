@@ -69,15 +69,6 @@ def generate_launch_description():
         "estimators": active_estimators,
     }
 
-    fuse_node = Node(
-        package="euroc_vio",
-        executable="VisualInertial",
-        name="VisualInertial",
-        output="screen",
-        parameters=[params],
-        prefix=prefix,  # 关键配置
-    )
-
     if not debug:
         post_nodes.append(
             Node(
