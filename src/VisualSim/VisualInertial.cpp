@@ -104,20 +104,28 @@ public:
 
 protected:
   const EstimatorConfig config_;
+
+private:
   std::ofstream file_;
 
-  std::ofstream OpenFile() const
+  void EnsureFileOpen()
   {
-    return std::filesystem::path{config_.output_dir_}
-               / std::format("{}.csv", GetName()),
-           std::ios::trunc;
+    if (file_.is_open())
+    {
+      return;
+    }
+    file_.open(std::filesystem::path{config_.output_dir_}
+                   / std::format("{}.csv", GetName()),
+               std::ios::trunc);
   }
 
+protected:
   /**
    * @brief 初始化导出的 CSV 文件并写入统一的格式头部。
    */
   void InitializeCsv()
   {
+    EnsureFileOpen();
     if (file_.is_open())
     {
       std::print(file_, "#timestamp [ns],"
@@ -156,10 +164,7 @@ protected:
 class FastEstimator : public AbstractEstimator
 {
 public:
-  FastEstimator(const EstimatorConfig &config) :
-    AbstractEstimator(config), file_{OpenFile()}
-  {
-  }
+  FastEstimator(const EstimatorConfig &config) : AbstractEstimator(config) {}
 
   /**
    * @brief 通过单目估计相邻相机位姿实现位置与旋转递推。
@@ -209,10 +214,7 @@ public:
 class EulerEstimator : public AbstractEstimator
 {
 public:
-  EulerEstimator(const EstimatorConfig &config) :
-    AbstractEstimator(config), file_{OpenFile()}
-  {
-  }
+  EulerEstimator(const EstimatorConfig &config) : AbstractEstimator(config) {}
 
   /**
    * @brief 一阶中值积分法估算状态转移。
@@ -357,10 +359,7 @@ public:
 class Preintegrator : public AbstractEstimator
 {
 public:
-  Preintegrator(const EstimatorConfig &config) :
-    AbstractEstimator(config), file_{OpenFile()}
-  {
-  }
+  Preintegrator(const EstimatorConfig &config) : AbstractEstimator(config) {}
 
   /**
    * @brief 通过固定某一时刻相对累积预积分完成位姿解算。
@@ -510,10 +509,7 @@ private:
   };
 
 public:
-  RK4Estimator(const EstimatorConfig &config) :
-    AbstractEstimator(config), file_{OpenFile()}
-  {
-  }
+  RK4Estimator(const EstimatorConfig &config) : AbstractEstimator(config) {}
 
   /**
    * @brief 采用 Boost ODE 求解器实现高精度的姿态和位置推算。
@@ -616,10 +612,7 @@ private:
   using ESKF = ErrorStateKalmanFilter<double>;
 
 public:
-  FuseEstimator(const EstimatorConfig &config) :
-    AbstractEstimator(config), file_{OpenFile()}
-  {
-  }
+  FuseEstimator(const EstimatorConfig &config) : AbstractEstimator(config) {}
 
   /**
    * @brief 采用时序异步对齐方式，进行 ESKF 标称状态前推以及视觉观测融合计算。
