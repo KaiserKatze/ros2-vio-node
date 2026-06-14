@@ -2,6 +2,8 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.logging import get_logger
 from launch.actions import Shutdown
+from launch.actions import RegisterEventHandler
+from launch.event_handlers import OnProcessExit
 
 import pathlib
 import os
@@ -129,6 +131,19 @@ def generate_launch_description():
             )
         )
 
+    # 创建事件处理器，监听 factory_node 的退出事件
+    pose_handler = RegisterEventHandler(
+        event_handler=OnProcessExit(
+            target_action=factory_node,
+            on_exit=lambda event, context: (
+                logger.info("TrajectoryFactory finished. Starting subsequent nodes..."),
+                post_nodes,  # 当 factory_node 退出时，返回这组新节点以执行
+            )[
+                1
+            ],  # 用 Python 的元组技巧确保 on_exit lambda 返回的是节点列表
+        )
+    )
+
     # 核心节点：TrajectoryFactory，通过 on_exit 实现顺序执行
     factory_node = Node(
         package="euroc_vio",
@@ -137,7 +152,6 @@ def generate_launch_description():
         output="screen",
         parameters=[factory_params],
         prefix=prefix,
-        on_exit=post_nodes,  # 等待 factory_node 结束后再启动后续节点
     )
 
-    return LaunchDescription([factory_node])
+    return LaunchDescription([factory_node, pose_handler])
