@@ -1,6 +1,8 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.logging import get_logger
+from launch.actions import Shutdown
+
 import pathlib
 import os
 
@@ -68,17 +70,8 @@ def generate_launch_description():
         "estimators": active_estimators,
     }
 
-    # 执行数据估算的核心生成节点
-    factory_node = Node(
-        package="euroc_vio",
-        executable="VisualInertial",
-        name="TrajectoryFactory",
-        output="screen",
-        parameters=[factory_params],
-        prefix=prefix,  # 关键配置
-    )
-
-    nodes = [factory_node]
+    # 构建将在 factory_node 结束后启动的节点列表
+    post_nodes = []
 
     # 定义各个估计输出对应的 ROS Topic 话题映射
     topic_mappings = {
@@ -92,7 +85,7 @@ def generate_launch_description():
     # 动态启动各估计轨迹的数据加载与发布器
     for est_name in active_estimators:
         csv_filepath = os.path.join(output_dir, f"{est_name}.csv")
-        nodes.append(
+        post_nodes.append(
             Node(
                 package="euroc_vio",
                 executable="SimpleDataLoader",
@@ -109,8 +102,7 @@ def generate_launch_description():
             )
         )
 
-    # 启动真值的数据加载与发布器
-    nodes.append(
+    post_nodes.append(
         Node(
             package="euroc_vio",
             executable="SimpleDataLoader",
@@ -128,13 +120,25 @@ def generate_launch_description():
     )
 
     if not debug:
-        # 启动 RViz 观察整体轨迹发布
-        rviz_node = Node(
-            package="rviz2",
-            executable="rviz2",
-            name="rviz2",
-            output="screen",
+        post_nodes.append(
+            Node(
+                package="rviz2",
+                executable="rviz2",
+                name="rviz2",
+                output="screen",
+                on_exit=Shutdown(),
+            )
         )
-        nodes.append(rviz_node)
 
-    return LaunchDescription(nodes)
+    # 核心节点：TrajectoryFactory，通过 on_exit 实现顺序执行
+    factory_node = Node(
+        package="euroc_vio",
+        executable="VisualInertial",
+        name="TrajectoryFactory",
+        output="screen",
+        parameters=[factory_params],
+        prefix=prefix,
+        on_exit=post_nodes,  # 等待 factory_node 结束后再启动后续节点
+    )
+
+    return LaunchDescription([factory_node])
