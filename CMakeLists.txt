@@ -47,16 +47,6 @@ find_package(Boost REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(Armadillo REQUIRED)
 
-# # --- ROS2 通信接口生成 ---
-# find_package(rosidl_default_generators REQUIRED)
-# rosidl_generate_interfaces(AngularDisplacementAndUnitTranslation
-#   "msg/AngularDisplacementAndUnitTranslation.msg"
-#   DEPENDENCIES
-#   std_msgs
-#   geometry_msgs
-# )
-# ament_export_dependencies(rosidl_default_runtime)
-
 # --- 辅助函数定义 ---
 function(add_ros2_executable node_name source_path)
   add_executable(${node_name} ${source_path})
@@ -66,121 +56,10 @@ function(add_ros2_executable node_name source_path)
     $<INSTALL_INTERFACE:include>
   )
 
-  # # 链接类型支持库 (Jazzy 推荐做法)
-  # rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
-  # target_link_libraries(${node_name} ${cpp_typesupport_target})
-
-  # # 建立显式依赖关系，确保先生成 msg 头文件再编译节点代码
-  # # 使用 ${PROJECT_NAME}__cpp 是最通用的做法
-  # add_dependencies(${node_name} ${PROJECT_NAME}__cpp)
-
   install(TARGETS ${node_name}
     DESTINATION lib/${PROJECT_NAME}
   )
 endfunction()
-
-# # --- 编译 IMU 结点：预处理惯性测量单元数据 ---
-# add_ros2_executable(euroc_imu src/imu.cpp)
-# ament_target_dependencies(euroc_imu
-#   rclcpp
-#   std_msgs
-#   sensor_msgs
-#   geometry_msgs
-#   nav_msgs
-# )
-# target_link_libraries(euroc_imu
-#   Eigen3::Eigen
-#   Boost::boost
-#   ${OpenCV_LIBS}
-# )
-
-# add_ros2_executable(imu_sim src/sim.cpp)
-# ament_target_dependencies(imu_sim
-#   rclcpp
-#   std_msgs
-#   sensor_msgs
-#   geometry_msgs
-#   nav_msgs
-# )
-# target_link_libraries(imu_sim
-#   Boost::boost
-#   ${OpenCV_LIBS}
-# )
-
-# --- 编译 VIO 结点：融合视觉、惯性测量单元数据 ---
-# add_ros2_executable(euroc_vio src/vio.cpp)
-# ament_target_dependencies(euroc_vio
-#   rclcpp
-#   std_msgs
-#   sensor_msgs
-#   geometry_msgs
-#   message_filters
-#   cv_bridge
-#   image_transport
-#   OpenCV
-# )
-# target_link_libraries(euroc_vio
-#   Eigen3::Eigen
-#   Boost::boost
-#   armadillo
-#   ${OpenCV_LIBS}
-# )
-
-# --- 资源安装 ---
-install(DIRECTORY include/${PROJECT_NAME}/
-  DESTINATION include/${PROJECT_NAME}
-)
-install(DIRECTORY rviz/
-  DESTINATION share/${PROJECT_NAME}/rviz
-)
-install(DIRECTORY urdf/
-  DESTINATION share/${PROJECT_NAME}/urdf
-)
-install(DIRECTORY launch/
-  DESTINATION share/${PROJECT_NAME}/launch
-)
-
-# # ===== 目标： 误差分析 CSV 生产 =====
-# add_executable(euroc_rk4_eval src/euroc_rk4_eval.cpp)
-# target_include_directories(euroc_rk4_eval PUBLIC
-#   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-#   $<INSTALL_INTERFACE:include>
-# )
-# install(TARGETS euroc_rk4_eval
-#   DESTINATION debug/euroc_rk4_eval
-# )
-# target_link_libraries(euroc_rk4_eval
-#   Eigen3::Eigen
-#   Boost::boost
-#   ${OpenCV_LIBS}
-# )
-
-# # ===== 目标： CSV 拟合与绘图 =====
-# add_executable(csv_polyfit_plot src/csv_polyfit_plot.cpp)
-
-# target_include_directories(csv_polyfit_plot PUBLIC
-#   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-#   $<INSTALL_INTERFACE:include>
-# )
-# install(TARGETS csv_polyfit_plot
-#   DESTINATION lib/${PROJECT_NAME}
-# )
-# target_link_libraries(csv_polyfit_plot
-#   Eigen3::Eigen
-#   ${OpenCV_LIBS}
-# )
-
-# # ===== 目标： 纯视觉 SLAM =====
-# add_ros2_executable(StereoSlam src/VisualSlam/VisualSlam.cpp)
-# ament_target_dependencies(StereoSlam
-#   rclcpp
-#   geometry_msgs
-#   nav_msgs
-# )
-# target_link_libraries(StereoSlam
-#   Eigen3::Eigen
-#   ${OpenCV_LIBS}
-# )
 
 # ===== 目标： SLAM 仿真数据集生成器 =====
 add_ros2_executable(VisualSim src/VisualSim/VisualSim.cpp)
@@ -196,47 +75,7 @@ target_link_libraries(VisualSim
   ${OpenCV_LIBS}
 )
 
-# # ===== 目标： 纯视觉仿真数据的朝向估计 =====
-# add_ros2_executable(EstimationLoader src/VisualSim/EstimationLoader.cpp)
-# ament_target_dependencies(EstimationLoader
-#   rclcpp
-#   geometry_msgs
-#   nav_msgs
-#   sensor_msgs
-#   cv_bridge
-# )
-# target_link_libraries(EstimationLoader
-#   Eigen3::Eigen
-#   ${OpenCV_LIBS}
-# )
-
-# # ===== 目标： 加载 EuRoC 数据集 (V2_01_easy) 的真值 =====
-# add_ros2_executable(EuRoC_DataLoader src/EuRoC/DataLoader.cpp)
-# ament_target_dependencies(EuRoC_DataLoader
-#   rclcpp
-#   geometry_msgs
-#   nav_msgs
-#   sensor_msgs
-#   cv_bridge
-#   # visualization_msgs
-# )
-# target_link_libraries(EuRoC_DataLoader
-#   Eigen3::Eigen
-#   ${OpenCV_LIBS}
-# )
-
-# # ===== 目标： 加载任意数据集 =====
-# add_ros2_executable(SimpleDataLoader src/DataLoader/DataLoader.cpp)
-# ament_target_dependencies(SimpleDataLoader
-#   rclcpp
-#   nav_msgs
-# )
-# target_link_libraries(SimpleDataLoader
-#   Eigen3::Eigen
-#   ${OpenCV_LIBS}
-# )
-
-# ===== 目标： 融合数据 =====
+# ===== 目标： 融合数据与轨迹估计 =====
 add_ros2_executable(VisualInertial src/VisualSim/VisualInertial.cpp)
 ament_target_dependencies(VisualInertial
   rclcpp
@@ -250,6 +89,31 @@ target_link_libraries(VisualInertial
   yaml-cpp::yaml-cpp
 )
 target_compile_options(VisualInertial PRIVATE -std=c++26 -freflection)
+
+# ===== 目标： 加载生成的 CSV 或 GroundTruth 并发布为 ROS2 话题 =====
+add_ros2_executable(SimpleDataLoader src/DataLoader/DataLoader.cpp)
+ament_target_dependencies(SimpleDataLoader
+  rclcpp
+  nav_msgs
+  geometry_msgs
+)
+target_link_libraries(SimpleDataLoader
+  Eigen3::Eigen
+)
+
+# --- 资源安装 ---
+install(DIRECTORY include/${PROJECT_NAME}/
+  DESTINATION include/${PROJECT_NAME}
+)
+install(DIRECTORY rviz/
+  DESTINATION share/${PROJECT_NAME}/rviz
+)
+install(DIRECTORY urdf/
+  DESTINATION share/${PROJECT_NAME}/urdf
+)
+install(DIRECTORY launch/
+  DESTINATION share/${PROJECT_NAME}/launch
+)
 
 # --- 单元测试 ---
 if(BUILD_TESTING)

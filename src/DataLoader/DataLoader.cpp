@@ -1,4 +1,6 @@
 #include <cstdint>
+#include <filesystem>
+#include <format>
 #include <fstream>
 #include <print>
 #include <string>
@@ -6,30 +8,51 @@
 
 #include <Eigen/Dense>
 
+#include <geometry_msgs/msg/pose_stamped>
 #include <nav_msgs/msg/path.hpp>
+#include <rclcpp/publisher.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include "euroc_vio/AbstractLoader.hpp"
 #include "euroc_vio/main.h"
 
+/**
+ * @brief CSV 位姿数据的物理结构映射。
+ */
 struct Datum
 {
   std::int64_t timestamp;
   // px, py, pz, qw, qx, qy, qz
   std::array<double, 7> value;
 
+  /**
+   * @brief 从 CSV 文件中读取时间戳与位置、姿态四元数。
+   * @param filename CSV 文件的绝对路径。
+   * @param skip_header 是否跳过第一行头部注释。
+   * @param delim 列分隔字符。
+   * @return std::vector<Datum> 读取出的数据集。
+   */
   static std::vector<Datum> ReadCsv(const std::string &filename,
                                     bool skip_header = true, char delim = ',')
   {
     std::vector<Datum> data;
     std::ifstream file(filename);
+    if (!file.is_open())
+    {
+      throw std::runtime_error{std::format("Cannot open requested CSV file: {}",
+                                           filename)};
+    }
     std::string line;
     if (skip_header)
     {
-      std::getline(file, line); // 跳过表头
+      std::getline(file, line);
     }
     while (std::getline(file, line))
     {
+      if (line.empty() || line[0] == '#')
+      {
+        continue;
+      }
       std::stringstream ss(line);
       Datum datum;
       datum.timestamp = AbstractLoader::get_item_as_int64(ss, delim);
@@ -43,44 +66,64 @@ struct Datum
   }
 };
 
+/**
+ * @brief 将指定路径的位姿数据加载并在 ROS 2 框架下发布为 Path 的节点类。
+ */
 class TrajectoryPublisher : public rclcpp::Node
 {
 public:
-  // 构造函数：传入文件路径和发布话题名（可选）
+  /**
+   * @brief 构造函数。
+   */
   explicit TrajectoryPublisher() : Node("TrajectoryPublisher")
   {
-    // 目标数据文件
     this->declare_parameter("csv_file", "");
-    const std::string csv_file{
-        this->get_parameter("csv_file").as_string(),
-    };
+    csv_file_ = this->get_parameter("csv_file").as_string();
 
-    // 话题名称
-    this->declare_parameter("topic_name", "/path_traj");
-    const std::string topic_name{
-        this->get_parameter("topic_name").as_string(),
-    };
+    std::error_code ec;
+    if (csv_file_.empty() || !std::filesystem::is_regular_file(csv_file_, ec))
+    {
+      throw std::runtime_error{"Required configuration paths cannot be empty."};
+    }
 
-    // 是否存在需要跳过的表头
+    this->declare_parameter("topic_name", "/trajectory_est");
+    topic_name_ = this->get_parameter("topic_name").as_string();
+
     this->declare_parameter("skip_header", true);
-    const bool skip_header{
-        this->get_parameter("skip_header").as_bool(),
-    };
+    skip_header_ = this->get_parameter("skip_header").as_bool();
 
-    // 间隔符
     this->declare_parameter("delim", ",");
-    const char delim{
-        this->get_parameter("delim").as_string()[0],
-    };
+    delim_ = this->get_parameter("delim").as_string()[0];
 
-    // 1. 获取文件路径并解析
-    raw_data_ = Datum::ReadCsv(csv_file, skip_header, delim);
+    const rclcpp::Qos qos{10};
+
+    publisher_path_ = this->create_publisher<nav_msgs::msg::Path>(
+        std::format("{}/path", topic_name_), qos
+    );
+    publisher_pose_ = this->create_publisher<nav_msgs::msg::Path>(
+        std::format("{}/pose", topic_name_), qos
+    );
+
+    LoadCsv();
+
+    // 开启周期定时器发布轨迹话题与实时重试
+    timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(50),
+        std::bind(&TrajectoryPublisher::publish_trajectory, this)
+    );
+  }
+
+private:
+  /**
+   * @brief 尝试加载 CSV 数据文件，若存在且解析成功，则完成 Path 格式组装。
+   */
+  void LoadCsv()
+  {
+    raw_data_ = Datum::ReadCsv(csv_file_, skip_header_, delim_);
     if (raw_data_.empty())
     {
       throw std::runtime_error("CSV 文件为空或无有效数据");
     }
-
-    // 2. 构建完整的 Path 消息（将所有位姿一次性加入）
     path_msg_.header.frame_id = DEFAULT_FRAME_ID;
     for (const auto &d : raw_data_)
     {
@@ -96,18 +139,13 @@ public:
       pose.pose.orientation.z = d.value[6];
       path_msg_.poses.push_back(pose);
     }
-
-    // 3. 创建发布者
-    publisher_path_
-        = this->create_publisher<nav_msgs::msg::Path>(topic_name, 10);
-
-    // 4. 使用定时器周期性发布完整轨迹（确保新订阅者也能收到）
-    timer_ = this->create_wall_timer(
-        std::chrono::seconds(1), // 1 Hz 发布
-        std::bind(&TrajectoryPublisher::publish_trajectory, this));
+    std::print(stderr, "[INFO] Loaded {} poses from file: {}\n",
+               raw_data_.size(), csv_file_);
   }
 
-private:
+  /**
+   * @brief 定时发布轨迹和最新位置位姿的函数。
+   */
   void publish_trajectory()
   {
     const auto now{this->now()};
@@ -115,6 +153,11 @@ private:
     publisher_path_->publish(path_msg_);
 
     static size_t index{0};
+    if (raw_data_.empty())
+    {
+      return;
+    }
+
     const Datum &d{raw_data_[index]};
     nav_msgs::msg::Path path_pose_msg;
     path_pose_msg.header.frame_id = DEFAULT_FRAME_ID;
@@ -129,8 +172,15 @@ private:
     pose.pose.orientation.y = d.value[5];
     pose.pose.orientation.z = d.value[6];
     path_pose_msg.poses.push_back(pose);
+    publisher_pose_->publish(path_pose_msg);
+
     index = (index + 1) % raw_data_.size();
   }
+
+  std::string csv_file_;
+  std::string topic_name_;
+  bool skip_header_;
+  char delim_;
 
   std::vector<Datum> raw_data_;
   nav_msgs::msg::Path path_msg_;
@@ -142,17 +192,15 @@ private:
 int main(int argc, char **argv)
 {
   rclcpp::init(argc, argv);
-
   try
   {
     auto node = std::make_shared<TrajectoryPublisher>();
-    rclcpp::spin(node); // 保持节点运行，定时发布
+    rclcpp::spin(node);
   }
   catch (const std::exception &ex)
   {
     std::println(stderr, "[ERROR] {}", ex.what());
   }
-
   rclcpp::shutdown();
   return 0;
 }

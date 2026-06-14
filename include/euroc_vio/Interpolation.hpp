@@ -27,18 +27,10 @@ static DataType Interpolate(const std::vector<DataType> &data,
   }
   if (timestamp <= data.front().timestamp_)
   {
-    // if (timestamp < data.front().timestamp_)
-    // {
-    //   std::print(stderr, "[WARN] 插值时间戳早于真实数据!\n");
-    // }
     return data.front();
   }
   if (timestamp >= data.back().timestamp_)
   {
-    // if (timestamp > data.back().timestamp_)
-    // {
-    //   std::print(stderr, "[WARN] 插值时间戳晚于真实数据!\n");
-    // }
     return data.back();
   }
 

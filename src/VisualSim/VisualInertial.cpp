@@ -8,13 +8,14 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
-#include <meta>
+#include <memory>
 #include <print>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 using namespace std::chrono_literals;
 
@@ -28,12 +29,8 @@ using namespace std::chrono_literals;
 #include <opencv2/core/check.hpp>
 #include <opencv2/core/eigen.hpp>
 
-#include <geometry_msgs/msg/pose_stamped.hpp>
-#include <nav_msgs/msg/path.hpp>
-#include <rclcpp/publisher.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/time.hpp>
-#include <sensor_msgs/msg/image.hpp>
 
 #include "ErrorStateKalmanFilter.hpp"
 #include "ImuState.hpp"
@@ -45,364 +42,191 @@ using namespace std::chrono_literals;
 #include "DatumFast.hpp"
 #include "DatumImu.hpp"
 #include "DatumTruth.hpp"
-#include "ErrorEvaluation.hpp"
-#include "EvoSim3.hpp"
 #include "SensorYaml.hpp"
 
-#define ENABLE_ERROR_EVALUATION 0
-#define PUBLISH_POSE 1
-
-#define DATASOURCE_EUROC 0x01
-#define DATASOURCE_SIM 0x10
-#define DATASOURCE DATASOURCE_SIM
-
 /**
- * @brief 从指定文件中，读取角位移向量和单位化平移向量，通过一阶积分计算姿态、轨迹
+ * @brief 统一的评估器配置与输入数据结构体。
+ *        整合了传感器物理外参、置信度常数、初始配置以及估算所需的所有时序数据集，
+ *        以便通过单一结构体实例对各估算器派生类进行统一构造。
  */
-struct VisualInertial : public rclcpp::Node
+struct EstimatorConfig
 {
-  double gravity_world_norm{9.81};
+  // 物理常数与初始化配置
 
-private:
-#pragma region PRIVATE_MEMBER_VARIABLES
-
-  bool use_evo_sim3_{false};
-  bool use_true_translation_in_fast_{false};
+  // 世界坐标系下的重力加速度大小 [m/s^2]
+  double gravity_world_norm_{9.81};
+  // 是否采用初始时刻真值作为状态初值
   bool use_true_init_pose_{false};
 
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_fast_{
-      create_publisher<nav_msgs::msg::Path>("/path_fast_est", rclcpp::QoS{10}),
-  };
-  nav_msgs::msg::Path msg_path_fast_;
-#if (PUBLISH_POSE)
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_pose_fast_{
-      create_publisher<nav_msgs::msg::Path>("/pose_fast_est", rclcpp::QoS{10}),
-  };
-#endif
-
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_imu_{
-      create_publisher<nav_msgs::msg::Path>("/path_imu_est", rclcpp::QoS{10}),
-  };
-  nav_msgs::msg::Path msg_path_imu_;
-#if (PUBLISH_POSE)
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_pose_imu_{
-      create_publisher<nav_msgs::msg::Path>("/pose_imu_est", rclcpp::QoS{10}),
-  };
-#endif
-
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_rk4_{
-      create_publisher<nav_msgs::msg::Path>("/path_rk4_est", rclcpp::QoS{10}),
-  };
-  nav_msgs::msg::Path msg_path_rk4_;
-#if (PUBLISH_POSE)
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_pose_rk4_{
-      create_publisher<nav_msgs::msg::Path>("/pose_rk4_est", rclcpp::QoS{10}),
-  };
-#endif
-
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr
-      publisher_path_preintegrate_{
-          create_publisher<nav_msgs::msg::Path>("/path_preintegrate_est",
-                                                rclcpp::QoS{10}),
-      };
-  nav_msgs::msg::Path msg_path_preintegrate_;
-#if (PUBLISH_POSE)
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr
-      publisher_pose_preintegrate_{
-          create_publisher<nav_msgs::msg::Path>("/pose_preintegrate_est",
-                                                rclcpp::QoS{10}),
-      };
-#endif
-
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_fuse_{
-      create_publisher<nav_msgs::msg::Path>("/path_fuse_est", rclcpp::QoS{10}),
-  };
-  nav_msgs::msg::Path msg_path_fuse_;
-#if (PUBLISH_POSE)
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_pose_fuse_{
-      create_publisher<nav_msgs::msg::Path>("/pose_fuse_est", rclcpp::QoS{10}),
-  };
-#endif
-
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_truth_{
-      create_publisher<nav_msgs::msg::Path>("/path_truth", rclcpp::QoS{10}),
-  };
-  nav_msgs::msg::Path msg_path_truth_;
-#if (PUBLISH_POSE)
-  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_pose_truth_{
-      create_publisher<nav_msgs::msg::Path>("/pose_truth", rclcpp::QoS{10}),
-  };
-#endif
-
-  std::string path_truth_csv_;
-
-  std::vector<DatumFast> data_fast_{};
-  std::vector<DatumImu> data_imu_{};
-  std::vector<DatumTruth> data_truth_{};
-  SensorYaml sensor_config_cam0_{};
-  SensorYaml sensor_config_imu0_{};
-  SensorYaml sensor_config_truth_{};
+  // 算法置信度参数 (用于卡尔曼滤波观测噪声协方差)
 
   double confidence_angular_displacement_{1e-4};
   double confidence_normalized_translation_{1e-4};
 
-  // 引入 ESKF 松耦合姿态解算器，替代原本精度较低的 opencv 线性卡尔曼解算模型
-  using ESKF = ErrorStateKalmanFilter<double>;
-  ESKF filter_;
+  // 传感器外参及物理噪声等配置文件
 
-#pragma endregion
+  SensorYaml sensor_config_cam0_{};
+  SensorYaml sensor_config_imu0_{};
+  SensorYaml sensor_config_truth_{};
 
-private:
-#pragma region ROS2_UTILITY
+  // 评估所需的传感器时序输入数据集
 
-  void PushPose(nav_msgs::msg::Path &msg_path, const std::int64_t timestamp,
-                const Eigen::Quaterniond &attitude,
-                const Eigen::Vector3d &position)
+  std::vector<DatumFast> data_fast_{};
+  std::vector<DatumImu> data_imu_{};
+  std::vector<DatumTruth> data_truth_{};
+
+  // 系统文件输入输出配置
+
+  // 估算结果 CSV 文件的输出保存目录路径
+  std::string output_dir_{"."};
+};
+
+/**
+ * @brief 轨迹估计抽象基类，规范了所有物理状态估算器的接口。
+ */
+class AbstractEstimator
+{
+public:
+  AbstractEstimator(const EstimatorConfig &config) :
+    config_{config}, file_(std::filesystem::path{config.output_dir_}
+                               / std::format("{}.csv", GetName()),
+                           std::ios::trunc)
   {
-    geometry_msgs::msg::PoseStamped msg_pose;
-    msg_pose.header.frame_id = DEFAULT_FRAME_ID;
-    msg_pose.header.stamp    = rclcpp::Time{timestamp};
-
-    msg_pose.pose.position.x = position.x();
-    msg_pose.pose.position.y = position.y();
-    msg_pose.pose.position.z = position.z();
-
-    msg_pose.pose.orientation.w = attitude.w();
-    msg_pose.pose.orientation.x = attitude.x();
-    msg_pose.pose.orientation.y = attitude.y();
-    msg_pose.pose.orientation.z = attitude.z();
-
-    msg_path.poses.push_back(msg_pose);
   }
 
-  void PublishPathFast()
-  {
-    if (msg_path_fast_.poses.empty())
-    {
-      return;
-    }
-    msg_path_fast_.header.stamp = msg_path_fast_.poses.back().header.stamp;
-    publisher_path_fast_->publish(msg_path_fast_);
-  }
-
-  void PublishPathImuEuler()
-  {
-    if (msg_path_imu_.poses.empty())
-    {
-      return;
-    }
-    msg_path_imu_.header.stamp = msg_path_imu_.poses.back().header.stamp;
-    publisher_path_imu_->publish(msg_path_imu_);
-  }
-
-  void PublishPathPreintegrate()
-  {
-    if (msg_path_preintegrate_.poses.empty())
-    {
-      return;
-    }
-    msg_path_preintegrate_.header.stamp
-        = msg_path_preintegrate_.poses.back().header.stamp;
-    publisher_path_preintegrate_->publish(msg_path_preintegrate_);
-  }
-
-  void PublishPathImuRK4()
-  {
-    if (msg_path_rk4_.poses.empty())
-    {
-      return;
-    }
-    msg_path_rk4_.header.stamp = msg_path_rk4_.poses.back().header.stamp;
-    publisher_path_rk4_->publish(msg_path_rk4_);
-  }
-
-  void PublishPathFuse()
-  {
-    if (msg_path_fuse_.poses.empty())
-    {
-      return;
-    }
-    msg_path_fuse_.header.stamp = msg_path_fuse_.poses.back().header.stamp;
-    publisher_path_fuse_->publish(msg_path_fuse_);
-  }
-
-  void PublishPathTruth()
-  {
-    publisher_path_truth_->publish(msg_path_truth_);
-  }
-
-#if (PUBLISH_POSE)
-  void PublishPoseFast(size_t index)
-  {
-    const auto &msg_pose{msg_path_fast_.poses[index]};
-    nav_msgs::msg::Path msg_path_pose;
-    msg_path_pose.header.frame_id = DEFAULT_FRAME_ID;
-    msg_path_pose.header.stamp    = msg_pose.header.stamp;
-    msg_path_pose.poses.push_back(msg_pose);
-    publisher_pose_fast_->publish(msg_path_pose);
-  }
-
-  void PublishPoseImuEuler(size_t index)
-  {
-    const auto &msg_pose{msg_path_imu_.poses[index]};
-    nav_msgs::msg::Path msg_path_pose;
-    msg_path_pose.header.frame_id = DEFAULT_FRAME_ID;
-    msg_path_pose.header.stamp    = msg_pose.header.stamp;
-    msg_path_pose.poses.push_back(msg_pose);
-    publisher_pose_imu_->publish(msg_path_pose);
-  }
-
-  void PublishPosePreintegrate(size_t index)
-  {
-    const auto &msg_pose{msg_path_preintegrate_.poses[index]};
-    nav_msgs::msg::Path msg_path_pose;
-    msg_path_pose.header.frame_id = DEFAULT_FRAME_ID;
-    msg_path_pose.header.stamp    = msg_pose.header.stamp;
-    msg_path_pose.poses.push_back(msg_pose);
-    publisher_pose_preintegrate_->publish(msg_path_pose);
-  }
-
-  void PublishPoseImuRK4(size_t index)
-  {
-    const auto &msg_pose{msg_path_rk4_.poses[index]};
-    nav_msgs::msg::Path msg_path_pose;
-    msg_path_pose.header.frame_id = DEFAULT_FRAME_ID;
-    msg_path_pose.header.stamp    = msg_pose.header.stamp;
-    msg_path_pose.poses.push_back(msg_pose);
-    publisher_pose_rk4_->publish(msg_path_pose);
-  }
-
-  void PublishPoseFuse(size_t index)
-  {
-    const auto &msg_pose{msg_path_fuse_.poses[index]};
-    nav_msgs::msg::Path msg_path_pose;
-    msg_path_pose.header.frame_id = DEFAULT_FRAME_ID;
-    msg_path_pose.header.stamp    = msg_pose.header.stamp;
-    msg_path_pose.poses.push_back(msg_pose);
-    publisher_pose_fuse_->publish(msg_path_pose);
-  }
-
-  void PublishPoseTruth(size_t index)
-  {
-    const auto &msg_pose{msg_path_truth_.poses[index]};
-    nav_msgs::msg::Path msg_path_pose;
-    msg_path_pose.header.frame_id = DEFAULT_FRAME_ID;
-    msg_path_pose.header.stamp    = msg_pose.header.stamp;
-    msg_path_pose.poses.push_back(msg_pose);
-    publisher_pose_truth_->publish(msg_path_pose);
-  }
-#endif /* PUBLISH_POSE */
-
-#pragma endregion
-
-#pragma region POSE_ESTIMATION
+  virtual ~AbstractEstimator() = default;
 
   /**
-   * @brief 只靠单目相机提供的角位移向量和单位化平移向量估计位姿
+   * @brief 执行轨迹估算，并输出对应的运动轨迹数据。
    */
-  void EstimateFast()
+  virtual void Estimate() = 0;
+
+  /**
+   * @brief 获取当前评估器的名称（用作导出 CSV 的标识名）。
+   * @return 估算器类名的字符串。
+   */
+  virtual std::string GetName() const = 0;
+
+private:
+  std::ofstream file_;
+
+protected:
+  const EstimatorConfig config_;
+
+  /**
+   * @brief 初始化导出的 CSV 文件并写入统一的格式头部。
+   */
+  void InitializeCsv()
   {
-    std::print(stderr, "[INFO] EstimateFast invoked ...\n");
-
-    EvoSim3 evo_sim3_fast{};
-
-    // 初始状态
-    Eigen::Vector3d estimated_position_fast{Eigen::Vector3d::Zero()};
-    Sophus::SO3d estimated_attitude_fast{};
-
-#if (ENABLE_ERROR_EVALUATION)
-    // 统计信息
-    ErrorEvaluation err_eval_fast{"VisualInertial-Fast-Error.csv", data_truth_};
-#endif
-
-    for (size_t i = 0; i + 1 < data_fast_.size(); ++i)
+    if (file_.is_open())
     {
-      const DatumFast &datum_fast{data_fast_[i]};
+      std::print(file_, "#timestamp [ns],"
+                        "p_RS_R_x [m],p_RS_R_y [m],p_RS_R_z [m],"
+                        "q_RS_w [],q_RS_x [],q_RS_y [],q_RS_z []\n");
+    }
+  }
+
+  /**
+   * @brief 将当前状态数据追加入对应的导出 CSV 记录中。
+   * @param timestamp 纳米级整型时间戳。
+   * @param position 估计出的 3 维位置向量。
+   * @param attitude 估计出的四元数旋转状态。
+   */
+  void AppendToCsv(std::int64_t timestamp, const Eigen::Vector3d &position,
+                   const Eigen::Quaterniond &attitude)
+  {
+    if (file_.is_open())
+    {
+      std::print(file_,
+                 // 时间戳
+                 "{:020d},"
+                 // 位置
+                 "{:.18f},{:.18f},{:.18f},"
+                 // 朝向
+                 "{:.18f},{:.18f},{:.18f},{:.18f}\n",
+                 timestamp, position.x(), position.y(), position.z(),
+                 attitude.w(), attitude.x(), attitude.y(), attitude.z());
+    }
+  }
+};
+
+/**
+ * @brief 单目视觉单纯采用角位移与单位化平移估计轨迹的算法类。
+ */
+class FastEstimator : public AbstractEstimator
+{
+public:
+  /**
+   * @brief 通过单目估计相邻相机位姿实现位置与旋转递推。
+   */
+  void Estimate() override
+  {
+    InitializeCsv();
+
+    Eigen::Vector3d estimated_position{Eigen::Vector3d::Zero()};
+    Sophus::SO3d estimated_attitude{};
+
+    if (config_.use_true_init_pose_ && !config_.data_truth_.empty())
+    {
+      estimated_position = config_.data_truth_[0].position_;
+      estimated_attitude = Sophus::SO3d(config_.data_truth_[0].attitude_);
+    }
+
+    for (size_t i = 0; i + 1 < config_.data_fast_.size(); ++i)
+    {
+      const DatumFast &datum_fast{config_.data_fast_[i]};
       const auto angular_displacement_norm{
           datum_fast.angular_displacement_.norm(),
       };
-      Sophus::SO3d delta_rotation{};
-      if (angular_displacement_norm > 1e-6)
-      {
-        delta_rotation = Sophus::SO3d::exp(datum_fast.angular_displacement_);
-      }
+      Sophus::SO3d delta_rotation{
+          Sophus::SO3d::exp(datum_fast.angular_displacement_)
+      };
 
       Eigen::Vector3d delta_position{datum_fast.normalized_translation_};
-      if (use_true_translation_in_fast_)
-      {
-        const DatumFast &datum_fast_next{data_fast_[i + 1]};
-        // 利用插值查找函数 Interpolate 获取 delta_position 对应的真值的范数
-        Eigen::Vector3d true_old_position{
-            Interpolate(data_truth_, datum_fast.timestamp_).position_,
-        };
-        Eigen::Vector3d true_new_position{
-            Interpolate(data_truth_, datum_fast_next.timestamp_).position_,
-        };
-        delta_position = true_new_position - true_old_position;
-      }
 
       // 因为数据集 path_estimation_csv 提供的旋转向量、平移向量是在相机坐标系下的表示
       // 所以应该使用以下状态更新方程
-      estimated_position_fast
-          = estimated_position_fast + estimated_attitude_fast * delta_position;
-      estimated_attitude_fast = estimated_attitude_fast * delta_rotation;
+      estimated_position
+          = estimated_position + estimated_attitude * delta_position;
+      estimated_attitude = estimated_attitude * delta_rotation;
 
-#if (ENABLE_ERROR_EVALUATION)
-      err_eval_fast.WriteErrorEvaluation(datum_fast.timestamp_,   //
-                                         estimated_attitude_fast, //
-                                         estimated_position_fast, //
-                                         Eigen::Vector3d::Zero());
-#endif
-
-      Eigen::Quaterniond estimated_quaternion_fast{
-          estimated_attitude_fast.unit_quaternion()
-      };
-      if (use_evo_sim3_)
-      {
-        evo_sim3_fast.Write(datum_fast.timestamp_, estimated_position_fast,
-                            estimated_quaternion_fast);
-      }
-      else
-      {
-        PushPose(msg_path_fast_, datum_fast.timestamp_,
-                 estimated_quaternion_fast, estimated_position_fast);
-      }
-    } // end for
-
-    if (use_evo_sim3_)
-    {
-      evo_sim3_fast.TransformSim3(path_truth_csv_);
-
-      evo_sim3_fast.Read(
-          [this](std::int64_t timestamp, const Eigen::Quaterniond &attitude,
-                 const Eigen::Vector3d &position)
-          {
-            this->PushPose(this->msg_path_fast_, timestamp, attitude, position);
-          }
-      );
+      AppendToCsv(datum_fast.timestamp_, estimated_position,
+                  estimated_attitude.unit_quaternion());
     }
   }
 
-  /**
-   * @brief 只靠 IMU 提供的角速度向量和加速度向量估计位姿 (梯形方法求解常微分方程)
-   */
-  void EstimateImuEuler()
+  std::string GetName() const override
   {
-    std::print(stderr, "[INFO] EstimateImuEuler invoked ...\n");
+    return "FastEstimator";
+  }
+};
+
+/**
+ * @brief 采用 Euler 梯形积分法实现 IMU 轨迹递推。
+ */
+class EulerEstimator : public AbstractEstimator
+{
+public:
+  /**
+   * @brief 一阶中值积分法估算状态转移。
+   */
+  void Estimate() override
+  {
+    InitializeCsv();
 
     // 世界坐标系下的重力加速度
-    const Eigen::Vector3d gravity_world{0.0, 0.0, -gravity_world_norm};
+    const Eigen::Vector3d gravity_world{-config_.gravity_world_norm_
+                                        * Eigen::Vector3d::UnitZ()};
 
-    // 初始状态
     Eigen::Vector3d estimated_position_imu{Eigen::Vector3d::Zero()};
-    Sophus::SO3d estimated_attitude_imu{/* Eigen::Quaterniond::Identity() */};
+    Sophus::SO3d estimated_attitude_imu{};
     Eigen::Vector3d estimated_linear_velocity_imu{Eigen::Vector3d::Zero()};
 
-    if (use_true_init_pose_ && !data_truth_.empty())
+    if (config_.use_true_init_pose_ && !config_.data_truth_.empty())
     {
-      estimated_position_imu        = data_truth_[0].position_;
-      estimated_attitude_imu        = Sophus::SO3d(data_truth_[0].attitude_);
-      estimated_linear_velocity_imu = data_truth_[0].velocity_;
+      estimated_position_imu = config_.data_truth_[0].position_;
+      estimated_attitude_imu = Sophus::SO3d(config_.data_truth_[0].attitude_);
+      estimated_linear_velocity_imu = config_.data_truth_[0].velocity_;
     }
     else
     {
@@ -412,7 +236,7 @@ private:
 
       DatumImu datum_first;
       DatumImu datum_last;
-      for (bool first_loop{true}; const DatumImu &datum_imu : data_imu_)
+      for (bool first_loop{true}; const DatumImu &datum_imu : config_.data_imu_)
       {
         if (first_loop)
         {
@@ -431,67 +255,22 @@ private:
           datum_last = datum_imu;
           break;
         }
-      } // end for
-      // 静止状态的时长
-      const double time_elapsed_before_takeoff{
-          1e-9f
-              * static_cast<double>(datum_last.timestamp_
-                                    - datum_first.timestamp_),
-      };
-      std::print(stderr, "静止时长: {:.4f} 秒.\n", time_elapsed_before_takeoff);
-      // 机体处于静止状态时，机体坐标系与世界坐标系不一定是重合的。
-      // 以 EuRoC MAV 数据集为例，无人机起飞前，
-      // 其机体坐标系（即 IMU 坐标系）的 X,Y,Z 三轴大致上
-      // 分别与世界坐标系的 Z,-Y,X 三轴对应
-
+      }
       if (!is_orientation_estimated)
       { // 如果尚未预测过初始朝向，就立即进行预测
         estimated_attitude_imu = Sophus::SO3d(zupt.EstimateOrientation());
       }
-
-      {
-        Eigen::Matrix3d estimated_attitude_imu_matrix{
-            estimated_attitude_imu.matrix(),
-        };
-        std::print(stderr,
-                   "[INFO] ZUPT 估计初始姿态为 = [\n"
-                   "\t[{:.2f}, {:.2f}, {:.2f}]\n"
-                   "\t[{:.2f}, {:.2f}, {:.2f}]\n"
-                   "\t[{:.2f}, {:.2f}, {:.2f}]\n"
-                   "]\n",
-                   estimated_attitude_imu_matrix(0, 0),
-                   estimated_attitude_imu_matrix(0, 1),
-                   estimated_attitude_imu_matrix(0, 2),
-                   estimated_attitude_imu_matrix(1, 0),
-                   estimated_attitude_imu_matrix(1, 1),
-                   estimated_attitude_imu_matrix(1, 2),
-                   estimated_attitude_imu_matrix(2, 0),
-                   estimated_attitude_imu_matrix(2, 1),
-                   estimated_attitude_imu_matrix(2, 2));
-      }
     }
 
-#if (ENABLE_ERROR_EVALUATION)
-    // 统计信息 (记录使用欧拉法估计位置、线速度产生的绝对误差)
-    ErrorEvaluation err_eval_imu{"VisualInertial-Imu-Euler-Error.csv",
-                                 data_truth_};
-#endif
-
     DatumImu datum_prev;
-    for (bool first_loop{true}; const DatumImu &datum_imu : data_imu_)
+    for (bool first_loop{true}; const DatumImu &datum_imu : config_.data_imu_)
     {
       if (first_loop)
       {
         datum_prev = datum_imu;
         first_loop = false;
-
-#if (ENABLE_ERROR_EVALUATION)
-        err_eval_imu.WriteErrorEvaluation(datum_imu.timestamp_,   //
-                                          estimated_attitude_imu, //
-                                          estimated_position_imu, //
-                                          estimated_linear_velocity_imu);
-#endif
-
+        AppendToCsv(datum_imu.timestamp_, estimated_position_imu,
+                    estimated_attitude_imu.unit_quaternion());
         continue;
       }
 
@@ -553,49 +332,54 @@ private:
       // 更新朝向
       estimated_attitude_imu = estimated_new_attitude_imu;
 
-      PushPose(msg_path_imu_, datum_imu.timestamp_,
-               estimated_attitude_imu.unit_quaternion(),
-               estimated_position_imu);
-
-#if (ENABLE_ERROR_EVALUATION)
-      err_eval_imu.WriteErrorEvaluation(datum_imu.timestamp_,   //
-                                        estimated_attitude_imu, //
-                                        estimated_position_imu, //
-                                        estimated_linear_velocity_imu);
-#endif
-
+      AppendToCsv(datum_imu.timestamp_, estimated_position_imu,
+                  estimated_attitude_imu.unit_quaternion());
       datum_prev = datum_imu;
-    } // end for
+    }
   }
 
-  void PreintegrateImu()
+  std::string GetName() const override
   {
-    std::print(stderr, "[INFO] PreintegrateImu invoked ...\n");
+    return "EulerEstimator";
+  }
+};
 
-    // 世界坐标系下的重力加速度
-    const Eigen::Vector3d gravity_world{0.0, 0.0, -gravity_world_norm};
+/**
+ * @brief IMU 预积分估计器。
+ */
+class Preintegrator : public AbstractEstimator
+{
+public:
+  /**
+   * @brief 通过固定某一时刻相对累积预积分完成位姿解算。
+   */
+  void Estimate() override
+  {
+    InitializeCsv();
 
-    // 显式分离并固定预积分的“参考基准”（起始状态 P0, V0, R0）
+    const Eigen::Vector3d gravity_world{-config_.gravity_world_norm_
+                                        * Eigen::Vector3d::UnitZ()};
+
+    // 预积分的“参考基准”（起始状态 P0, V0, R0）
     Eigen::Vector3d P0{Eigen::Vector3d::Zero()};
     Eigen::Vector3d V0{Eigen::Vector3d::Zero()};
     Eigen::Quaterniond R0{Eigen::Quaterniond::Identity()};
 
-    // 如果启用了真值初始位姿，则将真值赋给起始状态
-    if (use_true_init_pose_ && !data_truth_.empty())
+    if (config_.use_true_init_pose_ && !config_.data_truth_.empty())
     {
-      P0 = data_truth_[0].position_;
-      R0 = data_truth_[0].attitude_;
-      V0 = data_truth_[0].velocity_;
+      P0 = config_.data_truth_[0].position_;
+      R0 = config_.data_truth_[0].attitude_;
+      V0 = config_.data_truth_[0].velocity_;
     }
 
-    // 预积分的相对变化量（从 P0 时刻到当前时刻）
+    // 预积分的相对变化量（从参考基准时刻到当前时刻）
     Eigen::Quaterniond delta_R{Eigen::Quaterniond::Identity()};
     Eigen::Vector3d delta_p{Eigen::Vector3d::Zero()};
     Eigen::Vector3d delta_v{Eigen::Vector3d::Zero()};
     double delta_t{0.0};
     double t_prev{0.0};
 
-    for (bool first_loop{true}; const DatumImu &datum_imu : data_imu_)
+    for (bool first_loop{true}; const DatumImu &datum_imu : config_.data_imu_)
     {
       double t_samp{1e-9f * static_cast<double>(datum_imu.timestamp_)};
       if (first_loop)
@@ -607,11 +391,9 @@ private:
 
       // 时间步长
       const double dt{t_samp - t_prev};
-      // 严谨来说需减去陀螺仪零偏
       auto drotvec{dt * datum_imu.angular_velocity_};
       double angle = drotvec.norm();
 
-      // 仿照 ORB-SLAM3 增加小角度奇异性防范（避免 NaN 污染）
       Eigen::Quaterniond dR;
       if (angle > 1e-6)
       {
@@ -619,13 +401,11 @@ private:
       }
       else
       {
-        // 极小角速度退化为一阶泰勒近似
         dR = Eigen::Quaterniond{1.0, 0.5 * drotvec.x(), 0.5 * drotvec.y(),
                                 0.5 * drotvec.z()};
         dR.normalize();
       }
 
-      // 严谨来说需减去加速度计零偏
       auto dv{dt * datum_imu.linear_acceleration_};
       auto dp{0.5 * dt * dv};
 
@@ -641,116 +421,114 @@ private:
       Eigen::Vector3d current_position{P0 + V0 * delta_t
                                        + 0.5 * delta_t * delta_t * gravity_world
                                        + R0 * delta_p};
-
-      Eigen::Vector3d current_velocity{V0 + delta_t * gravity_world
-                                       + R0 * delta_v};
-
       Eigen::Quaterniond current_attitude{R0 * delta_R};
 
-      PushPose(msg_path_preintegrate_, datum_imu.timestamp_, current_attitude,
-               current_position);
-    } // end for
+      AppendToCsv(datum_imu.timestamp_, current_position, current_attitude);
+    }
   }
 
-  /**
-   * @brief 只靠 IMU 提供的角速度向量和加速度向量估计位姿 (梯形方法求解常微分方程)
-   */
-  void EstimateImuRK4()
+  std::string GetName() const override
   {
-    std::print(stderr, "[INFO] EstimateImuRK4 invoked ...\n");
+    return "Preintegrator";
+  }
+};
 
-    if (data_imu_.empty())
+/**
+ * @brief 四阶龙格库塔数值分析方法(RK4)处理常微分方程进行状态估计。
+ */
+class RK4Estimator : public AbstractEstimator
+{
+private:
+  // 初始状态
+  ImuState<double> state_;
+
+  // 积分器
+  boost::numeric::odeint::runge_kutta4<ImuState<double>, double,
+                                       ImuDerivative<double>>
+      rk4_;
+
+  struct ImuKinematicsODE
+  {
+    const DatumImu &datum_prev_;
+    const DatumImu &datum_next_;
+    const Eigen::Vector3d &gravity_world_;
+
+    void operator()(const ImuState<double> &x, ImuDerivative<double> &dxdt,
+                    const double t) const
+    {
+      double alpha{
+          (datum_next_.timestamp_ > datum_prev_.timestamp_)
+              ? std::clamp(static_cast<double>((t - datum_prev_.timestamp_)
+                                               / (datum_next_.timestamp_
+                                                  - datum_prev_.timestamp_)),
+                           0.0, 1.0)
+              : 0.0,
+      };
+      const Eigen::Vector3d ang_vel_sensor{
+          datum_prev_.angular_velocity_
+              + (datum_next_.angular_velocity_ - datum_prev_.angular_velocity_)
+                    * alpha,
+      };
+      Eigen::Quaterniond att_world{x.GetAttitude()};
+      Eigen::Vector3d lin_vec_world{x.GetVelocity()};
+      Eigen::Vector3d lin_acc_sensor{
+          datum_prev_.linear_acceleration_
+              + (datum_next_.linear_acceleration_
+                 - datum_prev_.linear_acceleration_)
+                    * alpha,
+      };
+      Eigen::Vector3d lin_acc_world{
+          att_world * lin_acc_sensor + gravity_world_,
+      };
+      Eigen::Quaterniond half_rotation{
+          0.0,
+          0.5 * ang_vel_sensor.x(),
+          0.5 * ang_vel_sensor.y(),
+          0.5 * ang_vel_sensor.z(),
+      };
+      Eigen::Quaterniond att_derivative_world{att_world * half_rotation};
+
+      // 位置导数 = 速度
+      dxdt.SetVelocity(lin_vec_world);
+      // 速度导数 = 加速度
+      dxdt.SetAcceleration(lin_acc_world);
+      // 朝向导数 = 0.5 * 朝向 ** 角速度
+      dxdt.SetAttitudeDerivative(att_derivative_world);
+    }
+  };
+
+public:
+  /**
+   * @brief 采用 Boost ODE 求解器实现高精度的姿态和位置推算。
+   */
+  void Estimate() override
+  {
+    if (config_.data_imu_.empty())
     {
       return;
     }
+    InitializeCsv();
 
-    // 世界坐标系下的重力加速度
-    const Eigen::Vector3d gravity_world{0.0, 0.0, -gravity_world_norm};
+    const Eigen::Vector3d gravity_world{-config_.gravity_world_norm_
+                                        * Eigen::Vector3d::UnitZ()};
+    double ode_time{static_cast<double>(1e-9f
+                                        * config_.data_imu_[0].timestamp_)};
 
-    // 时间
-    double ode_time{static_cast<double>(1e-9f * data_imu_[0].timestamp_)};
-    // 初始状态
-    ImuState<double> state;
-    // 积分器
-    boost::numeric::odeint::runge_kutta4<ImuState<double>, double,
-                                         ImuDerivative<double>>
-        rk4;
-    // 微分方程
-    struct ImuKinematicsODE
+    if (config_.use_true_init_pose_ && !config_.data_truth_.empty())
     {
-      const DatumImu &datum_prev_;
-      const DatumImu &datum_next_;
-      const Eigen::Vector3d &gravity_world_;
-
-      void operator()(const ImuState<double> &x, ImuDerivative<double> &dxdt,
-                      const double t) const
-      {
-        double alpha{
-            (datum_next_.timestamp_ > datum_prev_.timestamp_)
-                ? std::clamp(static_cast<double>((t - datum_prev_.timestamp_)
-                                                 / (datum_next_.timestamp_
-                                                    - datum_prev_.timestamp_)),
-                             0.0, 1.0)
-                : 0.0,
-        };
-        // 传感器参考系下的角速度
-        const Eigen::Vector3d ang_vel_sensor{
-            datum_prev_.angular_velocity_
-                + (datum_next_.angular_velocity_
-                   - datum_prev_.angular_velocity_)
-                      * alpha,
-        };
-        // 提取当前姿态四元数
-        Eigen::Quaterniond att_world{x.GetAttitude()};
-        // 惯性参考系下的线速度
-        Eigen::Vector3d lin_vec_world{x.GetVelocity()};
-        // 传感器参考系下的加速度
-        Eigen::Vector3d lin_acc_sensor{
-            datum_prev_.linear_acceleration_
-                + (datum_next_.linear_acceleration_
-                   - datum_prev_.linear_acceleration_)
-                      * alpha,
-        };
-        // 世界参考系下的加速度
-        Eigen::Vector3d lin_acc_world{
-            att_world * lin_acc_sensor + gravity_world_,
-        };
-        Eigen::Quaterniond half_rotation{
-            0.0,
-            0.5 * ang_vel_sensor.x(),
-            0.5 * ang_vel_sensor.y(),
-            0.5 * ang_vel_sensor.z(),
-        };
-        Eigen::Quaterniond att_derivative_world{att_world * half_rotation};
-
-        // 位置导数 = 速度
-        dxdt.SetVelocity(lin_vec_world);
-
-        // 速度导数 = 加速度
-        dxdt.SetAcceleration(lin_acc_world);
-
-        // 朝向导数 = 0.5 * 朝向 ** 角速度
-        dxdt.SetAttitudeDerivative(att_derivative_world);
-      }
-    };
-
-    if (use_true_init_pose_ && !data_truth_.empty())
-    {
-      state.SetPosition(data_truth_[0].position_);
-      state.SetAttitude(data_truth_[0].attitude_);
-      state.SetVelocity(data_truth_[0].velocity_);
+      state_.SetPosition(config_.data_truth_[0].position_);
+      state_.SetAttitude(config_.data_truth_[0].attitude_);
+      state_.SetVelocity(config_.data_truth_[0].velocity_);
     }
     else
     {
-      // 引入“零速更新”机制，检测起飞时刻
       ZUPT<double> zupt{};
       bool is_orientation_estimated{false};
-      // 初始朝向
       Eigen::Quaterniond estimated_attitude_rk{Eigen::Quaterniond::Identity()};
 
       DatumImu datum_first;
       DatumImu datum_last;
-      for (bool first_loop{true}; const DatumImu &datum_rk : data_imu_)
+      for (bool first_loop{true}; const DatumImu &datum_rk : config_.data_imu_)
       {
         if (first_loop)
         {
@@ -769,70 +547,26 @@ private:
           datum_last = datum_rk;
           break;
         }
-      } // end for
-      // 静止状态的时长
-      const double time_elapsed_before_takeoff{
-          1e-9f
-              * static_cast<double>(datum_last.timestamp_
-                                    - datum_first.timestamp_),
-      };
-      std::print(stderr, "静止时长: {:.4f} 秒.\n", time_elapsed_before_takeoff);
-      // 机体处于静止状态时，机体坐标系与世界坐标系不一定是重合的。
-      // 以 EuRoC MAV 数据集为例，无人机起飞前，
-      // 其机体坐标系（即 IMU 坐标系）的 X,Y,Z 三轴大致上
-      // 分别与世界坐标系的 Z,-Y,X 三轴对应
-
+      }
       if (!is_orientation_estimated)
       { // 如果尚未预测过初始朝向，就立即进行预测
         estimated_attitude_rk = zupt.EstimateOrientation();
       }
-      state.SetAttitude(estimated_attitude_rk);
-
-      {
-        Eigen::Matrix3d estimated_attitude_rk_matrix{estimated_attitude_rk};
-        std::print(stderr,
-                   "[INFO] ZUPT 估计初始姿态为 = [\n"
-                   "\t[{:.2f}, {:.2f}, {:.2f}]\n"
-                   "\t[{:.2f}, {:.2f}, {:.2f}]\n"
-                   "\t[{:.2f}, {:.2f}, {:.2f}]\n"
-                   "]\n",
-                   estimated_attitude_rk_matrix(0, 0),
-                   estimated_attitude_rk_matrix(0, 1),
-                   estimated_attitude_rk_matrix(0, 2),
-                   estimated_attitude_rk_matrix(1, 0),
-                   estimated_attitude_rk_matrix(1, 1),
-                   estimated_attitude_rk_matrix(1, 2),
-                   estimated_attitude_rk_matrix(2, 0),
-                   estimated_attitude_rk_matrix(2, 1),
-                   estimated_attitude_rk_matrix(2, 2));
-      }
+      state_.SetAttitude(estimated_attitude_rk);
     }
 
-#if (ENABLE_ERROR_EVALUATION)
-    // 统计信息 (记录使用龙格贝塔法估计位置、线速度产生的绝对误差)
-    ErrorEvaluation err_eval_rk4{"VisualInertial-Imu-RK4-Error.csv",
-                                 data_truth_};
-#endif
-
     DatumImu datum_prev;
-    for (bool first_loop{true}; const DatumImu &datum_rk : data_imu_)
+    for (bool first_loop{true}; const DatumImu &datum_rk : config_.data_imu_)
     {
       if (first_loop)
       {
         datum_prev = datum_rk;
         first_loop = false;
-
-#if (ENABLE_ERROR_EVALUATION)
-        err_eval_rk4.WriteErrorEvaluation(datum_rk.timestamp_,               //
-                                          Sophus::SO3d{state.GetAttitude()}, //
-                                          state.GetPosition(),               //
-                                          state.GetVelocity());
-#endif
-
+        AppendToCsv(datum_rk.timestamp_, state_.GetPosition(),
+                    state_.GetAttitude());
         continue;
       }
 
-      // 时间步长
       const double dt{
           1e-9f
               * static_cast<double>(datum_rk.timestamp_
@@ -840,138 +574,103 @@ private:
       };
 
       ImuKinematicsODE ode{datum_prev, datum_rk, gravity_world};
-      rk4.do_step(ode, state, ode_time, dt);
+      rk4_.do_step(ode, state_, ode_time, dt);
       ode_time += dt;
-      state.NormalizeAttitude();
+      state_.NormalizeAttitude();
 
-      PushPose(msg_path_rk4_, datum_rk.timestamp_, state.GetAttitude(),
-               state.GetPosition());
-
-#if (ENABLE_ERROR_EVALUATION)
-      err_eval_rk4.WriteErrorEvaluation(datum_rk.timestamp_,               //
-                                        Sophus::SO3d{state.GetAttitude()}, //
-                                        state.GetPosition(),               //
-                                        state.GetVelocity());
-#endif
-
+      AppendToCsv(datum_rk.timestamp_, state_.GetPosition(),
+                  state_.GetAttitude());
       datum_prev = datum_rk;
-    } // end for
+    }
   }
 
-  /**
-   * @brief 将四元数转换为欧拉角 (Roll, Pitch, Yaw)
-   * @param q 表示朝向的 Eigen 四元数
-   * @return Eigen::Vector3d 对应的欧拉角 (roll, pitch, yaw) 向量，单位为弧度
-   */
-  Eigen::Vector3d QuaternionToEuler(const Eigen::Quaterniond &q)
+  std::string GetName() const override
   {
-    Eigen::Vector3d angles;
-    // 计算 roll (绕 x 轴)
-    double sinr_cosp{2 * (q.w() * q.x() + q.y() * q.z())};
-    double cosr_cosp{1 - 2 * (q.x() * q.x() + q.y() * q.y())};
-    angles.x() = std::atan2(sinr_cosp, cosr_cosp);
-
-    // 计算 pitch (绕 y 轴)
-    double sinp{2 * (q.w() * q.y() - q.z() * q.x())};
-    if (std::abs(sinp) >= 1)
-    {
-      angles.y() = std::copysign(M_PI / 2, sinp); // 超出范围时修正为 90 度
-    }
-    else
-    {
-      angles.y() = std::asin(sinp);
-    }
-
-    // 计算 yaw (绕 z 轴)
-    double siny_cosp{2 * (q.w() * q.z() + q.x() * q.y())};
-    double cosy_cosp{1 - 2 * (q.y() * q.y() + q.z() * q.z())};
-    angles.z() = std::atan2(siny_cosp, cosy_cosp);
-
-    return angles;
+    return "RK4Estimator";
   }
+};
 
+/**
+ * @brief 融合估计器，利用 ESKF 松耦合融合单目估计角位移/平移和惯导信息。
+ */
+class FuseEstimator : public AbstractEstimator
+{
+private:
+  using ESKF = ErrorStateKalmanFilter<double>;
+
+public:
   /**
-   * @brief 基于松耦合的误差状态卡尔曼滤波 (ESKF)，
-            融合单目视觉提供的角位移向量、单位化平移向量信息，
-            与 IMU 提供的角速度向量、线加速度向量信息。
+   * @brief 采用时序异步对齐方式，进行 ESKF 标称状态前推以及视觉观测融合计算。
    */
-  void EstimateFuse()
+  void Estimate() override
   {
-    std::print(stderr, "[INFO] EstimateFuse invoked ...\n");
+    InitializeCsv();
 
-    EvoSim3 evo_sim3_fuse{};
-
-#pragma region CREATE_EVENT_SEQUENCE
-
-    // 定义离线统一的时间轴事件结构体，用于交织对齐异步的视觉序列与高频 IMU 序列
     struct TimelineEvent
     {
-      std::int64_t timestamp; // 纳秒级全局统一时间戳
-      bool is_imu;            // 标识当前事件是否属于惯性测量单元
-      size_t index; // 记录当前帧在各自容器(data_fast_或data_imu_)中的原始索引值
+      // 纳秒级全局统一时间戳
+      std::int64_t timestamp;
+      // 标识当前事件是否属于惯性测量单元
+      bool is_imu;
+      // 记录当前帧在各自容器(data_fast_或data_imu_)中的原始索引值
+      size_t index;
     };
 
     std::vector<TimelineEvent> events;
-    events.reserve(data_fast_.size() + data_imu_.size());
+    events.reserve(config_.data_fast_.size() + config_.data_imu_.size());
 
     // 填充单目视觉特征帧信息至时间轴中
-    for (size_t i = 0; i < data_fast_.size(); ++i)
+    for (size_t i = 0; i < config_.data_fast_.size(); ++i)
     {
-      events.push_back({data_fast_[i].timestamp_, false, i});
+      events.push_back({config_.data_fast_[i].timestamp_, false, i});
     }
     // 填充高频惯性特征帧信息至时间轴中
-    for (size_t i = 0; i < data_imu_.size(); ++i)
+    for (size_t i = 0; i < config_.data_imu_.size(); ++i)
     {
-      events.push_back({data_imu_[i].timestamp_, true, i});
+      events.push_back({config_.data_imu_[i].timestamp_, true, i});
     }
 
     // 针对混合时间轴事件根据时间戳升序排序，若时间戳相同则让 IMU 优先处理
     std::ranges::sort(events, std::less<>{}, [](const TimelineEvent &e)
                       { return std::make_tuple(e.timestamp, !e.is_imu); });
 
-#pragma endregion
-
-#pragma region INITIALIZE_ESKF
-
+    ESKF eskf;
     // 初始化 ESKF 的标称状态
     typename ESKF::NominalStateVariable init_state;
-    if (use_true_init_pose_ && !data_truth_.empty())
+
+    if (config_.use_true_init_pose_ && !config_.data_truth_.empty())
     {
-      init_state.position_           = data_truth_[0].position_;
-      init_state.linear_velocity_    = data_truth_[0].velocity_;
-      init_state.attitude_           = data_truth_[0].attitude_;
-      init_state.accelerometer_bias_ = data_truth_[0].bias_accel_;
-      init_state.gyroscope_bias_     = data_truth_[0].bias_gyro_;
-      init_state.gravity_ = -gravity_world_norm * Eigen::Vector3d::UnitZ();
+      init_state.position_           = config_.data_truth_[0].position_;
+      init_state.linear_velocity_    = config_.data_truth_[0].velocity_;
+      init_state.attitude_           = config_.data_truth_[0].attitude_;
+      init_state.accelerometer_bias_ = config_.data_truth_[0].bias_accel_;
+      init_state.gyroscope_bias_     = config_.data_truth_[0].bias_gyro_;
+      init_state.gravity_
+          = -config_.gravity_world_norm_ * Eigen::Vector3d::UnitZ();
     }
     else
     {
       // TODO 尚未编码专用的初始姿态解算机制
-      if (!data_truth_.empty())
+      if (!config_.data_truth_.empty())
       {
-        init_state.attitude_ = data_truth_[0].attitude_;
+        init_state.attitude_ = config_.data_truth_[0].attitude_;
       }
     }
-    filter_.SetNominalState(init_state);
+    eskf.SetNominalState(init_state);
 
     // 将 YAML 中读取的传感器物理特征噪声传入 ESKF 进行精确的过程协方差计算
-    filter_.SetGyroscopeNoiseDensity(
-        sensor_config_imu0_.gyroscope_noise_density_
-    );
-    filter_.SetGyroscopeRandomWalk(sensor_config_imu0_.gyroscope_random_walk_);
-    filter_.SetAccelerometerNoiseDensity(
+    eskf.SetGyroscopeNoiseDensity(sensor_config_imu0_.gyroscope_noise_density_);
+    eskf.SetGyroscopeRandomWalk(sensor_config_imu0_.gyroscope_random_walk_);
+    eskf.SetAccelerometerNoiseDensity(
         sensor_config_imu0_.accelerometer_noise_density_
     );
-    filter_.SetAccelerometerRandomWalk(
+    eskf.SetAccelerometerRandomWalk(
         sensor_config_imu0_.accelerometer_random_walk_
     );
 
-    filter_.confidence_angular_displacement_
-        = this->confidence_angular_displacement_;
-    filter_.confidence_normalized_translation_
-        = this->confidence_normalized_translation_;
-
-#pragma endregion
+    eskf.confidence_angular_displacement_ = confidence_angular_displacement_;
+    eskf.confidence_normalized_translation_
+        = confidence_normalized_translation_;
 
     // 顺序迭代离线混合时间轴上的所有传感器事件
     for (const auto &event : events)
@@ -979,58 +678,47 @@ private:
       if (event.is_imu)
       {
         // 传递高频 IMU 采样数据，执行 ESKF 标称状态前推以及误差状态协方差的时间传播
-        const auto &datum_imu{data_imu_[event.index]};
-        filter_.ImuUpdate(&datum_imu);
+        const auto &datum_imu{config_.data_imu_[event.index]};
+        eskf.ImuUpdate(&datum_imu);
       }
       else
       {
         // 加载当前帧低频单目视觉观测信息并调用 ESKF 的观测融合与后验误差校正
-        const auto &datum_fast{data_fast_[event.index]};
-        filter_.MonocularUpdate(&datum_fast);
+        const auto &datum_fast{config_.data_fast_[event.index]};
+        eskf.MonocularUpdate(&datum_fast);
 
         // 获取融合后的最新名义状态
-        auto state{filter_.GetNominalState()};
-
-        if (use_evo_sim3_)
-        {
-          evo_sim3_fuse.Write(datum_fast.timestamp_, state.position_,
-                              state.attitude_);
-        }
-        else
-        {
-          PushPose(msg_path_fuse_, datum_fast.timestamp_, state.attitude_,
-                   state.position_);
-        }
+        auto state{eskf.GetNominalState()};
+        AppendToCsv(datum_fast.timestamp_, state.position_, state.attitude_);
       }
-    } // end for
-
-    if (use_evo_sim3_)
-    {
-      evo_sim3_fuse.TransformSim3(path_truth_csv_);
-
-      evo_sim3_fuse.Read(
-          [this](std::int64_t timestamp, const Eigen::Quaterniond &attitude,
-                 const Eigen::Vector3d &position)
-          {
-            this->PushPose(this->msg_path_fuse_, timestamp, attitude, position);
-          }
-      );
     }
   }
 
-#pragma endregion
+  std::string GetName() const override
+  {
+    return "FuseEstimator";
+  }
+};
+
+/**
+ * @brief 数据加载管理类，负责配置参数、解析数据集并将数据分发至特定评估器。
+ */
+class TrajectoryFactory : public rclcpp::Node
+{
+private:
+  EstimatorConfig estimator_config_;
+  std::vector<std::unique_ptr<AbstractEstimator>> estimators_;
 
 public:
-  VisualInertial() : Node("StereoSlam1")
+  /**
+   * @brief 构造函数，声明 ROS 参数并初始化读取配置文件和数据集。
+   */
+  TrajectoryFactory() : Node("TrajectoryFactory")
   {
-    this->declare_parameter("use_true_translation_in_fast", false);
-    use_true_translation_in_fast_
-        = this->get_parameter("use_true_translation_in_fast").as_bool();
-
     this->declare_parameter("use_true_init_pose", false);
-    use_true_init_pose_ = this->get_parameter("use_true_init_pose").as_bool();
+    estimator_config_.use_true_init_pose_
+        = this->get_parameter("use_true_init_pose").as_bool();
 
-    // std::filesystem::path{std::getenv("HOME")} / "vio_ws" / "estimated_motion.csv"
     this->declare_parameter("path_estimation_csv", "estimated_motion.csv");
     const std::string path_estimation_csv{
         this->get_parameter("path_estimation_csv").as_string(),
@@ -1041,8 +729,6 @@ public:
         this->get_parameter("path_cam0_yaml").as_string(),
     };
 
-    // "/mnt/e/Documents/mav0/imu0/data.csv"
-    // std::filesystem::path{std::getenv("HOME")} / "vio_ws" / "mav0" / "imu0" / "data.csv"
     this->declare_parameter("path_imu_csv", "");
     const std::string path_imu_csv{
         this->get_parameter("path_imu_csv").as_string(),
@@ -1053,13 +739,10 @@ public:
         this->get_parameter("path_imu_yaml").as_string(),
     };
 
-    // "/mnt/e/Documents/mav0/state_groundtruth_estimate0/data.csv"
-    // std::filesystem::path{std::getenv("HOME")} / "vio_ws" / "mav0" / "state_groundtruth_estimate0" / "data.csv"
     this->declare_parameter("path_truth_csv", "");
     const std::string path_truth_csv{
         this->get_parameter("path_truth_csv").as_string(),
     };
-    path_truth_csv_ = path_truth_csv;
 
     this->declare_parameter("path_truth_yaml", "");
     const std::string path_truth_yaml{
@@ -1067,272 +750,234 @@ public:
     };
 
     this->declare_parameter("confidence_angular_displacement", 1e-4);
-    confidence_angular_displacement_
+    estimator_config_.confidence_angular_displacement_
         = this->get_parameter("confidence_angular_displacement").as_double();
 
     this->declare_parameter("confidence_normalized_translation", 1e-4);
-    confidence_normalized_translation_
+    estimator_config_.confidence_normalized_translation_
         = this->get_parameter("confidence_normalized_translation").as_double();
 
-    if (path_estimation_csv.empty())
-    {
-      throw std::runtime_error{"'path_estimation_csv' not specified."};
-    }
-    if (path_cam0_yaml.empty())
-    {
-      throw std::runtime_error{"'path_cam0_yaml' not specified."};
-    }
-    if (path_imu_csv.empty())
-    {
-      throw std::runtime_error{"'path_imu_csv' not specified."};
-    }
-    if (path_imu_yaml.empty())
-    {
-      throw std::runtime_error{"'path_imu_yaml' not specified."};
-    }
-    if (path_truth_csv.empty())
-    {
-      throw std::runtime_error{"'path_truth_csv' not specified."};
-    }
-    if (path_truth_yaml.empty())
-    {
-      throw std::runtime_error{"'path_truth_yaml' not specified."};
-    }
+    this->declare_parameter("output_dir", ".");
+    estimator_config_.output_dir_
+        = this->get_parameter("output_dir").as_string();
 
-    for (auto path_obj : {path_estimation_csv, path_imu_csv, path_truth_csv})
+    this->declare_parameter("estimators", std::vector<std::string>{});
+    const std::vector<std::string> active_estimators{
+        this->get_parameter("estimators").as_string_array(),
+    };
+
+    std::error_code ec;
+    if (path_estimation_csv.empty()
+        || !std::filesystem::is_regular_file(path_estimation_csv, ec)
+        || path_cam0_yaml.empty()
+        || !std::filesystem::is_regular_file(path_cam0_yaml, ec)
+        || path_imu_csv.empty()
+        || !std::filesystem::is_regular_file(path_imu_csv, ec)
+        || path_imu_yaml.empty()
+        || !std::filesystem::is_regular_file(path_imu_yaml, ec)
+        || path_truth_csv.empty()
+        || !std::filesystem::is_regular_file(path_truth_csv, ec)
+        || path_truth_yaml.empty()
+        || !std::filesystem::is_regular_file(path_truth_yaml, ec))
     {
-      std::error_code ec;
-      if (std::filesystem::is_regular_file(path_obj, ec))
-      {
-        continue;
-      }
-      throw std::runtime_error{std::format("FileNotFound: {}!", path_obj)};
+      throw std::runtime_error{"Required configuration paths cannot be empty."};
     }
 
     auto opt_sensor_config_cam0{SensorYaml::ReadSensorYaml(path_cam0_yaml)};
     if (opt_sensor_config_cam0.has_value())
     {
-      sensor_config_cam0_ = std::move(opt_sensor_config_cam0.value());
+      estimator_config_.sensor_config_cam0_
+          = std::move(opt_sensor_config_cam0.value());
       std::print(stderr,
                  "[INFO] T_BS_cam0 =\n"
                  "\t[[{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}]]\n",
-                 sensor_config_cam0_.transform_matrix_(0, 0),
-                 sensor_config_cam0_.transform_matrix_(0, 1),
-                 sensor_config_cam0_.transform_matrix_(0, 2),
-                 sensor_config_cam0_.transform_matrix_(0, 3),
-                 sensor_config_cam0_.transform_matrix_(1, 0),
-                 sensor_config_cam0_.transform_matrix_(1, 1),
-                 sensor_config_cam0_.transform_matrix_(1, 2),
-                 sensor_config_cam0_.transform_matrix_(1, 3),
-                 sensor_config_cam0_.transform_matrix_(2, 0),
-                 sensor_config_cam0_.transform_matrix_(2, 1),
-                 sensor_config_cam0_.transform_matrix_(2, 2),
-                 sensor_config_cam0_.transform_matrix_(2, 3),
-                 sensor_config_cam0_.transform_matrix_(3, 0),
-                 sensor_config_cam0_.transform_matrix_(3, 1),
-                 sensor_config_cam0_.transform_matrix_(3, 2),
-                 sensor_config_cam0_.transform_matrix_(3, 3));
+                 estimator_config_.sensor_config_cam0_.transform_matrix_(0, 0),
+                 estimator_config_.sensor_config_cam0_.transform_matrix_(0, 1),
+                 estimator_config_.sensor_config_cam0_.transform_matrix_(0, 2),
+                 estimator_config_.sensor_config_cam0_.transform_matrix_(0, 3),
+                 estimator_config_.sensor_config_cam0_.transform_matrix_(1, 0),
+                 estimator_config_.sensor_config_cam0_.transform_matrix_(1, 1),
+                 estimator_config_.sensor_config_cam0_.transform_matrix_(1, 2),
+                 estimator_config_.sensor_config_cam0_.transform_matrix_(1, 3),
+                 estimator_config_.sensor_config_cam0_.transform_matrix_(2, 0),
+                 estimator_config_.sensor_config_cam0_.transform_matrix_(2, 1),
+                 estimator_config_.sensor_config_cam0_.transform_matrix_(2, 2),
+                 estimator_config_.sensor_config_cam0_.transform_matrix_(2, 3),
+                 estimator_config_.sensor_config_cam0_.transform_matrix_(3, 0),
+                 estimator_config_.sensor_config_cam0_.transform_matrix_(3, 1),
+                 estimator_config_.sensor_config_cam0_.transform_matrix_(3, 2),
+                 estimator_config_.sensor_config_cam0_.transform_matrix_(3, 3));
     }
     else
     {
-      throw std::runtime_error{std::format("Fail to parse {}!",
-                                           path_cam0_yaml)};
+      throw std::runtime_error{std::format(
+          "Failed to parse camera config yaml '{}'.", path_cam0_yaml
+      )};
     }
+
     auto opt_sensor_config_imu0{SensorYaml::ReadSensorYaml(path_imu_yaml)};
     if (opt_sensor_config_imu0.has_value())
     {
-      sensor_config_imu0_ = std::move(opt_sensor_config_imu0.value());
+      estimator_config_.sensor_config_imu0_
+          = std::move(opt_sensor_config_imu0.value());
       std::print(stderr,
                  "[INFO] T_BS_imu0 =\n"
                  "\t[[{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}]]\n",
-                 sensor_config_imu0_.transform_matrix_(0, 0),
-                 sensor_config_imu0_.transform_matrix_(0, 1),
-                 sensor_config_imu0_.transform_matrix_(0, 2),
-                 sensor_config_imu0_.transform_matrix_(0, 3),
-                 sensor_config_imu0_.transform_matrix_(1, 0),
-                 sensor_config_imu0_.transform_matrix_(1, 1),
-                 sensor_config_imu0_.transform_matrix_(1, 2),
-                 sensor_config_imu0_.transform_matrix_(1, 3),
-                 sensor_config_imu0_.transform_matrix_(2, 0),
-                 sensor_config_imu0_.transform_matrix_(2, 1),
-                 sensor_config_imu0_.transform_matrix_(2, 2),
-                 sensor_config_imu0_.transform_matrix_(2, 3),
-                 sensor_config_imu0_.transform_matrix_(3, 0),
-                 sensor_config_imu0_.transform_matrix_(3, 1),
-                 sensor_config_imu0_.transform_matrix_(3, 2),
-                 sensor_config_imu0_.transform_matrix_(3, 3));
+                 estimator_config_.sensor_config_imu0_.transform_matrix_(0, 0),
+                 estimator_config_.sensor_config_imu0_.transform_matrix_(0, 1),
+                 estimator_config_.sensor_config_imu0_.transform_matrix_(0, 2),
+                 estimator_config_.sensor_config_imu0_.transform_matrix_(0, 3),
+                 estimator_config_.sensor_config_imu0_.transform_matrix_(1, 0),
+                 estimator_config_.sensor_config_imu0_.transform_matrix_(1, 1),
+                 estimator_config_.sensor_config_imu0_.transform_matrix_(1, 2),
+                 estimator_config_.sensor_config_imu0_.transform_matrix_(1, 3),
+                 estimator_config_.sensor_config_imu0_.transform_matrix_(2, 0),
+                 estimator_config_.sensor_config_imu0_.transform_matrix_(2, 1),
+                 estimator_config_.sensor_config_imu0_.transform_matrix_(2, 2),
+                 estimator_config_.sensor_config_imu0_.transform_matrix_(2, 3),
+                 estimator_config_.sensor_config_imu0_.transform_matrix_(3, 0),
+                 estimator_config_.sensor_config_imu0_.transform_matrix_(3, 1),
+                 estimator_config_.sensor_config_imu0_.transform_matrix_(3, 2),
+                 estimator_config_.sensor_config_imu0_.transform_matrix_(3, 3));
     }
     else
     {
-      throw std::runtime_error{std::format("Fail to parse {}!", path_imu_yaml)};
+      throw std::runtime_error{
+          std::format("Failed to parse IMU config yaml '{}'.", path_imu_yaml)
+      };
     }
+
     auto opt_sensor_config_truth{SensorYaml::ReadSensorYaml(path_truth_yaml)};
     if (opt_sensor_config_truth.has_value())
     {
-      sensor_config_truth_ = std::move(opt_sensor_config_truth.value());
+      estimator_config_.sensor_config_truth_
+          = std::move(opt_sensor_config_truth.value());
       std::print(stderr,
                  "[INFO] T_BS_truth =\n"
                  "\t[[{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}]]\n",
-                 sensor_config_truth_.transform_matrix_(0, 0),
-                 sensor_config_truth_.transform_matrix_(0, 1),
-                 sensor_config_truth_.transform_matrix_(0, 2),
-                 sensor_config_truth_.transform_matrix_(0, 3),
-                 sensor_config_truth_.transform_matrix_(1, 0),
-                 sensor_config_truth_.transform_matrix_(1, 1),
-                 sensor_config_truth_.transform_matrix_(1, 2),
-                 sensor_config_truth_.transform_matrix_(1, 3),
-                 sensor_config_truth_.transform_matrix_(2, 0),
-                 sensor_config_truth_.transform_matrix_(2, 1),
-                 sensor_config_truth_.transform_matrix_(2, 2),
-                 sensor_config_truth_.transform_matrix_(2, 3),
-                 sensor_config_truth_.transform_matrix_(3, 0),
-                 sensor_config_truth_.transform_matrix_(3, 1),
-                 sensor_config_truth_.transform_matrix_(3, 2),
-                 sensor_config_truth_.transform_matrix_(3, 3));
+                 estimator_config_.sensor_config_truth_.transform_matrix_(0, 0),
+                 estimator_config_.sensor_config_truth_.transform_matrix_(0, 1),
+                 estimator_config_.sensor_config_truth_.transform_matrix_(0, 2),
+                 estimator_config_.sensor_config_truth_.transform_matrix_(0, 3),
+                 estimator_config_.sensor_config_truth_.transform_matrix_(1, 0),
+                 estimator_config_.sensor_config_truth_.transform_matrix_(1, 1),
+                 estimator_config_.sensor_config_truth_.transform_matrix_(1, 2),
+                 estimator_config_.sensor_config_truth_.transform_matrix_(1, 3),
+                 estimator_config_.sensor_config_truth_.transform_matrix_(2, 0),
+                 estimator_config_.sensor_config_truth_.transform_matrix_(2, 1),
+                 estimator_config_.sensor_config_truth_.transform_matrix_(2, 2),
+                 estimator_config_.sensor_config_truth_.transform_matrix_(2, 3),
+                 estimator_config_.sensor_config_truth_.transform_matrix_(3, 0),
+                 estimator_config_.sensor_config_truth_.transform_matrix_(3, 1),
+                 estimator_config_.sensor_config_truth_.transform_matrix_(3, 2),
+                 estimator_config_.sensor_config_truth_.transform_matrix_(3,
+                                                                          3));
     }
     else
     {
-      throw std::runtime_error{std::format("Fail to parse {}!",
-                                           path_truth_yaml)};
+      throw std::runtime_error{std::format(
+          "Failed to parse groundtruth config yaml '{}'.", path_truth_yaml
+      )};
     }
 
-    data_fast_ = DatumFast::Load(
+    estimator_config_.data_fast_ = DatumFast::Load(
         path_estimation_csv,
         Sophus::SO3d{
             sensor_config_cam0_.transform_matrix_.template block<3, 3>(0, 0),
         }
     );
-    data_imu_ = DatumImu::Load(
+    estimator_config_.data_imu_ = DatumImu::Load(
         path_imu_csv,
         Sophus::SO3d{
             sensor_config_imu0_.transform_matrix_.template block<3, 3>(0, 0),
         }
     );
-    data_truth_ = DatumTruth::Load(
+    estimator_config_.data_truth_ = DatumTruth::Load(
         path_truth_csv,
         Sophus::SO3d{
             sensor_config_truth_.transform_matrix_.template block<3, 3>(0, 0),
         }
     );
 
-    std::print(stderr, "[INFO] VisualInertial ready ...\n");
-    msg_path_fast_.header.frame_id         = DEFAULT_FRAME_ID;
-    msg_path_imu_.header.frame_id          = DEFAULT_FRAME_ID;
-    msg_path_preintegrate_.header.frame_id = DEFAULT_FRAME_ID;
-    msg_path_rk4_.header.frame_id          = DEFAULT_FRAME_ID;
-    msg_path_fuse_.header.frame_id         = DEFAULT_FRAME_ID;
-    msg_path_truth_.header.frame_id        = DEFAULT_FRAME_ID;
-
-    if (!data_truth_.empty())
+    // 根据 Launch 动态生成需要的具体评估器。
+    for (const auto &name : active_estimators)
     {
-      Eigen::Matrix3d true_init_attitude{data_truth_[0].attitude_};
-      std::print(stderr,
-                 "[INFO] Ground Truth 初始姿态为 = [\n"
-                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
-                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
-                 "\t[{:.2f}, {:.2f}, {:.2f}]\n"
-                 "]\n",
-                 true_init_attitude(0, 0), true_init_attitude(0, 1),
-                 true_init_attitude(0, 2), true_init_attitude(1, 0),
-                 true_init_attitude(1, 1), true_init_attitude(1, 2),
-                 true_init_attitude(2, 0), true_init_attitude(2, 1),
-                 true_init_attitude(2, 2));
+      if (name == "FastEstimator")
+      {
+        estimators_.push_back(
+            std::make_unique<FastEstimator>(estimator_config_)
+        );
+      }
+      else if (name == "EulerEstimator")
+      {
+        estimators_.push_back(
+            std::make_unique<EulerEstimator>(estimator_config_)
+        );
+      }
+      else if (name == "RK4Estimator")
+      {
+        estimators_.push_back(
+            std::make_unique<RK4Estimator>(estimator_config_)
+        );
+      }
+      else if (name == "Preintegrator")
+      {
+        estimators_.push_back(
+            std::make_unique<Preintegrator>(estimator_config_)
+        );
+      }
+      else if (name == "FuseEstimator")
+      {
+        estimators_.push_back(
+            std::make_unique<FuseEstimator>(estimator_config_)
+        );
+      }
+      else
+      {
+        std::print(stderr, "[WARN] Unknown estimator specified: {}\n", name);
+      }
     }
-
-    for (const DatumTruth &datum_truth : data_truth_)
-    {
-      PushPose(msg_path_truth_, datum_truth.timestamp_, datum_truth.attitude_,
-               datum_truth.position_);
-    } // end for
   }
 
-  void Start()
+  /**
+   * @brief 分发已经读取的数据并执行对应的轨迹估计器。
+   */
+  void Run()
   {
-    std::print(stderr, "[INFO] VisualInertial started.\n");
-
-    EstimateFast();
-    EstimateImuEuler();
-    EstimateImuRK4();
-    PreintegrateImu();
-    EstimateFuse();
-
-    std::print(stderr, "[INFO] Path '{}' has {} poses.\n", //
-               "msg_path_fast_", msg_path_fast_.poses.size());
-    std::print(stderr, "[INFO] Path '{}' has {} poses.\n", //
-               "msg_path_imu_", msg_path_imu_.poses.size());
-    std::print(stderr, "[INFO] Path '{}' has {} poses.\n", //
-               "msg_path_rk4_", msg_path_rk4_.poses.size());
-    std::print(stderr, "[INFO] Path '{}' has {} poses.\n",
-               "msg_path_preintegrate_", msg_path_preintegrate_.poses.size());
-    std::print(stderr, "[INFO] Path '{}' has {} poses.\n", //
-               "msg_path_fuse_", msg_path_fuse_.poses.size());
-    std::print(stderr, "[INFO] Path '{}' has {} poses.\n", //
-               "msg_path_truth_", msg_path_truth_.poses.size());
-
-#if (PUBLISH_POSE)
-    size_t index_fast{0};
-    size_t index_imu_euler{0};
-    size_t index_preintegrate{0};
-    size_t index_imu_rk4{0};
-    size_t index_fuse{0};
-    size_t index_truth{0};
-#endif
-
-    while (rclcpp::ok())
+    std::print(stderr, "[INFO] TrajectoryFactory estimation starting...\n");
+    for (auto &estimator : estimators_)
     {
-      PublishPathFast();
-      PublishPathImuEuler();
-      PublishPathImuRK4();
-      PublishPathPreintegrate();
-      PublishPathFuse();
-      PublishPathTruth();
-
-#if (PUBLISH_POSE)
-      PublishPoseFast(index_fast);
-      PublishPoseImuEuler(index_imu_euler);
-      PublishPosePreintegrate(index_preintegrate);
-      PublishPoseImuRK4(index_imu_rk4);
-      PublishPoseFuse(index_fuse);
-      PublishPoseTruth(index_truth);
-
-      index_fast      = (index_fast + 1) % msg_path_fast_.poses.size();
-      index_imu_euler = (index_imu_euler + 1) % msg_path_imu_.poses.size();
-      index_preintegrate
-          = (index_preintegrate + 1) % msg_path_preintegrate_.poses.size();
-      index_imu_rk4 = (index_imu_rk4 + 1) % msg_path_rk4_.poses.size();
-      index_fuse    = (index_fuse + 1) % msg_path_fuse_.poses.size();
-      index_truth   = (index_truth + 1) % msg_path_truth_.poses.size();
-#endif
-
-      std::this_thread::sleep_for(50ms);
-    } // end while
+      std::print(stderr, "[INFO] Running estimator: {}\n",
+                 estimator->GetName());
+      estimator->Estimate();
+    }
+    std::print(stderr,
+               "[INFO] Estimation finished. CSVs saved to directory: {}\n",
+               output_dir_);
   }
 };
 
 int main(int argc, char *argv[])
 {
-  // 初始化 ROS 2
   rclcpp::init(argc, argv);
-
   try
   {
-    VisualInertial{}.Start();
+    auto factory{std::make_shared<TrajectoryFactory>()};
+    factory->Run();
   }
   catch (const std::exception &ex)
   {
     std::println(stderr, "{}", ex.what());
   }
-
-  // 关闭 ROS 2 实例
   rclcpp::shutdown();
   return 0;
 }
