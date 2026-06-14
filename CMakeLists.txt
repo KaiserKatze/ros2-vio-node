@@ -114,6 +114,9 @@ install(DIRECTORY urdf/
 install(DIRECTORY launch/
   DESTINATION share/${PROJECT_NAME}/launch
 )
+install(PROGRAMS src/ESKF_Optimizer/opt.py
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 # --- 单元测试 ---
 if(BUILD_TESTING)
