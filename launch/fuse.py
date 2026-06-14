@@ -71,6 +71,16 @@ def generate_launch_description():
         "estimators": active_estimators,
     }
 
+    # 核心节点：TrajectoryFactory，通过 on_exit 实现顺序执行
+    factory_node = Node(
+        package="euroc_vio",
+        executable="VisualInertial",
+        name="TrajectoryFactory",
+        output="screen",
+        parameters=[factory_params],
+        prefix=prefix,
+    )
+
     post_nodes = []
 
     # 定义各个估计输出对应的 ROS Topic 话题映射
@@ -142,16 +152,6 @@ def generate_launch_description():
                 1
             ],  # 用 Python 的元组技巧确保 on_exit lambda 返回的是节点列表
         )
-    )
-
-    # 核心节点：TrajectoryFactory，通过 on_exit 实现顺序执行
-    factory_node = Node(
-        package="euroc_vio",
-        executable="VisualInertial",
-        name="TrajectoryFactory",
-        output="screen",
-        parameters=[factory_params],
-        prefix=prefix,
     )
 
     return LaunchDescription([factory_node, pose_handler])
