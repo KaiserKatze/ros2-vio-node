@@ -1,0 +1,72 @@
+# ==============================================================================
+# ESKF 超参数自动调优系统 (EHAT) 配置文件 - 适配 ROS2 参数
+# ==============================================================================
+
+# 1. 数据与评估器指令配置
+data:
+  # 真实轨迹（真值）文件的绝对路径或相对路径（供 Python 评估端直接读取）
+  ground_truth: "./mav0/state_groundtruth_estimate0/data.csv"
+
+  # 轨迹文件的格式，目前支持 "tum" 或 "euroc"
+  traj_format: "euroc"
+
+  # 评估器运行命令（使用 YAML '>' 语法将多行拼接为单条 Bash 命令）
+  # 严格对应 TrajectoryFactory 构造函数中 declare_parameter 声明的全部 11 个参数
+  # 注：大括号 {parameter_name} 内的名称必须与下方 hyperparameters 中定义的 name 完全一致
+  # 注：必须包含 {output} 占位符，系统会自动将其替换为临时的评估轨迹输出路径
+  estimator_command: >
+    mkdir -p /tmp/eskf_out &&
+    ros2 run euroc_vio VisualInertial --ros-args
+    -p use_true_init_pose:=true
+    -p path_estimation_csv:=./mav0/estimated_motion.csv
+    -p path_cam0_yaml:=./mav0/cam1/sensor.yaml
+    -p path_imu_csv:=./mav0/imu0/data.csv
+    -p path_imu_yaml:=./mav0/imu0/sensor.yaml
+    -p path_truth_csv:=./mav0/state_groundtruth_estimate0/data.csv
+    -p path_truth_yaml:=./mav0/state_groundtruth_estimate0/sensor.yaml
+    -p confidence_angular_displacement:={confidence_angular_displacement}
+    -p confidence_normalized_translation:=1e6
+    -p output_dir:=/tmp/eskf_out
+    -p estimators:="['FuseEstimator']"
+    && cp /tmp/eskf_out/FuseEstimator.csv {output}
+
+# 2. 贝叶斯优化算法流程配置
+optimization:
+  # 最大迭代评估次数（包含初始随机探索点）
+  max_iterations: 50
+  # 初始随机探索点的数量（即贝叶斯优化的预热期样本数）
+  n_initial_points: 10
+  # 早停机制：连续多少次迭代未见显著改善（未下降超过 1e-5）则提前终止优化
+  patience: 5
+  # 误差绝对阈值：当综合误差低于此阈值时，认为已达到理想效果，立即终止优化
+  stop_on_error_threshold: 0.001
+  # 并行评估的 worker 进程数（若估算器支持多实例同时独立运行，可调高此值加速优化）
+  parallel_workers: 1
+
+# 3. 误差评估与权重配置
+error:
+  # 绝对轨迹误差 (ATE) 的权重
+  ate_weight: 0.6
+  # 相对位姿误差 (RPE) 的权重
+  rpe_weight: 0.4
+  # 计算 RPE 时的采样间隔（Delta）
+  rpe_delta: 1.0
+  # RPE 采样间隔的单位: 's' (秒), 'm' (米), 'f' (帧)
+  rpe_delta_unit: "s"
+
+# 4. 输出文件配置
+output:
+  # 运行时详细日志存储路径
+  log_file: "optimization.log"
+  # 历史迭代记录导出的 CSV 文件路径
+  history_csv: "evaluation_history.csv"
+  # 最优超参数结果导出的 JSON 文件路径
+  best_result: "best_result.json"
+
+# 5. 待优化的超参数搜索空间定义
+hyperparameters:
+  # 示例参数 1：单目视觉估计角位移置信度（浮点数，对数搜索空间）
+  - name: "confidence_angular_displacement"
+    type: "float"
+    range: [1e-6, 1e-2]
+    log: true
