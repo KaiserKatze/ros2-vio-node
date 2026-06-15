@@ -225,16 +225,22 @@ class EHATuner:
         params = {}
         for hp in self.hyperparams:
             name = hp["name"]
+            range_lo = hp["range"][0]
+            range_hi = hp["range"][1]
             hp_type = hp.get("type", "float").lower()
 
             if hp_type == "float":
+                range_lo = float(range_lo)
+                range_hi = float(range_hi)
                 # 如果用户明确配置了 log 尺度
                 log_scale = hp.get("log", False)
                 params[name] = trial.suggest_float(
-                    name, hp["range"][0], hp["range"][1], log=log_scale
+                    name, range_lo, range_hi, log=log_scale
                 )
             elif hp_type == "int":
-                params[name] = trial.suggest_int(name, hp["range"][0], hp["range"][1])
+                range_lo = int(range_lo)
+                range_hi = int(range_hi)
+                params[name] = trial.suggest_int(name, range_lo, range_hi)
             elif hp_type == "categorical":
                 params[name] = trial.suggest_categorical(name, hp["choices"])
             else:
