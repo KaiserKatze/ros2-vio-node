@@ -199,9 +199,9 @@ class EHATuner:
             delta = self.err_cfg.get("rpe_delta", 1.0)
             unit_str = self.err_cfg.get("rpe_delta_unit", "s")
             unit = (
-                Unit.meters
-                if unit_str == "m"
-                else (Unit.seconds if unit_str == "s" else Unit.frames)
+                Unit.frames  # 修改这里：将 Unit.seconds 改为 Unit.frames
+                if unit_str.lower() in ["s", "sec", "seconds"]
+                else Unit.meters
             )
 
             rpe_metric = evo_metrics.RPE(
