@@ -17,10 +17,9 @@ def generate_launch_description():
 
     path_home = pathlib.PosixPath(os.path.expanduser("~"))
     path_workdir = path_home / "vio_ws"
+    path_workdir = pathlib.PosixPath("/mnt", "e", "Documents")
 
-    # mav0_path = path_workdir / "mav0"
-    mav0_path = pathlib.PosixPath("/mnt", "e", "Documents", "mav0")
-
+    mav0_path = path_workdir / "mav0"
     cam0_path = mav0_path / "cam1"
     imu0_path = mav0_path / "imu0"
     truth_path = mav0_path / "state_groundtruth_estimate0"
