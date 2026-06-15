@@ -160,7 +160,7 @@ class EHATuner:
         if fmt.lower() == "tum":
             return evo_file.read_tum_trajectory_file(path)
         elif fmt.lower() == "euroc":
-            return evo_file.read_euroc_csv_trajectory_file(path)
+            return evo_file.read_euroc_csv_trajectory(path)
         else:
             raise ValueError(f"不支持的轨迹格式: {fmt}")
 
