@@ -62,7 +62,7 @@ def generate_launch_description():
         # 真实数据变换矩阵
         "path_truth_yaml": path_truth_yaml,
         # 单目视觉估计角位移置信度
-        "confidence_angular_displacement": 1e-2,
+        "confidence_angular_displacement": 16.54940287490809,
         # 单目视觉估计平移方向置信度
         "confidence_normalized_translation": 1e+6,
         # 轨迹估计类的输出目录
