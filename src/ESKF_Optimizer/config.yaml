@@ -68,5 +68,5 @@ hyperparameters:
   # 示例参数 1：单目视觉估计角位移置信度（浮点数，对数搜索空间）
   - name: "confidence_angular_displacement"
     type: "float"
-    range: [1e-6, 1e2]
+    range: [1e-6, 1e6]
     log: true
