@@ -33,11 +33,11 @@ data:
 # 2. 贝叶斯优化算法流程配置
 optimization:
   # 最大迭代评估次数（包含初始随机探索点）
-  max_iterations: 50
+  max_iterations: 500
   # 初始随机探索点的数量（即贝叶斯优化的预热期样本数）
-  n_initial_points: 10
+  n_initial_points: 50
   # 早停机制：连续多少次迭代未见显著改善（未下降超过 1e-5）则提前终止优化
-  patience: 5
+  patience: 100
   # 误差绝对阈值：当综合误差低于此阈值时，认为已达到理想效果，立即终止优化
   stop_on_error_threshold: 0.001
   # 并行评估的 worker 进程数（若估算器支持多实例同时独立运行，可调高此值加速优化）
