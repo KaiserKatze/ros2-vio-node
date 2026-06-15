@@ -46,9 +46,9 @@ optimization:
 # 3. 误差评估与权重配置
 error:
   # 绝对轨迹误差 (ATE) 的权重
-  ate_weight: 0.6
+  ate_weight: 0.8
   # 相对位姿误差 (RPE) 的权重
-  rpe_weight: 0.4
+  rpe_weight: 0.2
   # 计算 RPE 时的采样间隔（Delta）
   rpe_delta: 1.0
   # RPE 采样间隔的单位: 's' (秒), 'm' (米), 'f' (帧)
