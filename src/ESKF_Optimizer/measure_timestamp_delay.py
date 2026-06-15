@@ -123,6 +123,7 @@ def measure_timestamp_delay(path_imu_csv, path_cam_csv):
 def run():
     path_home = pathlib.Path(os.path.expanduser("~"))
     path_workdir = path_home / "vio_ws"
+    path_workdir = pathlib.PosixPath("/mnt", "e", "Documents")
     mav0_path = path_workdir / "mav0"
     path_imu_csv = mav0_path / "imu0" / "data.csv"
     path_cam_csv = mav0_path / "cam0" / "data.csv"
