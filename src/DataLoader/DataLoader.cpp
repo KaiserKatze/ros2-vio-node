@@ -125,13 +125,13 @@ private:
    */
   void LoadCsv()
   {
-    raw_data_ = Datum::ReadCsv(csv_file_, skip_header_, delim_);
-    if (raw_data_.empty())
+    auto raw_data{Datum::ReadCsv(csv_file_, skip_header_, delim_)};
+    if (raw_data.empty())
     {
-      throw std::runtime_error("CSV 文件为空或无有效数据");
+      throw std::runtime_error{"CSV 文件为空或无有效数据"};
     }
     path_msg_.header.frame_id = DEFAULT_FRAME_ID;
-    for (const auto &d : raw_data_)
+    for (const auto &d : raw_data)
     {
       geometry_msgs::msg::PoseStamped pose;
       pose.header.stamp       = rclcpp::Time{d.timestamp};
@@ -146,7 +146,7 @@ private:
       path_msg_.poses.push_back(pose);
     }
     std::print(stderr, "[INFO] Loaded {} poses from file: {}\n",
-               raw_data_.size(), csv_file_);
+               raw_data.size(), csv_file_);
   }
 
   /**
@@ -159,12 +159,12 @@ private:
     publisher_path_->publish(path_msg_);
 
     static size_t index{0};
-    if (raw_data_.empty())
+    if (path_msg_.poses.empty())
     {
       return;
     }
 
-    const Datum &d{raw_data_[index]};
+    const Datum &d{path_msg_.poses[index]};
     nav_msgs::msg::Path path_pose_msg;
     path_pose_msg.header.frame_id = DEFAULT_FRAME_ID;
     path_pose_msg.header.stamp    = now;
@@ -180,7 +180,7 @@ private:
     path_pose_msg.poses.push_back(pose);
     publisher_pose_->publish(path_pose_msg);
 
-    index = (index + 1) % raw_data_.size();
+    index = (index + 1) % path_msg_.poses.size();
   }
 
   std::string csv_file_;
@@ -188,7 +188,6 @@ private:
   bool skip_header_;
   char delim_;
 
-  std::vector<Datum> raw_data_;
   nav_msgs::msg::Path path_msg_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_path_;
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr publisher_pose_;
