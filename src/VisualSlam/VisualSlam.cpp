@@ -124,6 +124,10 @@ public:
                attitude_quat.w(), attitude_quat.x(), attitude_quat.y(),
                attitude_quat.z());
 
+    // 相机内参矩阵
+    cv::Mat camera_matrix;
+    cv::eigen2cv(euroc_.mat_cam_intrinsic_rectified_, camera_matrix);
+
     while (loader_)
     {
       StereoFrame<cv::Mat> frame{loader_()};
@@ -188,10 +192,6 @@ public:
         cv::Mat landmarks_nonhomo;
         // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#gac42edda3a3a0f717979589fcd6ac0035
         cv::convertPointsFromHomogeneous(landmarks_homo.t(), landmarks_nonhomo);
-
-        // 相机内参矩阵
-        cv::Mat camera_matrix;
-        cv::eigen2cv(euroc_.mat_cam_intrinsic_rectified_, camera_matrix);
 
         // 旋转向量与平移向量
         cv::Mat rVec_cv, tVec_cv;
