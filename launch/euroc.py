@@ -80,11 +80,11 @@ def generate_launch_description():
 
     # 定义各个估计输出对应的 ROS Topic 话题映射
     topic_mappings = {
-        "FastEstimator": "/fast_est",
-        "EulerEstimator": "/midpoint_est",
-        "RK4Estimator": "/rk4_est",
-        "Preintegrator": "/preintegrate_est",
-        "FuseEstimator": "/fuse_est",
+        "FastEstimator": "/traj/fast_est",
+        "EulerEstimator": "/traj/midpoint_est",
+        "RK4Estimator": "/traj/rk4_est",
+        "Preintegrator": "/traj/preintegrate_est",
+        "FuseEstimator": "/traj/fuse_est",
     }
 
     # 动态启动各估计轨迹的数据加载与发布器
@@ -118,7 +118,7 @@ def generate_launch_description():
             parameters=[
                 {
                     "csv_file": csv_filepath,
-                    "topic_name": "/stereo_est",
+                    "topic_name": "/traj/stereo_est",
                     "skip_header": True,
                     "delim": ",",
                 }
@@ -136,7 +136,7 @@ def generate_launch_description():
             parameters=[
                 {
                     "csv_file": path_truth_csv,
-                    "topic_name": "/ground_truth",
+                    "topic_name": "/traj/ground_truth",
                     "skip_header": True,
                     "delim": ",",
                 }

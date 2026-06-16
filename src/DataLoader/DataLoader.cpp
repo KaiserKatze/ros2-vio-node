@@ -158,28 +158,18 @@ private:
     path_msg_.header.stamp = now;
     publisher_path_->publish(path_msg_);
 
-    static size_t index{0};
     if (path_msg_.poses.empty())
     {
       return;
     }
 
-    const Datum &d{path_msg_.poses[index]};
+    static size_t index{0};
+    const auto &msg_pose{path_msg_.poses[index]};
     nav_msgs::msg::Path path_pose_msg;
     path_pose_msg.header.frame_id = DEFAULT_FRAME_ID;
-    path_pose_msg.header.stamp    = now;
-    geometry_msgs::msg::PoseStamped pose;
-    pose.header.frame_id    = DEFAULT_FRAME_ID;
-    pose.pose.position.x    = d.value[0];
-    pose.pose.position.y    = d.value[1];
-    pose.pose.position.z    = d.value[2];
-    pose.pose.orientation.w = d.value[3];
-    pose.pose.orientation.x = d.value[4];
-    pose.pose.orientation.y = d.value[5];
-    pose.pose.orientation.z = d.value[6];
-    path_pose_msg.poses.push_back(pose);
+    path_pose_msg.header.stamp    = msg_pose.header.stamp;
+    path_pose_msg.poses.push_back(msg_pose);
     publisher_pose_->publish(path_pose_msg);
-
     index = (index + 1) % path_msg_.poses.size();
   }
 
