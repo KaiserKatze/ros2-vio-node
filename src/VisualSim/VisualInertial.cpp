@@ -786,21 +786,48 @@ public:
         this->get_parameter("estimators").as_string_array(),
     };
 
-    std::error_code ec;
-    if (path_estimation_csv.empty()
-        || !std::filesystem::is_regular_file(path_estimation_csv, ec)
-        || path_cam0_yaml.empty()
-        || !std::filesystem::is_regular_file(path_cam0_yaml, ec)
-        || path_imu_csv.empty()
-        || !std::filesystem::is_regular_file(path_imu_csv, ec)
-        || path_imu_yaml.empty()
-        || !std::filesystem::is_regular_file(path_imu_yaml, ec)
-        || path_truth_csv.empty()
-        || !std::filesystem::is_regular_file(path_truth_csv, ec)
-        || path_truth_yaml.empty()
-        || !std::filesystem::is_regular_file(path_truth_yaml, ec))
+    if (path_estimation_csv.empty() || path_cam0_yaml.empty()
+        || path_imu_csv.empty() || path_imu_yaml.empty()
+        || path_truth_csv.empty() || path_truth_yaml.empty())
     {
       throw std::runtime_error{"Required configuration paths cannot be empty."};
+    }
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(path_estimation_csv, ec))
+    {
+      throw std::runtime_error{std::format(
+          "Required configuration path '{}' not found.", path_estimation_csv
+      )};
+    }
+    if (!std::filesystem::is_regular_file(path_cam0_yaml, ec))
+    {
+      throw std::runtime_error{std::format(
+          "Required configuration path '{}' not found.", path_cam0_yaml
+      )};
+    }
+    if (!std::filesystem::is_regular_file(path_imu_csv, ec))
+    {
+      throw std::runtime_error{std::format(
+          "Required configuration path '{}' not found.", path_imu_csv
+      )};
+    }
+    if (!std::filesystem::is_regular_file(path_imu_yaml, ec))
+    {
+      throw std::runtime_error{std::format(
+          "Required configuration path '{}' not found.", path_imu_yaml
+      )};
+    }
+    if (!std::filesystem::is_regular_file(path_truth_csv, ec))
+    {
+      throw std::runtime_error{std::format(
+          "Required configuration path '{}' not found.", path_truth_csv
+      )};
+    }
+    if (!std::filesystem::is_regular_file(path_truth_yaml, ec))
+    {
+      throw std::runtime_error{std::format(
+          "Required configuration path '{}' not found.", path_truth_yaml
+      )};
     }
 
     auto opt_sensor_config_cam0{SensorYaml::ReadSensorYaml(path_cam0_yaml)};

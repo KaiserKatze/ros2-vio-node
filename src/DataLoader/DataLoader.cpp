@@ -80,10 +80,16 @@ public:
     this->declare_parameter("csv_file", "");
     csv_file_ = this->get_parameter("csv_file").as_string();
 
-    std::error_code ec;
-    if (csv_file_.empty() || !std::filesystem::is_regular_file(csv_file_, ec))
+    if (csv_file_.empty())
     {
-      throw std::runtime_error{"Required configuration paths cannot be empty."};
+      throw std::runtime_error{"Required configuration path cannot be empty."};
+    }
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(csv_file_, ec))
+    {
+      throw std::runtime_error{
+          std::format("Required configuration path '{}' not found.", csv_file_)
+      };
     }
 
     this->declare_parameter("topic_name", "/trajectory_est");

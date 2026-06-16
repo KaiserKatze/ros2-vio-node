@@ -250,7 +250,7 @@ int main(int argc, char *argv[])
 {
   if (argc != 2)
   {
-    std::print(stderr, "用法: {} <path_mav0>\n", argv[0]);
+    std::print(stderr, "Usage: {} <path_mav0>\n", argv[0]);
     return 1;
   }
   std::print(stderr, "OpenCV Version: {}\n", cv::getVersionString());
