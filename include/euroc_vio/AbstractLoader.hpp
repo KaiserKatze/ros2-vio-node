@@ -21,6 +21,13 @@ struct AbstractLoader
     return str.substr(first, last - first + 1);
   }
 
+  static std::string get_item_as_string(std::stringstream &ss, char delim = ',')
+  {
+    std::string item;
+    std::getline(ss, item, delim);
+    return std::string{trim(item)};
+  }
+
   static std::int64_t get_item_as_int64(std::stringstream &ss, char delim = ',')
   {
     std::string item;

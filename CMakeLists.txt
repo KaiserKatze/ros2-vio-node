@@ -42,6 +42,7 @@ find_package(message_filters REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(Sophus REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(Boost REQUIRED)
 find_package(yaml-cpp REQUIRED)
@@ -71,6 +72,13 @@ ament_target_dependencies(VisualSim
   cv_bridge
 )
 target_link_libraries(VisualSim
+  Eigen3::Eigen
+  ${OpenCV_LIBS}
+)
+
+# ===== 目标： EuRoC 纯视觉双目里程计 =====
+add_ros2_executable(StereoSlam src/VisualSlam/VisualSlam.cpp)
+target_link_libraries(StereoSlam
   Eigen3::Eigen
   ${OpenCV_LIBS}
 )
