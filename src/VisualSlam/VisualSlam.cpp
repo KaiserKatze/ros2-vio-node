@@ -202,8 +202,10 @@ public:
         // 数据类型转换
         Vector3 rVec_eigen;
         cv::cv2eigen(rVec_cv, rVec_eigen);
+        rVec_eigen     = -rVec_eigen;
         delta_rotation = Attitude::exp(rVec_eigen);
         cv::cv2eigen(tVec_cv, delta_position);
+        delta_position = -delta_rotation * delta_position;
 
         Vector3 normalized_translation{delta_position.normalized()};
 
