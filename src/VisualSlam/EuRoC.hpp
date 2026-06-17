@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdio>
 #include <iostream>
+#include <print>
 #include <utility>
 
 #include <Eigen/Dense>
@@ -52,7 +53,7 @@ struct EuRoC
   Eigen::Matrix3d mat_cam_intrinsic_rectified_;
   Eigen::Vector3d vec_cam_translation_rectified_;
 
-  Eigen::Matrix4d T_C1C0;
+  Eigen::Matrix4d T_C1C0{Eigen::Matrix4d::Identity()};
   cv::Size imageSize{752, 480};
 
   // Output 3x4 projection matrix in the new (rectified) coordinate systems for
@@ -88,7 +89,8 @@ struct EuRoC
             {0.0, fv0, cv0},
             {0.0, 0.0, 1.0},
         },
-        cameraMatrix0);
+        cameraMatrix0
+    );
     cv::Mat distCoeffs0;
     cv::eigen2cv(
         Eigen::Vector4d{
@@ -97,7 +99,8 @@ struct EuRoC
             p01,
             p02,
         },
-        distCoeffs0);
+        distCoeffs0
+    );
 
     cv::Mat cameraMatrix1;
     cv::eigen2cv(
@@ -106,7 +109,8 @@ struct EuRoC
             {0.0, fv1, cv1},
             {0.0, 0.0, 1.0},
         },
-        cameraMatrix1);
+        cameraMatrix1
+    );
     cv::Mat distCoeffs1;
     cv::eigen2cv(
         Eigen::Vector4d{
@@ -115,7 +119,8 @@ struct EuRoC
             p11,
             p12,
         },
-        distCoeffs1);
+        distCoeffs1
+    );
 
     const Eigen::Matrix4d T_BC0{
         {0.0148655429818, -0.999880929698, 0.00414029679422, -0.0216401454975},
@@ -131,18 +136,25 @@ struct EuRoC
         {0.0, 0.0, 0.0, 1.0},
     };
 
+    const auto rmat_BC0{T_BC0.template block<3, 3>(0, 0)};
+    const auto tvec_BC0{T_BC0.template block<3, 1>(0, 3)};
+    const auto rmat_BC1{T_BC1.template block<3, 3>(0, 0)};
+    const auto tvec_BC1{T_BC1.template block<3, 1>(0, 3)};
+
     // X_B = T_BC0 * X_C0
     // X_B = T_BC1 * X_C1
     // X_C1 = T_C1C0 * X_C0 = (T_BC1.inverse() * T_BC0) * X_C0
-    T_C1C0 = T_BC1.inverse() * T_BC0;
+    // T_C1C0 = T_BC1.inverse() * T_BC0;
+    T_C1C0.block<3, 3>(0, 0) = rmat_BC1.transpose() * rmat_BC0;
+    T_C1C0.block<3, 1>(0, 3) = rmat_BC1.transpose() * (tvec_BC0 - tvec_BC1);
 
     // 2. 使用更安全的方法提取 R 和 T
 
     // Rotation matrix from the coordinate system of the first camera to the second camera
     cv::Mat stereoR(3, 3, CV_64FC1);
     {
-      const Eigen::Matrix3d eigenMatR{
-          T_C1C0(Eigen::seq(0, 2), Eigen::seq(0, 2))};
+      const Eigen::Matrix3d eigenMatR{T_C1C0(Eigen::seq(0, 2),
+                                             Eigen::seq(0, 2))};
       // 提取左上角 3x3 矩阵作为旋转矩阵
       cv::eigen2cv(eigenMatR, stereoR);
       const Eigen::AngleAxisd rot_vec{eigenMatR};
@@ -154,8 +166,8 @@ struct EuRoC
     // Translation vector from the coordinate system of the first camera to the second camera
     cv::Mat stereoT(3, 1, CV_64FC1);
     {
-      const Eigen::Vector3d eigenVecT{
-          T_C1C0(Eigen::seq(0, 2), Eigen::seq(3, 3))};
+      const Eigen::Vector3d eigenVecT{T_C1C0(Eigen::seq(0, 2),
+                                             Eigen::seq(3, 3))};
       // 提取第 4 列的前 3 行作为平移向量
       cv::eigen2cv(eigenVecT, stereoT);
       const double stereoTnorm{eigenVecT.norm()};
@@ -221,6 +233,25 @@ struct EuRoC
     // cv::cv2eigen(P1, rectifiedCameraMatrix1);
 
     printf("EuRoC setup done\n");
+
+    {
+      Eigen::Matrix3d R0_eigen;
+      Eigen::Matrix3d R1_eigen;
+      cv::cv2eigen(R0, R0_eigen);
+      cv::cv2eigen(R1, R1_eigen);
+      Eigen::Matrix3d rmat_R0R1{R0_eigen * rmat_BC0.transpose() * rmat_BC1
+                                * R1_eigen.transpose()};
+      std::print(
+          stderr,
+          "C_R0R1 =\n"
+          "\t[[{:.2f}, {:.2f}, {:.2f}],\n"
+          "\t [{:.2f}, {:.2f}, {:.2f}],\n"
+          "\t [{:.2f}, {:.2f}, {:.2f}]].\n",
+          rmat_R0R1(0, 0), rmat_R0R1(0, 1), rmat_R0R1(0, 2), //
+          rmat_R0R1(1, 0), rmat_R0R1(1, 1), rmat_R0R1(1, 2), //
+          rmat_R0R1(2, 0), rmat_R0R1(2, 1), rmat_R0R1(2, 2)  //
+      );
+    }
   }
 
   EuRoC(const EuRoC &)            = delete;
