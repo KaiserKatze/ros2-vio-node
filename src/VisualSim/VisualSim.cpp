@@ -428,11 +428,20 @@ struct VisualSim
                "#timestamp [ns],"
                "w_RS_S_x [rad s^-1],w_RS_S_y [rad s^-1],w_RS_S_z [rad s^-1],"
                "a_RS_S_x [m s^-2],a_RS_S_y [m s^-2],a_RS_S_z [m s^-2]\n");
+
+    std::ofstream fout_landmarks{path_mav0_ / "landmarks.csv"};
+    std::ofstream fout_cam0_pixels{path_cam0_ / "pixels.csv"};
+    std::ofstream fout_cam1_pixels{path_cam1_ / "pixels.csv"};
+
+    std::print(fout_landmarks, "#timestamp [ns],3-D points\n");
+    std::print(fout_cam0_pixels, "#timestamp [ns],2-D points\n");
+    std::print(fout_cam1_pixels, "#timestamp [ns],2-D points\n");
+
 #endif
 
 #pragma endregion
 
-    const Point3 gravity_world{0.0, 0.0, -gravity_world_norm_};
+    const Point3 gravity_world{-gravity_world_norm_ * Point3::UnitZ()};
 
     for (value_type time = 0.0;; time += step_)
     {
@@ -450,6 +459,63 @@ struct VisualSim
         break;
       }
       const Frame frame{opt_frame.value()};
+
+      // 打印路标点
+      std::print(fout_landmarks, "{0:020d},[", timestamp_ns);
+      for (bool first_loop{true}; auto index_landmark : std::get<0>(frame))
+      {
+        auto object_point{
+            room_.object_matrix_.col(static_cast<Eigen::Index>(index_landmark))
+        };
+        if (first_loop)
+        {
+          std::print(fout_landmarks, "({:.18f} {:.18f} {:.18f})",
+                     object_point.x(), object_point.y(), object_point.z());
+          first_loop = false;
+        }
+        else
+        {
+          std::print(fout_landmarks, ";({:.18f} {:.18f} {:.18f})",
+                     object_point.x(), object_point.y(), object_point.z());
+        }
+      }
+      std::print(fout_landmarks, "]\n");
+
+      // 打印左目像素点
+      std::print(fout_cam0_pixels, "{0:020d},[", timestamp_ns);
+      for (bool first_loop{true}; auto pixel_point : std::get<1>(frame))
+      {
+        if (first_loop)
+        {
+          std::print(fout_cam0_pixels, "({:.18f} {:.18f})", object_point.x(),
+                     object_point.y());
+          first_loop = false;
+        }
+        else
+        {
+          std::print(fout_cam0_pixels, ";({:.18f} {:.18f})", object_point.x(),
+                     object_point.y());
+        }
+      }
+      std::print(fout_cam0_pixels, "]\n");
+
+      // 打印右目像素点
+      std::print(fout_cam1_pixels, "{0:020d},[", timestamp_ns);
+      for (bool first_loop{true}; auto pixel_point : std::get<2>(frame))
+      {
+        if (first_loop)
+        {
+          std::print(fout_cam1_pixels, "({:.18f} {:.18f})", object_point.x(),
+                     object_point.y());
+          first_loop = false;
+        }
+        else
+        {
+          std::print(fout_cam1_pixels, ";({:.18f} {:.18f})", object_point.x(),
+                     object_point.y());
+        }
+      }
+      std::print(fout_cam1_pixels, "]\n");
 
       Point3 true_current_position{Point3::Zero()};
       Quaternion true_current_attitude{Quaternion::Identity()};
