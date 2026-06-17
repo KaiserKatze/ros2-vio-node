@@ -487,14 +487,14 @@ struct VisualSim
       {
         if (first_loop)
         {
-          std::print(fout_cam0_pixels, "({:.18f} {:.18f})", object_point.x(),
-                     object_point.y());
+          std::print(fout_cam0_pixels, "({:.18f} {:.18f})", pixel_point.x(),
+                     pixel_point.y());
           first_loop = false;
         }
         else
         {
-          std::print(fout_cam0_pixels, ";({:.18f} {:.18f})", object_point.x(),
-                     object_point.y());
+          std::print(fout_cam0_pixels, ";({:.18f} {:.18f})", pixel_point.x(),
+                     pixel_point.y());
         }
       }
       std::print(fout_cam0_pixels, "]\n");
@@ -505,14 +505,14 @@ struct VisualSim
       {
         if (first_loop)
         {
-          std::print(fout_cam1_pixels, "({:.18f} {:.18f})", object_point.x(),
-                     object_point.y());
+          std::print(fout_cam1_pixels, "({:.18f} {:.18f})", pixel_point.x(),
+                     pixel_point.y());
           first_loop = false;
         }
         else
         {
-          std::print(fout_cam1_pixels, ";({:.18f} {:.18f})", object_point.x(),
-                     object_point.y());
+          std::print(fout_cam1_pixels, ";({:.18f} {:.18f})", pixel_point.x(),
+                     pixel_point.y());
         }
       }
       std::print(fout_cam1_pixels, "]\n");
