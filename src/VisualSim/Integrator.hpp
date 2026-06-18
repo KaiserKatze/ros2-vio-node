@@ -21,7 +21,7 @@ struct AbstractIntegrator
 };
 
 /**
- * @brief 零阶朝向积分器
+ * @brief IMU 中点法零阶朝向积分器
  */
 struct ZerothOrderAttitudeIntegrator : public AbstractIntegrator
 {
@@ -62,7 +62,7 @@ struct ZerothOrderAttitudeIntegrator : public AbstractIntegrator
 };
 
 /**
- * @brief 一阶朝向积分器
+ * @brief IMU 中点法一阶朝向积分器
  */
 struct FirstOrderAttitudeIntegrator : public AbstractIntegrator
 {
@@ -107,7 +107,7 @@ struct FirstOrderAttitudeIntegrator : public AbstractIntegrator
 };
 
 /**
- * @brief 中点法位置积分器
+ * @brief IMU 中点法位置积分器
  */
 struct MidpointPositionIntegrator : public AbstractIntegrator
 {
@@ -137,5 +137,26 @@ struct MidpointPositionIntegrator : public AbstractIntegrator
     estimated_position += delta_position;
     // 更新线速度
     estimated_linear_velocity += delta_velocity;
+  }
+};
+
+/**
+ * @brief 纯视觉姿态积分器
+ */
+struct VisualIntegrator : public AbstractIntegrator
+{
+  void Update(const Sophus::SO3d &delta_attitude,
+              const Eigen::Vector3d &delta_position)
+  {
+    // 新的朝向
+    Sophus::SO3d estimated_new_attitude{
+        estimated_attitude * delta_attitude,
+    };
+
+    // 更新位置
+    estimated_position += estimated_attitude * delta_position;
+    // 更新朝向
+    previous_attitude  = estimated_attitude;
+    estimated_attitude = estimated_new_attitude;
   }
 };
