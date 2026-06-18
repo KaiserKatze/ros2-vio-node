@@ -34,9 +34,10 @@
 #include "EuRoC.hpp"
 #include "FastDetector.hpp"
 #include "ImageDataLoader.hpp"
+#include "euroc_vio/Integrator.hpp"
 
 template <typename PointType = cv::Point2f>
-struct StereoSlam
+struct StereoSlam : public VisualIntegrator
 {
 public:
   using value_type = typename PointType::value_type;
@@ -47,8 +48,6 @@ public:
   const EuRoC::EuRoC euroc_{};
 
 private:
-  std::ofstream file_fast_{"estimated_motion.csv",
-                           std::ios::out | std::ios::trunc};
   std::ofstream file_traj_{"estimated_trajectory.csv",
                            std::ios::out | std::ios::trunc};
   ImageDataLoader loader_;
@@ -66,24 +65,48 @@ public:
   ~StereoSlam() {}
 
 private:
-  static cv::Point2f centroid(const std::vector<cv::Point2f> &pts)
+  /**
+   * @brief 打印表头和初始位姿
+   */
+  void WriteDataHeader()
   {
-    if (pts.empty())
-    {
-      return cv::Point2f(0.0f, 0.0f); // 或抛出异常
-    }
-    // 用 (0,0) 作为初始累加值，每次将点坐标加到累加器上
-    auto sum{std::ranges::fold_left(
-        pts, cv::Point2f(0.0f, 0.0f), [](cv::Point2f acc, const cv::Point2f &p)
-        { return cv::Point2f(acc.x + p.x, acc.y + p.y); }
-    )};
-    auto n{static_cast<float>(pts.size())};
-    return cv::Point2f(sum.x / n, sum.y / n);
+    // 打印表头
+    std::print(file_traj_, "#timestamp [ns],"
+                           "p_x [m],p_y [m],p_z [m],"
+                           "q_w [],q_x [],q_y [],q_z []\n");
+    // 打印初始位姿
+    WriteDataContent();
+  }
+
+  /**
+   * @brief 打印位姿
+   */
+  void WriteDataContent()
+  {
+    std::print(
+        file_traj_,
+        // 时间戳
+        "{:020d},"
+        // 位置
+        "{:.18f},{:.18f},{:.18f},"
+        // 朝向
+        "{:.18f},{:.18f},{:.18f},{:.18f}\n",
+        prev_frame.timestamp_, //
+        this->VisualIntegrator::estimated_position.x(),
+        this->VisualIntegrator::estimated_position.y(),
+        this->VisualIntegrator::estimated_position.z(),
+        this->VisualIntegrator::estimated_attitude.unit_quaternion().w(),
+        this->VisualIntegrator::estimated_attitude.unit_quaternion().x(),
+        this->VisualIntegrator::estimated_attitude.unit_quaternion().y(),
+        this->VisualIntegrator::estimated_attitude.unit_quaternion().z()
+    );
   }
 
 public:
   void StartOdometer()
   {
+    WriteDataHeader();
+
     bool init{false};
     // 初始化 CLAHE 实例
     // clipLimit: 对比度限制阈值，一般取 2.0 到 4.0 之间。值越大，对比度增强越强，但也可能引入更多噪声。
@@ -97,32 +120,6 @@ public:
     std::vector<PointType> corners_prev_right;
     std::vector<PointType> corners_next_left;
     std::vector<PointType> corners_next_right;
-
-    // 打印表头
-    std::print(file_traj_, "#timestamp [ns],"
-                           "p_x [m],p_y [m],p_z [m],"
-                           "q_w [],q_x [],q_y [],q_z []\n");
-    std::print(file_fast_, "#timestamp [ns],"
-                           "r_x [rad],r_y [rad],r_z [rad],"
-                           "t_x [],t_y [],t_z []\n");
-
-    Attitude attitude{};
-    Vector3 position{Vector3::Zero()};
-    Attitude delta_rotation{};
-    Vector3 delta_position{Vector3::Zero()};
-    Quaternion attitude_quat{Quaternion::Identity()};
-
-    // 打印位姿
-    std::print(file_traj_,
-               // 时间戳
-               "{:020d},"
-               // 位置
-               "{:.18f},{:.18f},{:.18f},"
-               // 朝向
-               "{:.18f},{:.18f},{:.18f},{:.18f}\n",
-               prev_frame.timestamp_, position.x(), position.y(), position.z(),
-               attitude_quat.w(), attitude_quat.x(), attitude_quat.y(),
-               attitude_quat.z());
 
     // 相机内参矩阵
     cv::Mat camera_matrix;
@@ -207,36 +204,11 @@ public:
         cv::cv2eigen(tVec_cv, delta_position);
         delta_position = -(delta_rotation * delta_position);
 
-        Vector3 normalized_translation{delta_position.normalized()};
-
-        // 打印角位移和平移方向，用来喂给 ESKF
-        std::print(file_fast_,
-                   // 时间戳
-                   "{:020d},"
-                   // 角位移
-                   "{:.18f},{:.18f},{:.18f},"
-                   // 单位化平移向量
-                   "{:.18f},{:.18f},{:.18f}\n",
-                   prev_frame.timestamp_, rVec_eigen.x(), rVec_eigen.y(),
-                   rVec_eigen.z(), normalized_translation.x(),
-                   normalized_translation.y(), normalized_translation.z());
-
         // 更新状态
-        position = position + attitude * delta_position;
-        attitude = attitude * delta_rotation;
+        this->VisualIntegrator::Update(delta_rotation, delta_position);
 
         // 打印位姿
-        attitude_quat = attitude.unit_quaternion();
-        std::print(file_traj_,
-                   // 时间戳
-                   "{:020d},"
-                   // 位置
-                   "{:.18f},{:.18f},{:.18f},"
-                   // 朝向
-                   "{:.18f},{:.18f},{:.18f},{:.18f}\n",
-                   frame.timestamp_, position.x(), position.y(), position.z(),
-                   attitude_quat.w(), attitude_quat.x(), attitude_quat.y(),
-                   attitude_quat.z());
+        WriteDataContent();
       }
 
     continue_loop:
