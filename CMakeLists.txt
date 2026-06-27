@@ -21,6 +21,8 @@ add_compile_options(-Wshadow)
 add_compile_options(-Wuninitialized)
 add_compile_options(-Wno-maybe-uninitialized)
 add_compile_options(-march=native)
+# C++26 开启反射机制
+add_compile_options(-freflection)
 
 if(MSVC)
   add_compile_options(/utf-8)
@@ -70,59 +72,45 @@ endfunction()
 add_library(common_pch INTERFACE)
 target_precompile_headers(common_pch
   INTERFACE
-  ${CMAKE_CURRENT_SOURCE_DIR}/include/euroc_vio/pch.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/euroc_vio/pch.hpp
 )
 target_include_directories(common_pch
   INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+target_link_libraries(common_pch
+  INTERFACE
+  Eigen3::Eigen
+  ${OpenCV_LIBRARIES}
+  yaml-cpp::yaml-cpp
+
+  rclcpp::rclcpp
+
+  cv_bridge::cv_bridge
+  message_filters::message_filters
+  image_transport::image_transport
+
+  nav_msgs::nav_msgs__rosidl_typesupport_cpp
+  nav_msgs::nav_msgs__rosidl_generator_cpp
+  geometry_msgs::geometry_msgs__rosidl_typesupport_cpp
+  geometry_msgs::geometry_msgs__rosidl_generator_cpp
+  sensor_msgs::sensor_msgs__rosidl_typesupport_cpp
+  sensor_msgs::sensor_msgs__rosidl_generator_cpp
+  std_msgs::std_msgs__rosidl_typesupport_cpp
+  std_msgs::std_msgs__rosidl_generator_cpp
+)
 
 # ===== 目标： SLAM 仿真数据集生成器 =====
 add_ros2_executable(VisualSim src/VisualSim/VisualSim.cpp)
-ament_target_dependencies(VisualSim
-  rclcpp
-  geometry_msgs
-  nav_msgs
-  sensor_msgs
-  cv_bridge
-)
-target_link_libraries(VisualSim
-  Eigen3::Eigen
-  ${OpenCV_LIBS}
-)
 
 # ===== 目标： EuRoC 纯视觉双目里程计 =====
 add_ros2_executable(StereoSlam src/VisualSlam/VisualSlam.cpp)
-target_link_libraries(StereoSlam
-  Eigen3::Eigen
-  ${OpenCV_LIBS}
-)
 
 # ===== 目标： 融合数据与轨迹估计 =====
 add_ros2_executable(VisualInertial src/VisualSim/VisualInertial.cpp)
-ament_target_dependencies(VisualInertial
-  rclcpp
-  nav_msgs
-  geometry_msgs
-  sensor_msgs
-)
-target_link_libraries(VisualInertial
-  Eigen3::Eigen
-  ${OpenCV_LIBS}
-  yaml-cpp::yaml-cpp
-)
-target_compile_options(VisualInertial PRIVATE -std=c++26 -freflection)
 
 # ===== 目标： 加载生成的 CSV 或 GroundTruth 并发布为 ROS2 话题 =====
 add_ros2_executable(SimpleDataLoader src/DataLoader/DataLoader.cpp)
-ament_target_dependencies(SimpleDataLoader
-  rclcpp
-  nav_msgs
-  geometry_msgs
-)
-target_link_libraries(SimpleDataLoader
-  Eigen3::Eigen
-)
 
 # --- 资源安装 ---
 install(DIRECTORY include/${PROJECT_NAME}/

@@ -1,10 +1,22 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include <concepts>
+#include <type_traits>
 
 #include <sophus/so3.hpp>
 
-#include "DatumImu.hpp"
+template <typename T>
+concept ImuDatumLike = requires {
+  requires std::is_same_v<std::decay_t<decltype(std::declval<T>().timestamp_)>,
+                          std::int64_t>;
+  requires std::
+      is_same_v<std::decay_t<decltype(std::declval<T>().angular_velocity_)>,
+                Eigen::Vector3d>;
+  requires std::
+      is_same_v<std::decay_t<decltype(std::declval<T>().linear_acceleration_)>,
+                Eigen::Vector3d>;
+};
 
 struct AbstractIntegrator
 {
@@ -25,7 +37,8 @@ struct AbstractIntegrator
  */
 struct ZerothOrderAttitudeIntegrator : public AbstractIntegrator
 {
-  void Update(const DatumImu &datum_prev, const DatumImu &datum)
+  void Update(const ImuDatumLike auto &datum_prev,
+              const ImuDatumLike auto &datum)
   {
     const double dt{
         1e-9f * static_cast<double>(datum.timestamp_ - datum_prev.timestamp_),
@@ -66,7 +79,8 @@ struct ZerothOrderAttitudeIntegrator : public AbstractIntegrator
  */
 struct FirstOrderAttitudeIntegrator : public AbstractIntegrator
 {
-  void Update(const DatumImu &datum_prev, const DatumImu &datum)
+  void Update(const ImuDatumLike auto &datum_prev,
+              const ImuDatumLike auto &datum)
   {
     const double dt{
         1e-9f * static_cast<double>(datum.timestamp_ - datum_prev.timestamp_),
@@ -89,11 +103,11 @@ struct FirstOrderAttitudeIntegrator : public AbstractIntegrator
     };
     // 朝向变化量
     Sophus::SO3d delta_attitude{
-        Sophus::SO3d::exp(median_angular_velocity_in_body_frame * dt)
-            + (dt * dt / 12.0)
-                  * previous_angular_velocity_in_body_frame.cross(
-                      current_angular_velocity_in_body_frame
-                  ),
+        Sophus::SO3d::exp(median_angular_velocity_in_body_frame * dt
+                          + (dt * dt / 12.0)
+                                * previous_angular_velocity_in_body_frame.cross(
+                                    current_angular_velocity_in_body_frame
+                                )),
     };
     // 新的朝向
     Sophus::SO3d estimated_new_attitude{
@@ -111,7 +125,8 @@ struct FirstOrderAttitudeIntegrator : public AbstractIntegrator
  */
 struct MidpointPositionIntegrator : public AbstractIntegrator
 {
-  void Update(const DatumImu &datum_prev, const DatumImu &datum)
+  void Update(const ImuDatumLike auto &datum_prev,
+              const ImuDatumLike auto &datum)
   {
     const double dt{
         1e-9f * static_cast<double>(datum.timestamp_ - datum_prev.timestamp_),

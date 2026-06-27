@@ -1,4 +1,5 @@
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <format>
@@ -36,10 +37,10 @@
 #include "ImageDataLoader.hpp"
 #include "euroc_vio/Integrator.hpp"
 
-template <typename PointType = cv::Point2f>
 struct StereoSlam : public VisualIntegrator
 {
 public:
+  using PointType  = cv::Point2d;
   using value_type = typename PointType::value_type;
   using Vector3    = Eigen::Vector<value_type, 3>;
   using Quaternion = Eigen::Quaternion<value_type>;
@@ -75,13 +76,13 @@ private:
                            "p_x [m],p_y [m],p_z [m],"
                            "q_w [],q_x [],q_y [],q_z []\n");
     // 打印初始位姿
-    WriteDataContent();
+    WriteDataContent(0);
   }
 
   /**
    * @brief 打印位姿
    */
-  void WriteDataContent()
+  void WriteDataContent(std::int64_t timestamp)
   {
     std::print(
         file_traj_,
@@ -91,7 +92,7 @@ private:
         "{:.18f},{:.18f},{:.18f},"
         // 朝向
         "{:.18f},{:.18f},{:.18f},{:.18f}\n",
-        prev_frame.timestamp_, //
+        timestamp, //
         this->VisualIntegrator::estimated_position.x(),
         this->VisualIntegrator::estimated_position.y(),
         this->VisualIntegrator::estimated_position.z(),
@@ -199,8 +200,9 @@ public:
         // 数据类型转换
         Vector3 rVec_eigen;
         cv::cv2eigen(rVec_cv, rVec_eigen);
-        rVec_eigen     = -rVec_eigen;
-        delta_rotation = Attitude::exp(rVec_eigen);
+        rVec_eigen = -rVec_eigen;
+        Attitude delta_rotation{Attitude::exp(rVec_eigen)};
+        Vector3 delta_position{Vector3::Zero()};
         cv::cv2eigen(tVec_cv, delta_position);
         delta_position = -(delta_rotation * delta_position);
 
@@ -208,7 +210,7 @@ public:
         this->VisualIntegrator::Update(delta_rotation, delta_position);
 
         // 打印位姿
-        WriteDataContent();
+        WriteDataContent(prev_frame.timestamp_);
       }
 
     continue_loop:
@@ -228,6 +230,6 @@ int main(int argc, char *argv[])
     return 1;
   }
   std::print(stderr, "OpenCV Version: {}\n", cv::getVersionString());
-  StereoSlam<cv::Point2f>{std::filesystem::path{argv[1]}}.StartOdometer();
+  StereoSlam{std::filesystem::path{argv[1]}}.StartOdometer();
   return 0;
 }
