@@ -19,7 +19,6 @@ using namespace std::chrono_literals;
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/time.hpp>
 #include <sensor_msgs/msg/image.hpp>
-// #include <visualization_msgs/msg/Marker.hpp>
 
 #include "euroc_vio/AbstractLoader.hpp"
 #include "euroc_vio/main.h"

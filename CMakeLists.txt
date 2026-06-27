@@ -57,10 +57,25 @@ function(add_ros2_executable node_name source_path)
     $<INSTALL_INTERFACE:include>
   )
 
+  target_link_libraries(${node_name}
+    PRIVATE common_pch
+  )
+
   install(TARGETS ${node_name}
     DESTINATION lib/${PROJECT_NAME}
   )
 endfunction()
+
+# ===== 共享预编译头接口库 =====
+add_library(common_pch INTERFACE)
+target_precompile_headers(common_pch
+  INTERFACE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/euroc_vio/pch.h
+)
+target_include_directories(common_pch
+  INTERFACE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
 
 # ===== 目标： SLAM 仿真数据集生成器 =====
 add_ros2_executable(VisualSim src/VisualSim/VisualSim.cpp)
