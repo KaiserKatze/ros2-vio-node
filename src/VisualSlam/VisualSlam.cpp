@@ -173,18 +173,17 @@ public:
         cv::Mat tVec_right;
         cv::eigen2cv(inv_pose_right.so3().log(), rVec_right);
         cv::eigen2cv(inv_pose_right.translation(), tVec_right);
-        // 由于图像经过了立体矫正，所以畸变系数全为零
-        cv::Mat distCoeffs{cv::noArray()};
         // 准备存储空间
         size_t capacity{std::max(corners_next_left.size(),
                                  corners_next_right.size())};
         capacity = std::max(static_cast<size_t>(landmarks_homo.cols), capacity);
         corners_next_left.reserve(capacity);
         // https://docs.opencv.org/4.13.0/d9/d0c/group__calib3d.html#ga1019495a2c8d1743ed5cc23fa0daff8c
+        // 由于图像经过了立体矫正，所以畸变系数全为零
         cv::projectPoints(landmarks_homo, rVec_left, tVec_left, camera_matrix,
-                          distCoeffs, corners_next_left, cv::noArray());
+                          cv::noArray(), corners_next_left, cv::noArray());
         cv::projectPoints(landmarks_homo, rVec_right, tVec_right, camera_matrix,
-                          distCoeffs, corners_next_right, cv::noArray());
+                          cv::noArray(), corners_next_right, cv::noArray());
       }
 
       const bool found_corners{
