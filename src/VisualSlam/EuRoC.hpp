@@ -195,7 +195,7 @@ struct EuRoC
     // camera's coordinate system
     cv::Mat R1;
 
-    // https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#ga617b1685d4059c6040827800e72ad2b6
+    // https://docs.opencv.org/4.13.0/d9/d0c/group__calib3d.html#ga617b1685d4059c6040827800e72ad2b6
     cv::stereoRectify(cameraMatrix0, distCoeffs0, cameraMatrix1, distCoeffs1,
                       imageSize, stereoR, stereoT, R0, R1, P0, P1, Q,
                       cv::CALIB_ZERO_DISPARITY, 0);

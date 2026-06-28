@@ -4,6 +4,7 @@
 #include <concepts>
 #include <type_traits>
 
+#include <sophus/se3.hpp>
 #include <sophus/so3.hpp>
 
 template <typename T>
@@ -21,13 +22,14 @@ concept ImuDatumLike = requires {
 struct AbstractIntegrator
 {
   // 重力加速度大小
-  double gravity_world_norm{9.81};
+  double gravity_world_norm_{9.81};
   // 重力加速度
-  Eigen::Vector3d gravity_world{-gravity_world_norm * Eigen::Vector3d::UnitZ()};
-  // 初始状态
-  Eigen::Vector3d estimated_position{Eigen::Vector3d::Zero()};
-  Sophus::SO3d estimated_attitude{};
-  Eigen::Vector3d estimated_linear_velocity{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d gravity_world_{-gravity_world_norm_
+                                 * Eigen::Vector3d::UnitZ()};
+  // 姿态 (r^{vi}_i,C_iv)
+  Sophus::SE3d pose_{};
+  // 线速度
+  Eigen::Vector3d linear_velocity_{Eigen::Vector3d::Zero()};
   // 先前状态
   Sophus::SO3d previous_attitude{};
 };
@@ -65,12 +67,12 @@ struct ZerothOrderAttitudeIntegrator : public AbstractIntegrator
     };
     // 新的朝向
     Sophus::SO3d estimated_new_attitude{
-        estimated_attitude * delta_attitude,
+        pose_.so3() * delta_attitude,
     };
 
     // 更新朝向
-    previous_attitude  = estimated_attitude;
-    estimated_attitude = estimated_new_attitude;
+    previous_attitude = pose_.so3();
+    pose_.so3()       = estimated_new_attitude;
   }
 };
 
@@ -111,12 +113,12 @@ struct FirstOrderAttitudeIntegrator : public AbstractIntegrator
     };
     // 新的朝向
     Sophus::SO3d estimated_new_attitude{
-        estimated_attitude * delta_attitude,
+        pose_.so3() * delta_attitude,
     };
 
     // 更新朝向
-    previous_attitude  = estimated_attitude;
-    estimated_attitude = estimated_new_attitude;
+    previous_attitude = pose_.so3();
+    pose_.so3()       = estimated_new_attitude;
   }
 };
 
@@ -136,8 +138,8 @@ struct MidpointPositionIntegrator : public AbstractIntegrator
     Eigen::Vector3d linear_acceleration_in_world_frame{
         0.5
                 * (previous_attitude * datum_prev.linear_acceleration_
-                   + estimated_attitude * datum.linear_acceleration_)
-            + gravity_world,
+                   + pose_.so3() * datum.linear_acceleration_)
+            + gravity_world_,
     };
     // 线速度变化量
     Eigen::Vector3d delta_velocity{
@@ -145,13 +147,13 @@ struct MidpointPositionIntegrator : public AbstractIntegrator
     };
     // 位置变化量
     Eigen::Vector3d delta_position{
-        (estimated_linear_velocity + 0.5 * delta_velocity) * dt,
+        (linear_velocity_ + 0.5 * delta_velocity) * dt,
     };
 
     // 更新位置
-    estimated_position += delta_position;
+    pose_.translation() += delta_position;
     // 更新线速度
-    estimated_linear_velocity += delta_velocity;
+    linear_velocity_ += delta_velocity;
   }
 };
 
@@ -165,13 +167,13 @@ struct VisualIntegrator : public AbstractIntegrator
   {
     // 新的朝向
     Sophus::SO3d estimated_new_attitude{
-        estimated_attitude * delta_attitude,
+        pose_.so3() * delta_attitude,
     };
 
     // 更新位置
-    estimated_position += estimated_attitude * delta_position;
+    pose_.translation() += pose_.so3() * delta_position;
     // 更新朝向
-    previous_attitude  = estimated_attitude;
-    estimated_attitude = estimated_new_attitude;
+    previous_attitude = pose_.so3();
+    pose_.so3()       = estimated_new_attitude;
   }
 };

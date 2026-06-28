@@ -84,23 +84,18 @@ private:
    */
   void WriteDataContent(std::int64_t timestamp)
   {
-    std::print(
-        file_traj_,
-        // 时间戳
-        "{:020d},"
-        // 位置
-        "{:.18f},{:.18f},{:.18f},"
-        // 朝向
-        "{:.18f},{:.18f},{:.18f},{:.18f}\n",
-        timestamp, //
-        this->VisualIntegrator::estimated_position.x(),
-        this->VisualIntegrator::estimated_position.y(),
-        this->VisualIntegrator::estimated_position.z(),
-        this->VisualIntegrator::estimated_attitude.unit_quaternion().w(),
-        this->VisualIntegrator::estimated_attitude.unit_quaternion().x(),
-        this->VisualIntegrator::estimated_attitude.unit_quaternion().y(),
-        this->VisualIntegrator::estimated_attitude.unit_quaternion().z()
-    );
+    auto pos{this->VisualIntegrator::pose_.translation()};
+    auto att{this->VisualIntegrator::pose_.so3().unit_quaternion()};
+    std::print(file_traj_,
+               // 时间戳
+               "{:020d},"
+               // 位置
+               "{:.18f},{:.18f},{:.18f},"
+               // 朝向
+               "{:.18f},{:.18f},{:.18f},{:.18f}\n",
+               timestamp,                 //
+               pos.x(), pos.y(), pos.z(), //
+               att.w(), att.x(), att.y(), att.z());
   }
 
 public:
@@ -121,6 +116,9 @@ public:
     std::vector<PointType> corners_prev_right;
     std::vector<PointType> corners_next_left;
     std::vector<PointType> corners_next_right;
+
+    // 世界坐标系 (即以左目光心为原点的坐标系) 中路标点的齐次坐标
+    cv::Mat landmarks_homo;
 
     // 相机内参矩阵
     cv::Mat camera_matrix;
@@ -156,13 +154,46 @@ public:
       clahe->apply(image_next_left_grayscale, image_next_left_grayscale);
       clahe->apply(image_next_right_grayscale, image_next_right_grayscale);
 
+      // 预测路标点在下一帧的投影
+      if (landmarks_homo.cols > 0) // 确认是否存在路标点
+      {
+        // (左目相机相对于世界坐标系的姿态 = 载具相对于世界坐标系的姿态)取逆
+        // 得到(从世界坐标系到左目相机坐标系的变换)
+        auto inv_pose_left{this->VisualIntegrator::pose_.inverse()};
+        cv::Mat rVec_left;
+        cv::Mat tVec_left;
+        cv::eigen2cv(inv_pose_left.so3().log(), rVec_left);
+        cv::eigen2cv(inv_pose_left.translation(), tVec_left);
+        // (右目相机相对于世界坐标系的姿态)取逆
+        // 得到(从世界坐标系到右目相机坐标系的变换)
+        auto inv_pose_right{inv_pose_left};
+        // 下面相当于令 (inv_pose_right := T_C1C0 * inv_pose_left)
+        inv_pose_right.translation().x() -= euroc_.baseline_length_;
+        cv::Mat rVec_right;
+        cv::Mat tVec_right;
+        cv::eigen2cv(inv_pose_right.so3().log(), rVec_right);
+        cv::eigen2cv(inv_pose_right.translation(), tVec_right);
+        // 由于图像经过了立体矫正，所以畸变系数全为零
+        cv::Mat distCoeffs{cv::noArray()};
+        // 准备存储空间
+        size_t capacity{std::max(corners_next_left.size(),
+                                 corners_next_right.size())};
+        capacity = std::max(static_cast<size_t>(landmarks_homo.cols), capacity);
+        corners_next_left.reserve(capacity);
+        // https://docs.opencv.org/4.13.0/d9/d0c/group__calib3d.html#ga1019495a2c8d1743ed5cc23fa0daff8c
+        cv::projectPoints(landmarks_homo, rVec_left, tVec_left, camera_matrix,
+                          distCoeffs, corners_next_left, cv::noArray());
+        cv::projectPoints(landmarks_homo, rVec_right, tVec_right, camera_matrix,
+                          distCoeffs, corners_next_right, cv::noArray());
+      }
+
       const bool found_corners{
           detector_.FindCorners(image_prev_left_grayscale,
                                 image_prev_right_grayscale,
                                 image_next_left_grayscale,
                                 image_next_right_grayscale, corners_prev_left,
                                 corners_prev_right, corners_next_left,
-                                corners_next_right),
+                                corners_next_right, true),
       };
       if (found_corners)
       {
@@ -173,9 +204,6 @@ public:
         // 4. 三角化
         // 5. 作为 PnP 问题，解出帧间旋转和平移
         // 6. 离散时间积分，计算实时位姿
-
-        // 世界坐标系 (即以左目光心为原点的坐标系) 中路标点的齐次坐标
-        cv::Mat landmarks_homo;
 
         // https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#gad3fc9a0c82b08df034234979960b778c
         cv::triangulatePoints(euroc_.P0, euroc_.P1, corners_prev_left,

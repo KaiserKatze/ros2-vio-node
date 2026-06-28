@@ -30,11 +30,13 @@ private:
   static constexpr int fastThreshold{20};
   static constexpr bool fastNonmaxSuppression{true};
   static constexpr cv::FastFeatureDetector::DetectorType fastType{
-      cv::FastFeatureDetector::TYPE_9_16};
+      cv::FastFeatureDetector::TYPE_9_16
+  };
 
   cv::Ptr<cv::FastFeatureDetector> fastFeatureDetector{
       cv::FastFeatureDetector::create(fastThreshold, fastNonmaxSuppression,
-                                      fastType)};
+                                      fastType)
+  };
 
 public:
   const cv::Size subpix_win_size{5, 5};
@@ -53,6 +55,19 @@ public:
                    std::vector<PointType> &corners_prev_right,
                    std::vector<PointType> &corners_next_left,
                    std::vector<PointType> &corners_next_right) const
+  {
+    return FindCorners(gray_prev_left, gray_prev_right, gray_next_left,
+                       gray_next_right, corners_prev_left, corners_prev_right,
+                       corners_next_left, corners_next_right, false);
+  }
+
+  bool
+  FindCorners(const cv::Mat &gray_prev_left, const cv::Mat &gray_prev_right,
+              const cv::Mat &gray_next_left, const cv::Mat &gray_next_right,
+              std::vector<PointType> &corners_prev_left,
+              std::vector<PointType> &corners_prev_right,
+              std::vector<PointType> &corners_next_left,
+              std::vector<PointType> &corners_next_right, bool use_hint) const
   {
     //===================================
     // 从上一帧左目到上一帧右目
@@ -137,7 +152,8 @@ public:
                       return found && (p_prev_left.x > p_prev_right.x)
                              && (std::abs(p_prev_left.y - p_prev_right.y)
                                  < atol);
-                    });
+                    }
+                );
 
           // 因为 view 是延迟计算的，所以必须先创建副本
           std::vector<PointType> new_corners_prev_left_ext
@@ -158,7 +174,8 @@ public:
                                      + new_corners_prev_right_ext.size());
           corners_prev_left.append_range(std::move(new_corners_prev_left_ext));
           corners_prev_right.append_range(
-              std::move(new_corners_prev_right_ext));
+              std::move(new_corners_prev_right_ext)
+          );
         }
       }
 
@@ -188,7 +205,8 @@ public:
                 {
                   // 1. 必须是追踪成功的点
                   return std::get<3>(tuple);
-                });
+                }
+            );
 
       // 因为 view 是延迟计算的，所以必须先创建副本
       std::vector<PointType> new_corners_prev_left
@@ -242,7 +260,8 @@ public:
                   // 3. 极线过滤：纵坐标之差必须小于阈值
                   return found && (p_next_left.x > p_next_right.x)
                          && (std::abs(p_next_left.y - p_next_right.y) < atol);
-                });
+                }
+            );
 
       std::vector<PointType> new_corners_prev_left
           = zipped_view
@@ -302,7 +321,8 @@ public:
                   return found
                          && (std::abs(p_prev_left.x - p_loop_back.x) < atol)
                          && (std::abs(p_prev_left.y - p_loop_back.y) < atol);
-                });
+                }
+            );
 
       std::vector<PointType> new_corners_prev_left
           = zipped_view
