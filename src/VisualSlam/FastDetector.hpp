@@ -71,30 +71,30 @@ public:
               std::vector<PointType> &corners_next_left,
               std::vector<PointType> &corners_next_right, bool use_hint) const
   {
-    (void) use_hint;
-
     if (!TrackStereoPrevLeftToPrevRight(gray_prev_left, gray_prev_right,
-                                        corners_prev_left, corners_prev_right))
+                                        corners_prev_left, corners_prev_right,
+                                        use_hint))
     {
       return false;
     }
 
     if (!TrackTemporalRight(gray_prev_right, gray_next_right, corners_prev_left,
-                            corners_prev_right, corners_next_right))
+                            corners_prev_right, corners_next_right, use_hint))
     {
       return false;
     }
 
     if (!TrackStereoNextRightToNextLeft(gray_next_right, gray_next_left,
                                         corners_prev_left, corners_prev_right,
-                                        corners_next_left, corners_next_right))
+                                        corners_next_left, corners_next_right,
+                                        use_hint))
     {
       return false;
     }
 
     if (!ValidateLoopback(gray_next_left, gray_prev_left, corners_prev_left,
                           corners_prev_right, corners_next_left,
-                          corners_next_right))
+                          corners_next_right, use_hint))
     {
       return false;
     }
@@ -105,11 +105,12 @@ public:
 private:
   //===================================
   // 从上一帧左目到上一帧右目
-  bool TrackStereoPrevLeftToPrevRight(
-      const cv::Mat &gray_prev_left, const cv::Mat &gray_prev_right,
-      std::vector<PointType> &corners_prev_left,
-      std::vector<PointType> &corners_prev_right
-  ) const
+  bool
+  TrackStereoPrevLeftToPrevRight(const cv::Mat &gray_prev_left,
+                                 const cv::Mat &gray_prev_right,
+                                 std::vector<PointType> &corners_prev_left,
+                                 std::vector<PointType> &corners_prev_right,
+                                 bool use_hint) const
   {
     // 1. 计算需要补充的角点数量
     const int num_needed{static_cast<int>(maxCorners)
@@ -174,7 +175,8 @@ private:
     cv::calcOpticalFlowPyrLK(gray_prev_left, gray_prev_right,
                              corners_prev_left_ext, corners_prev_right_ext,
                              features_found_pl_pr, cv::noArray(), winSize,
-                             maxLevel, criteria_);
+                             maxLevel, criteria_,
+                             use_hint ? cv::OPTFLOW_USE_INITIAL_FLOW : 0);
     if (!corners_prev_right_ext.empty())
     {
       cv::cornerSubPix(gray_prev_right, corners_prev_right_ext, subpix_win_size,
@@ -225,13 +227,15 @@ private:
                           const cv::Mat &gray_next_right,
                           std::vector<PointType> &corners_prev_left,
                           std::vector<PointType> &corners_prev_right,
-                          std::vector<PointType> &corners_next_right) const
+                          std::vector<PointType> &corners_next_right,
+                          bool use_hint) const
   {
     std::vector<unsigned char> features_found_pr_nr;
     cv::calcOpticalFlowPyrLK(gray_prev_right, gray_next_right,
                              corners_prev_right, corners_next_right,
                              features_found_pr_nr, cv::noArray(), winSize,
-                             maxLevel, criteria_);
+                             maxLevel, criteria_,
+                             use_hint ? cv::OPTFLOW_USE_INITIAL_FLOW : 0);
     if (!corners_next_right.empty())
     {
       cv::cornerSubPix(gray_next_right, corners_next_right, subpix_win_size,
@@ -274,19 +278,21 @@ private:
 
   //===================================
   // 从下一帧右目到下一帧左目
-  bool TrackStereoNextRightToNextLeft(
-      const cv::Mat &gray_next_right, const cv::Mat &gray_next_left,
-      std::vector<PointType> &corners_prev_left,
-      std::vector<PointType> &corners_prev_right,
-      std::vector<PointType> &corners_next_left,
-      std::vector<PointType> &corners_next_right
-  ) const
+  bool
+  TrackStereoNextRightToNextLeft(const cv::Mat &gray_next_right,
+                                 const cv::Mat &gray_next_left,
+                                 std::vector<PointType> &corners_prev_left,
+                                 std::vector<PointType> &corners_prev_right,
+                                 std::vector<PointType> &corners_next_left,
+                                 std::vector<PointType> &corners_next_right,
+                                 bool use_hint) const
   {
     std::vector<unsigned char> features_found_nr_nl;
     cv::calcOpticalFlowPyrLK(gray_next_right, gray_next_left,
                              corners_next_right, corners_next_left,
                              features_found_nr_nl, cv::noArray(), winSize,
-                             maxLevel, criteria_);
+                             maxLevel, criteria_,
+                             use_hint ? cv::OPTFLOW_USE_INITIAL_FLOW : 0);
     if (!corners_next_left.empty())
     {
       cv::cornerSubPix(gray_next_left, corners_next_left, subpix_win_size,
@@ -346,13 +352,15 @@ private:
                         std::vector<PointType> &corners_prev_left,
                         std::vector<PointType> &corners_prev_right,
                         std::vector<PointType> &corners_next_left,
-                        std::vector<PointType> &corners_next_right) const
+                        std::vector<PointType> &corners_next_right,
+                        bool use_hint) const
   {
     Points corners_prev_left_loopback;
     std::vector<unsigned char> features_found_nl_pl;
     cv::calcOpticalFlowPyrLK(gray_next_left, gray_prev_left, corners_next_left,
                              corners_prev_left_loopback, features_found_nl_pl,
-                             cv::noArray(), winSize, maxLevel, criteria_);
+                             cv::noArray(), winSize, maxLevel, criteria_,
+                             use_hint ? cv::OPTFLOW_USE_INITIAL_FLOW : 0);
     if (!corners_prev_left_loopback.empty())
     {
       cv::cornerSubPix(gray_prev_left, corners_prev_left_loopback,
