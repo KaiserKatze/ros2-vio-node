@@ -48,13 +48,14 @@ public:
   using Attitude   = Sophus::SO3<value_type>;
 
   const EuRoC::EuRoC euroc_{};
-  std::atomic<bool> do_visualization_{false};
 
 private:
   std::ofstream file_traj_{"estimated_trajectory.csv",
                            std::ios::out | std::ios::trunc};
   ImageDataLoader loader_;
   CornerDetection::FastDetector<PointType> detector_{};
+  bool do_visualization_{false};
+  const std::string window_name_{"Stereo Visual SLAM"};
 
 public:
   StereoSlam() = delete;
@@ -63,7 +64,14 @@ public:
 
   StereoSlam(StereoSlam &&) = delete;
 
-  StereoSlam(const std::filesystem::path &path_mav0) : loader_{path_mav0} {}
+  StereoSlam(const std::filesystem::path &path_mav0, bool do_visualization) :
+    loader_{path_mav0}, do_visualization_{do_visualization}
+  {
+    if (do_visualization_)
+    {
+      cv::namedWindow(window_name_, cv::WINDOW_NORMAL);
+    }
+  }
 
   ~StereoSlam() {}
 
@@ -98,6 +106,53 @@ private:
                timestamp,                 //
                pos.x(), pos.y(), pos.z(), //
                att.w(), att.x(), att.y(), att.z());
+  }
+
+  // 辅助函数：将灰度图转为彩色（BGR）
+  static cv::Mat toColor(const cv::Mat &img) noexcept
+  {
+    if (img.channels() == 1)
+    {
+      cv::Mat color;
+      cv::cvtColor(img, color, cv::COLOR_GRAY2BGR);
+      return color;
+    }
+    return img.clone(); // 已是彩色则复制一份
+  }
+
+  static cv::Mat
+  stitchImages(const cv::Mat &image_prev_left_rectified,
+               const cv::Mat &image_prev_right_rectified,
+               const cv::Mat &image_prev_left_grayscale,
+               const cv::Mat &image_prev_right_grayscale,
+               const cv::Mat &image_next_left_rectified,
+               const cv::Mat &image_next_right_rectified,
+               const cv::Mat &image_next_left_grayscale,
+               const cv::Mat &image_next_right_grayscale) noexcept
+  {
+    // 转换所有图像为彩色
+    cv::Mat img1{toColor(image_prev_left_rectified)};
+    cv::Mat img2{toColor(image_prev_right_rectified)};
+    cv::Mat img3{toColor(image_prev_left_grayscale)};
+    cv::Mat img4{toColor(image_prev_right_grayscale)};
+    cv::Mat img5{toColor(image_next_left_rectified)};
+    cv::Mat img6{toColor(image_next_right_rectified)};
+    cv::Mat img7{toColor(image_next_left_grayscale)};
+    cv::Mat img8{toColor(image_next_right_grayscale)};
+
+    // 第一行：前4张
+    cv::Mat row1;
+    cv::hconcat(std::vector<cv::Mat>{img1, img2, img3, img4}, row1);
+
+    // 第二行：后4张
+    cv::Mat row2;
+    cv::hconcat(std::vector<cv::Mat>{img5, img6, img7, img8}, row2);
+
+    // 垂直拼接两行
+    cv::Mat result;
+    cv::vconcat(std::vector<cv::Mat>{row1, row2}, result);
+
+    return result;
   }
 
 public:
@@ -188,6 +243,20 @@ public:
                           cv::noArray(), corners_next_right, cv::noArray());
       }
 
+      // 将前一帧、后一帧的左目、右目的原始图像、增强后的图像展示出来
+      cv::Mat vis;
+      if (do_visualization_)
+      {
+        vis = stitchImages(
+            image_prev_left_rectified, image_prev_right_rectified,
+            image_prev_left_grayscale, image_prev_right_grayscale,
+            image_next_left_rectified, image_next_right_rectified,
+            image_next_left_grayscale, image_next_right_grayscale
+        );
+        cv::imshow(window_name_, vis);
+        cv::waitKey(0);
+      }
+
       const bool found_corners{
           detector_.FindCorners(image_prev_left_grayscale,
                                 image_prev_right_grayscale,
@@ -269,8 +338,7 @@ int main(int argc, char *argv[])
     std::print(stderr, "Visualization enabled.\n");
   }
 
-  StereoSlam inst{path_mav0};
-  inst.do_visualization_ = do_visualization;
+  StereoSlam inst{path_mav0, do_visualization};
   inst.StartOdometer();
 
   return 0;
