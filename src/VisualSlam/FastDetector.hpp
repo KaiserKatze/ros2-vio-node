@@ -94,7 +94,7 @@ public:
 
     if (!ValidateLoopback(gray_next_left, gray_prev_left, corners_prev_left,
                           corners_prev_right, corners_next_left,
-                          corners_next_right, use_hint))
+                          corners_next_right))
     {
       return false;
     }
@@ -390,32 +390,13 @@ private:
                         std::vector<PointType> &corners_prev_left,
                         std::vector<PointType> &corners_prev_right,
                         std::vector<PointType> &corners_next_left,
-                        std::vector<PointType> &corners_next_right,
-                        bool use_hint) const
+                        std::vector<PointType> &corners_next_right) const
   {
-    // 由于 corners_next_left 的长度可能比 corners_prev_left_loopback 的长度大
-    // 函数 TrackStereoPrevLeftToPrevRight 新增的角点是追加在 corners_next_left 的末尾
-    // 所以可以把 corners_next_left 末尾元素添加到 corners_prev_left_loopback 的末尾
-    if (use_hint
-        && corners_next_left.size() > corners_prev_left_loopback.size())
-    {
-      corners_prev_left_loopback.insert(corners_prev_left_loopback.end(),
-                                        corners_next_left.begin()
-                                            + corners_prev_left_loopback.size(),
-                                        corners_next_left.end());
-    }
     Points corners_prev_left_loopback;
     std::vector<unsigned char> features_found_nl_pl;
-    const int lk_flags_next_left_to_prev_left{
-        (use_hint && !corners_prev_left_loopback.empty()
-         && corners_next_left.size() == corners_prev_left_loopback.size())
-            ? cv::OPTFLOW_USE_INITIAL_FLOW
-            : 0
-    };
     cv::calcOpticalFlowPyrLK(gray_next_left, gray_prev_left, corners_next_left,
                              corners_prev_left_loopback, features_found_nl_pl,
-                             cv::noArray(), winSize, maxLevel, criteria_,
-                             lk_flags_next_left_to_prev_left);
+                             cv::noArray(), winSize, maxLevel, criteria_, 0);
     if (!corners_prev_left_loopback.empty())
     {
       cv::cornerSubPix(gray_prev_left, corners_prev_left_loopback,
