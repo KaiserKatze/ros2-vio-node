@@ -23,7 +23,8 @@
 #include <opencv2/viz/vizcore.hpp>
 
 // 1. 定义基础 trait：默认不是 vector
-template <typename T> struct is_vector : std::false_type
+template <typename T>
+struct is_vector : std::false_type
 {
 };
 // 2. 偏特化：匹配 std::vector 模板实例
@@ -47,6 +48,19 @@ struct AbstractDetector
   static constexpr double atol_coincidence{1.0};
   const cv::Size winSize{15, 15};
   static constexpr int maxLevel{2};
+
+  template <typename PointType>
+  static bool HaveEnoughCorners(const std::vector<PointType> &corners) noexcept
+  {
+    return corners.size() >= minCorners;
+  }
+
+  template <typename... PointTypes>
+  static bool HaveEnoughCorners(const std::vector<PointTypes> &...corners)
+  {
+    // 各个角点集合的大小之和
+    return (corners.size() + ...) >= minCorners;
+  }
 };
 
 // 自定义适配器，用于包装 cv::cornerSubPix
