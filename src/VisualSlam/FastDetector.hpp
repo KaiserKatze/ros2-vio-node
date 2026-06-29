@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <ranges>
 #include <vector>
@@ -264,6 +265,8 @@ private:
                                     + corners_next_right.size(),
                                 corners_prev_right.end());
     }
+    assert(corners_prev_right.size() == corners_next_right.size()
+           && "corners_prev_right.size() != corners_next_right.size()");
     std::vector<unsigned char> features_found_pr_nr;
     const int lk_flags_prev_right_to_next_right{
         (use_hint && !corners_next_right.empty()

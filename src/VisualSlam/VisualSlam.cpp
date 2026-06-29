@@ -1,4 +1,5 @@
 #include <atomic>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -269,6 +270,10 @@ public:
                                 corners_prev_right, corners_next_left,
                                 corners_next_right, true),
       };
+      assert(corners_prev_left.size() == corners_prev_right.size()
+             && corners_prev_left.size() == corners_next_left.size()
+             && corners_prev_left.size() == corners_next_right.size()
+             && "Inconsistent corner array sizes");
       if (found_corners)
       {
         // 当视图之间的旋转、平移未知（例如从上一帧右目到下一帧右目，从上一帧左目到下一帧左目）时：
@@ -279,7 +284,7 @@ public:
         // 5. 作为 PnP 问题，解出帧间旋转和平移
         // 6. 离散时间积分，计算实时位姿
 
-        // https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#gad3fc9a0c82b08df034234979960b778c
+        // https://docs.opencv.org/4.13.0/d9/d0c/group__calib3d.html#gad3fc9a0c82b08df034234979960b778c
         cv::triangulatePoints(euroc_.P0, euroc_.P1, corners_prev_left,
                               corners_prev_right, landmarks_homo);
 
