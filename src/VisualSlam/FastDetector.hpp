@@ -134,7 +134,8 @@ private:
 
     if (num_needed <= 0)
     {
-      return HaveEnoughCorners(corners_prev_left);
+      return HaveEnoughCorners(corners_prev_left)
+             && corners_prev_left.size() == corners_prev_right.size();
     }
 
     // 2. 提取新的角点
@@ -165,7 +166,8 @@ private:
 
     if (keypoints_prev_left_ext.empty())
     {
-      return HaveEnoughCorners(corners_prev_left);
+      return HaveEnoughCorners(corners_prev_left)
+             && corners_prev_left.size() == corners_prev_right.size();
     }
 
     // 按照响应值（response）降序排列，保留最显著的前 maxCorners 个角点，提取最优角点
@@ -238,7 +240,8 @@ private:
     corners_prev_left.append_range(std::move(new_corners_prev_left_ext));
     corners_prev_right.append_range(std::move(new_corners_prev_right_ext));
 
-    return HaveEnoughCorners(corners_prev_left);
+    return HaveEnoughCorners(corners_prev_left)
+           && corners_prev_left.size() == corners_prev_right.size();
   }
 
   //===================================
@@ -307,7 +310,9 @@ private:
     corners_prev_right = std::move(new_corners_prev_right);
     corners_next_right = std::move(new_corners_next_right);
 
-    return HaveEnoughCorners(corners_prev_left);
+    return HaveEnoughCorners(corners_prev_left)
+           && corners_prev_left.size() == corners_prev_right.size()
+           && corners_prev_left.size() == corners_next_right.size();
   }
 
   //===================================
@@ -390,7 +395,10 @@ private:
     corners_next_left  = std::move(new_corners_next_left);
     corners_next_right = std::move(new_corners_next_right);
 
-    return HaveEnoughCorners(corners_prev_left);
+    return HaveEnoughCorners(corners_prev_left)
+           && corners_prev_left.size() == corners_prev_right.size()
+           && corners_prev_left.size() == corners_next_left.size()
+           && corners_prev_left.size() == corners_next_right.size();
   }
 
   //===================================
@@ -454,7 +462,11 @@ private:
     corners_next_left  = std::move(new_corners_next_left);
     corners_next_right = std::move(new_corners_next_right);
 
-    return HaveEnoughCorners(corners_prev_left);
+    return HaveEnoughCorners(corners_prev_left)
+           && corners_prev_left.size() == corners_prev_right.size()
+           && corners_prev_left.size() == corners_next_left.size()
+           && corners_prev_left.size() == corners_next_right.size()
+           && corners_prev_left.size() == corners_prev_left_loopback.size();
   }
 };
 
