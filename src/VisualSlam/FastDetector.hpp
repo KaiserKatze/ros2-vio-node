@@ -172,11 +172,17 @@ private:
     std::vector<unsigned char> features_found_pl_pr;
 
     // https://docs.opencv.org/4.13.0/dc/d6b/group__video__track.html#ga473e4b886d0bcc6b65831eb88ed93323
+    const int lk_flags_prev_left_to_prev_right{
+        (use_hint && !corners_prev_right_ext.empty()
+         && corners_prev_left_ext.size() == corners_prev_right_ext.size())
+            ? cv::OPTFLOW_USE_INITIAL_FLOW
+            : 0
+    };
     cv::calcOpticalFlowPyrLK(gray_prev_left, gray_prev_right,
                              corners_prev_left_ext, corners_prev_right_ext,
                              features_found_pl_pr, cv::noArray(), winSize,
                              maxLevel, criteria_,
-                             use_hint ? cv::OPTFLOW_USE_INITIAL_FLOW : 0);
+                             lk_flags_prev_left_to_prev_right);
     if (!corners_prev_right_ext.empty())
     {
       cv::cornerSubPix(gray_prev_right, corners_prev_right_ext, subpix_win_size,
@@ -231,11 +237,17 @@ private:
                           bool use_hint) const
   {
     std::vector<unsigned char> features_found_pr_nr;
+    const int lk_flags_prev_right_to_next_right{
+        (use_hint && !corners_next_right.empty()
+         && corners_prev_right.size() == corners_next_right.size())
+            ? cv::OPTFLOW_USE_INITIAL_FLOW
+            : 0
+    };
     cv::calcOpticalFlowPyrLK(gray_prev_right, gray_next_right,
                              corners_prev_right, corners_next_right,
                              features_found_pr_nr, cv::noArray(), winSize,
                              maxLevel, criteria_,
-                             use_hint ? cv::OPTFLOW_USE_INITIAL_FLOW : 0);
+                             lk_flags_prev_right_to_next_right);
     if (!corners_next_right.empty())
     {
       cv::cornerSubPix(gray_next_right, corners_next_right, subpix_win_size,
@@ -288,11 +300,17 @@ private:
                                  bool use_hint) const
   {
     std::vector<unsigned char> features_found_nr_nl;
+    const int lk_flags_next_right_to_next_left{
+        (use_hint && !corners_next_left.empty()
+         && corners_next_right.size() == corners_next_left.size())
+            ? cv::OPTFLOW_USE_INITIAL_FLOW
+            : 0
+    };
     cv::calcOpticalFlowPyrLK(gray_next_right, gray_next_left,
                              corners_next_right, corners_next_left,
                              features_found_nr_nl, cv::noArray(), winSize,
                              maxLevel, criteria_,
-                             use_hint ? cv::OPTFLOW_USE_INITIAL_FLOW : 0);
+                             lk_flags_next_right_to_next_left);
     if (!corners_next_left.empty())
     {
       cv::cornerSubPix(gray_next_left, corners_next_left, subpix_win_size,
@@ -357,10 +375,16 @@ private:
   {
     Points corners_prev_left_loopback;
     std::vector<unsigned char> features_found_nl_pl;
+    const int lk_flags_next_left_to_prev_left{
+        (use_hint && !corners_prev_left_loopback.empty()
+         && corners_next_left.size() == corners_prev_left_loopback.size())
+            ? cv::OPTFLOW_USE_INITIAL_FLOW
+            : 0
+    };
     cv::calcOpticalFlowPyrLK(gray_next_left, gray_prev_left, corners_next_left,
                              corners_prev_left_loopback, features_found_nl_pl,
                              cv::noArray(), winSize, maxLevel, criteria_,
-                             use_hint ? cv::OPTFLOW_USE_INITIAL_FLOW : 0);
+                             lk_flags_next_left_to_prev_left);
     if (!corners_prev_left_loopback.empty())
     {
       cv::cornerSubPix(gray_prev_left, corners_prev_left_loopback,
