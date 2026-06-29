@@ -126,8 +126,12 @@ public:
                 | std::views::transform([](const cv::KeyPoint &kp)
                                         { return PointType(kp.pt); })
                 | std::ranges::to<std::vector>();
-          cv::cornerSubPix(gray_prev_left, corners_prev_left_ext,
-                           subpix_win_size, subpix_zero_zone, subpix_criteria);
+          if (!corners_prev_left_ext.empty())
+          {
+            cv::cornerSubPix(gray_prev_left, corners_prev_left_ext,
+                             subpix_win_size, subpix_zero_zone,
+                             subpix_criteria);
+          }
 
           std::vector<PointType> corners_prev_right_ext;
           std::vector<unsigned char> features_found_pl_pr;
@@ -137,8 +141,12 @@ public:
                                    corners_prev_left_ext,
                                    corners_prev_right_ext, features_found_pl_pr,
                                    cv::noArray(), winSize, maxLevel, criteria_);
-          cv::cornerSubPix(gray_prev_right, corners_prev_right_ext,
-                           subpix_win_size, subpix_zero_zone, subpix_criteria);
+          if (!corners_prev_right_ext.empty())
+          {
+            cv::cornerSubPix(gray_prev_right, corners_prev_right_ext,
+                             subpix_win_size, subpix_zero_zone,
+                             subpix_criteria);
+          }
 
           auto zipped_view
               = std::views::zip(corners_prev_left_ext, corners_prev_right_ext,
@@ -195,8 +203,11 @@ public:
                                corners_prev_right, corners_next_right,
                                features_found_pr_nr, cv::noArray(), winSize,
                                maxLevel, criteria_);
-      cv::cornerSubPix(gray_next_right, corners_next_right, subpix_win_size,
-                       subpix_zero_zone, subpix_criteria);
+      if (!corners_next_right.empty())
+      {
+        cv::cornerSubPix(gray_next_right, corners_next_right, subpix_win_size,
+                         subpix_zero_zone, subpix_criteria);
+      }
 
       auto zipped_view
           = std::views::zip(corners_prev_left, corners_prev_right,
@@ -244,8 +255,11 @@ public:
                                corners_next_right, corners_next_left,
                                features_found_nr_nl, cv::noArray(), winSize,
                                maxLevel, criteria_);
-      cv::cornerSubPix(gray_next_left, corners_next_left, subpix_win_size,
-                       subpix_zero_zone, subpix_criteria);
+      if (!corners_next_left.empty())
+      {
+        cv::cornerSubPix(gray_next_left, corners_next_left, subpix_win_size,
+                         subpix_zero_zone, subpix_criteria);
+      }
 
       auto zipped_view
           = std::views::zip(corners_prev_left, corners_prev_right,
@@ -305,8 +319,11 @@ public:
                                corners_next_left, corners_prev_left_loopback,
                                features_found_nl_pl, cv::noArray(), winSize,
                                maxLevel, criteria_);
-      cv::cornerSubPix(gray_prev_left, corners_prev_left_loopback,
-                       subpix_win_size, subpix_zero_zone, subpix_criteria);
+      if (!corners_prev_left_loopback.empty())
+      {
+        cv::cornerSubPix(gray_prev_left, corners_prev_left_loopback,
+                         subpix_win_size, subpix_zero_zone, subpix_criteria);
+      }
 
       auto zipped_view
           = std::views::zip(corners_prev_left, corners_prev_right,
