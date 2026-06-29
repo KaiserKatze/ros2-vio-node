@@ -210,39 +210,37 @@ public:
         cv::triangulatePoints(euroc_.P0, euroc_.P1, corners_prev_left,
                               corners_prev_right, landmarks_homo);
 
-        if (landmarks_homo.cols == 0)
+        if (landmarks_homo.cols > 0)
         {
-          goto continue_loop;
+          // 世界坐标系中路标点的非齐次坐标
+          cv::Mat landmarks_nonhomo;
+          // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#gac42edda3a3a0f717979589fcd6ac0035
+          cv::convertPointsFromHomogeneous(landmarks_homo.t(),
+                                           landmarks_nonhomo);
+
+          // 旋转向量与平移向量
+          cv::Mat rVec_cv, tVec_cv;
+          // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga50620f0e26e02caa2e9adc07b5fbf24e
+          cv::solvePnPRansac(landmarks_nonhomo, corners_next_left,
+                             camera_matrix, cv::noArray(), rVec_cv, tVec_cv);
+
+          // 数据类型转换
+          Vector3 rVec_eigen;
+          cv::cv2eigen(rVec_cv, rVec_eigen);
+          rVec_eigen = -rVec_eigen;
+          Attitude delta_rotation{Attitude::exp(rVec_eigen)};
+          Vector3 delta_position{Vector3::Zero()};
+          cv::cv2eigen(tVec_cv, delta_position);
+          delta_position = -(delta_rotation * delta_position);
+
+          // 更新状态
+          this->VisualIntegrator::Update(delta_rotation, delta_position);
+
+          // 打印位姿
+          WriteDataContent(prev_frame.timestamp_);
         }
-
-        // 世界坐标系中路标点的非齐次坐标
-        cv::Mat landmarks_nonhomo;
-        // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#gac42edda3a3a0f717979589fcd6ac0035
-        cv::convertPointsFromHomogeneous(landmarks_homo.t(), landmarks_nonhomo);
-
-        // 旋转向量与平移向量
-        cv::Mat rVec_cv, tVec_cv;
-        // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga50620f0e26e02caa2e9adc07b5fbf24e
-        cv::solvePnPRansac(landmarks_nonhomo, corners_next_left, camera_matrix,
-                           cv::noArray(), rVec_cv, tVec_cv);
-
-        // 数据类型转换
-        Vector3 rVec_eigen;
-        cv::cv2eigen(rVec_cv, rVec_eigen);
-        rVec_eigen = -rVec_eigen;
-        Attitude delta_rotation{Attitude::exp(rVec_eigen)};
-        Vector3 delta_position{Vector3::Zero()};
-        cv::cv2eigen(tVec_cv, delta_position);
-        delta_position = -(delta_rotation * delta_position);
-
-        // 更新状态
-        this->VisualIntegrator::Update(delta_rotation, delta_position);
-
-        // 打印位姿
-        WriteDataContent(prev_frame.timestamp_);
       }
 
-    continue_loop:
       prev_frame = std::move(frame);
       ++loader_;
       corners_prev_left  = std::move(corners_next_left);
