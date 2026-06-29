@@ -258,7 +258,7 @@ public:
             image_next_left_grayscale, image_next_right_grayscale
         );
         cv::imshow(window_name_, vis);
-        cv::waitKey(0);
+        cv::waitKey(5);
       }
 
       const bool found_corners{
