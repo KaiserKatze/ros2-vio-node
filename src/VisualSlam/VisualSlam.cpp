@@ -310,12 +310,20 @@ public:
           // 打印位姿
           WriteDataContent(prev_frame.timestamp_);
         }
+
+        // 只有在追踪成功时，才将本帧的有效特征点保存为下一帧的“上一帧点”
+        corners_prev_left  = std::move(corners_next_left);
+        corners_prev_right = std::move(corners_next_right);
+      }
+      else
+      {
+        // 追踪失败时，彻底清空状态，下一帧将重新全图检测角点
+        corners_prev_left.clear();
+        corners_prev_right.clear();
       }
 
       prev_frame = std::move(frame);
       ++loader_;
-      corners_prev_left  = std::move(corners_next_left);
-      corners_prev_right = std::move(corners_next_right);
     }
   }
 };

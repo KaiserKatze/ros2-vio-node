@@ -132,10 +132,11 @@ private:
     const int num_needed{static_cast<int>(maxCorners)
                          - static_cast<int>(corners_prev_left.size())};
 
-    if (num_needed <= 0)
+    // 不仅数量要够，还必须确保左右目特征点数组不为空且大小一致
+    if (num_needed <= 0 && !corners_prev_right.empty()
+        && corners_prev_left.size() == corners_prev_right.size())
     {
-      return HaveEnoughCorners(corners_prev_left)
-             && corners_prev_left.size() == corners_prev_right.size();
+      return HaveEnoughCorners(corners_prev_left);
     }
 
     // 2. 提取新的角点

@@ -44,6 +44,8 @@ struct AbstractDetector
 {
   static constexpr size_t minCorners{10};
   static constexpr size_t maxCorners{200};
+  static_assert(minCorners <= maxCorners,
+                "minCorners must be less than or equal to maxCorners");
   static constexpr double atol_parallax{1.5};
   static constexpr double atol_coincidence{1.0};
   const cv::Size winSize{15, 15};
