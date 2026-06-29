@@ -103,7 +103,7 @@ public:
   }
 
 private:
-  SubPixAdaptor CreateSubPixAdaptor(const cv::Mat &image)
+  SubPixAdaptor CreateSubPixAdaptor(const cv::Mat &image) const noexcept
   {
     return {image, subpix_win_size, subpix_zero_zone, subpix_criteria};
   }
