@@ -123,7 +123,7 @@ private:
 
     // 2. 提取新的角点
     std::vector<cv::KeyPoint> keypoints_prev_left_ext;
-    if (gray_prev_left.empty() || gray_prev_right.empty())
+    if (corners_prev_left.empty() || corners_prev_right.empty())
     {
       fastFeatureDetector->detect(gray_prev_left, keypoints_prev_left_ext,
                                   cv::noArray());
