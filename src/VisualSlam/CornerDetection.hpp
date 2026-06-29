@@ -76,8 +76,35 @@ struct SubPixAdaptor
   {
     if (!vec.empty())
     {
-      cv::cornerSubPix(adaptor.image_, vec, adaptor.win_size_,
-                       adaptor.zero_zone_, adaptor.criteria_);
+      using VecType = std::remove_cvref_t<decltype(vec)>;
+      using PointT  = typename VecType::value_type;
+      if constexpr (std::is_same_v<PointT, cv::Point2f>)
+      {
+        cv::cornerSubPix(adaptor.image_, vec, adaptor.win_size_,
+                         adaptor.zero_zone_, adaptor.criteria_);
+      }
+      else
+      {
+        std::vector<cv::Point2f> vec_f
+            = vec
+              | std::views::transform(
+                  [](const auto &pt)
+                  {
+                    return cv::Point2f(static_cast<float>(pt.x),
+                                       static_cast<float>(pt.y));
+                  }
+              )
+              | std::ranges::to<std::vector>();
+
+        cv::cornerSubPix(adaptor.image_, vec_f, adaptor.win_size_,
+                         adaptor.zero_zone_, adaptor.criteria_);
+
+        for (size_t i = 0; i < vec.size(); ++i)
+        {
+          vec[i].x = vec_f[i].x;
+          vec[i].y = vec_f[i].y;
+        }
+      }
     }
     return vec;
   }

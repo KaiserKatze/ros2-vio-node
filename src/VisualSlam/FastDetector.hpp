@@ -103,6 +103,11 @@ public:
   }
 
 private:
+  SubPixAdaptor CreateSubPixAdaptor(const cv::Mat &image)
+  {
+    return {image, subpix_win_size, subpix_zero_zone, subpix_criteria};
+  }
+
   //===================================
   // 从上一帧左目到上一帧右目
   bool
@@ -164,8 +169,8 @@ private:
           | std::ranges::to<std::vector>();
     if (!corners_prev_left_ext.empty())
     {
-      cv::cornerSubPix(gray_prev_left, corners_prev_left_ext, subpix_win_size,
-                       subpix_zero_zone, subpix_criteria);
+      corners_prev_left_ext
+          = corners_prev_left_ext | CreateSubPixAdaptor(gray_prev_left);
     }
 
     Points corners_prev_right_ext;
@@ -185,8 +190,8 @@ private:
                              lk_flags_prev_left_to_prev_right);
     if (!corners_prev_right_ext.empty())
     {
-      cv::cornerSubPix(gray_prev_right, corners_prev_right_ext, subpix_win_size,
-                       subpix_zero_zone, subpix_criteria);
+      corners_prev_right_ext
+          = corners_prev_right_ext | CreateSubPixAdaptor(gray_prev_right);
     }
 
     auto zipped_view
@@ -260,8 +265,8 @@ private:
                              lk_flags_prev_right_to_next_right);
     if (!corners_next_right.empty())
     {
-      cv::cornerSubPix(gray_next_right, corners_next_right, subpix_win_size,
-                       subpix_zero_zone, subpix_criteria);
+      corners_next_right
+          = corners_next_right | CreateSubPixAdaptor(gray_next_right);
     }
 
     auto zipped_view = std::views::zip(corners_prev_left, corners_prev_right,
@@ -333,8 +338,8 @@ private:
                              lk_flags_next_right_to_next_left);
     if (!corners_next_left.empty())
     {
-      cv::cornerSubPix(gray_next_left, corners_next_left, subpix_win_size,
-                       subpix_zero_zone, subpix_criteria);
+      corners_next_left
+          = corners_next_left | CreateSubPixAdaptor(gray_next_left);
     }
 
     auto zipped_view
@@ -399,8 +404,8 @@ private:
                              cv::noArray(), winSize, maxLevel, criteria_, 0);
     if (!corners_prev_left_loopback.empty())
     {
-      cv::cornerSubPix(gray_prev_left, corners_prev_left_loopback,
-                       subpix_win_size, subpix_zero_zone, subpix_criteria);
+      corners_prev_left_loopback
+          = corners_prev_left_loopback | CreateSubPixAdaptor(gray_prev_left);
     }
 
     auto zipped_view
