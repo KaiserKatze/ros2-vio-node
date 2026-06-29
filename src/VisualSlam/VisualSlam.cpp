@@ -41,8 +41,8 @@
 struct StereoSlam : public VisualIntegrator
 {
 public:
-  using PointType  = cv::Point2d;
-  using value_type = typename PointType::value_type;
+  using PointType  = cv::Point2f;
+  using value_type = double;
   using Vector3    = Eigen::Vector<value_type, 3>;
   using Quaternion = Eigen::Quaternion<value_type>;
   using Attitude   = Sophus::SO3<value_type>;
@@ -53,7 +53,7 @@ private:
   std::ofstream file_traj_{"estimated_trajectory.csv",
                            std::ios::out | std::ios::trunc};
   ImageDataLoader loader_;
-  CornerDetection::FastDetector<PointType> detector_{};
+  CornerDetection::FastDetector detector_{};
   bool do_visualization_{false};
   const std::string window_name_{"Stereo Visual SLAM"};
 

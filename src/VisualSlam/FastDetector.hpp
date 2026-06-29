@@ -15,9 +15,10 @@
 namespace CornerDetection
 {
 
-template <typename PointType = cv::Point2f>
 struct FastDetector : public AbstractDetector
 {
+  using PointType = cv::Point2f;
+
 private:
   const cv::TermCriteria criteria_{
       (cv::TermCriteria::COUNT) | (cv::TermCriteria::EPS),
