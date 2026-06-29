@@ -176,6 +176,8 @@ public:
 
     // 世界坐标系 (即以左目光心为原点的坐标系) 中路标点的齐次坐标
     cv::Mat landmarks_homo;
+    // 世界坐标系中路标点的非齐次坐标
+    cv::Mat landmarks_nonhomo;
 
     // 相机内参矩阵
     cv::Mat camera_matrix;
@@ -237,10 +239,12 @@ public:
         corners_next_left.reserve(capacity);
         // https://docs.opencv.org/4.13.0/d9/d0c/group__calib3d.html#ga1019495a2c8d1743ed5cc23fa0daff8c
         // 由于图像经过了立体矫正，所以畸变系数全为零
-        cv::projectPoints(landmarks_homo, rVec_left, tVec_left, camera_matrix,
-                          cv::noArray(), corners_next_left, cv::noArray());
-        cv::projectPoints(landmarks_homo, rVec_right, tVec_right, camera_matrix,
-                          cv::noArray(), corners_next_right, cv::noArray());
+        cv::projectPoints(landmarks_nonhomo, rVec_left, tVec_left,
+                          camera_matrix, cv::noArray(), corners_next_left,
+                          cv::noArray());
+        cv::projectPoints(landmarks_nonhomo, rVec_right, tVec_right,
+                          camera_matrix, cv::noArray(), corners_next_right,
+                          cv::noArray());
       }
 
       // 将前一帧、后一帧的左目、右目的原始图像、增强后的图像展示出来
@@ -281,8 +285,6 @@ public:
 
         if (landmarks_homo.cols > 0)
         {
-          // 世界坐标系中路标点的非齐次坐标
-          cv::Mat landmarks_nonhomo;
           // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#gac42edda3a3a0f717979589fcd6ac0035
           cv::convertPointsFromHomogeneous(landmarks_homo.t(),
                                            landmarks_nonhomo);
