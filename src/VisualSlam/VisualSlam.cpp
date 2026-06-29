@@ -1,3 +1,4 @@
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -47,6 +48,7 @@ public:
   using Attitude   = Sophus::SO3<value_type>;
 
   const EuRoC::EuRoC euroc_{};
+  std::atomic<bool> do_visualization_{false};
 
 private:
   std::ofstream file_traj_{"estimated_trajectory.csv",
@@ -251,12 +253,27 @@ public:
 
 int main(int argc, char *argv[])
 {
-  if (argc != 2)
+  if (argc != 2 && argc != 3)
   {
-    std::print(stderr, "Usage: {} <path_mav0>\n", argv[0]);
+    std::print(stderr, "Usage: {} [--visualize] <path_mav0>\n", argv[0]);
     return 1;
   }
   std::print(stderr, "OpenCV Version: {}\n", cv::getVersionString());
-  StereoSlam{std::filesystem::path{argv[1]}}.StartOdometer();
+
+  bool do_visualization{false};
+  auto path_mav0{std::filesystem::path{argv[argc - 1]}};
+
+  // 检测是否存在的 --visualize 选项
+  // 如果存在该选项则将 do_visualization 赋值为 true
+  if (argc == 3 && std::string_view{argv[1]} == "--visualize")
+  {
+    do_visualization = true;
+    std::print(stderr, "Visualization enabled.\n");
+  }
+
+  StereoSlam inst{path_mav0};
+  inst.do_visualization_ = do_visualization;
+  inst.StartOdometer();
+
   return 0;
 }

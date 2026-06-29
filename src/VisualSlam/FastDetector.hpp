@@ -69,6 +69,7 @@ public:
               std::vector<PointType> &corners_next_left,
               std::vector<PointType> &corners_next_right, bool use_hint) const
   {
+    (void) use_hint;
     //===================================
     // 从上一帧左目到上一帧右目
     {
