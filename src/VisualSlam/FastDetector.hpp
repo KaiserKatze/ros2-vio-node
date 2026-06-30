@@ -179,12 +179,8 @@ private:
         = keypoints_prev_left_ext
           | std::views::transform([](const cv::KeyPoint &kp)
                                   { return PointType(kp.pt); })
-          | std::ranges::to<std::vector>();
-    if (!corners_prev_left_ext.empty())
-    {
-      corners_prev_left_ext
-          = corners_prev_left_ext | CreateSubPixAdaptor(gray_prev_left);
-    }
+          | std::ranges::to<std::vector>()
+          | CreateSubPixAdaptor(gray_prev_left);
 
     Points corners_prev_right_ext;
     std::vector<unsigned char> features_found_pl_pr;
