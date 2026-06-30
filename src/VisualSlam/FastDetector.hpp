@@ -117,6 +117,11 @@ private:
     cv::calcOpticalFlowPyrLK(prevImg, nextImg, prevPts, nextPts, status,
                              cv::noArray(), winSize, maxLevel, criteria_,
                              flags);
+    if (nextPts.empty())
+    {
+      return;
+    }
+    nextPts = nextPts | CreateSubPixAdaptor(nextImg);
   }
 
   //===================================
@@ -178,7 +183,7 @@ private:
     Points corners_prev_left_ext
         = keypoints_prev_left_ext
           | std::views::transform([](const cv::KeyPoint &kp)
-                                  { return PointType(kp.pt); })
+                                  { return PointType{kp.pt}; })
           | std::ranges::to<std::vector>()
           | CreateSubPixAdaptor(gray_prev_left);
 
@@ -186,13 +191,10 @@ private:
     std::vector<unsigned char> features_found_pl_pr;
 
     // https://docs.opencv.org/4.13.0/dc/d6b/group__video__track.html#ga473e4b886d0bcc6b65831eb88ed93323
-    CalcOpticalFlowPyrLK(gray_prev_left, gray_prev_right, corners_prev_left_ext,
-                         corners_prev_right_ext, features_found_pl_pr, 0);
-    if (!corners_prev_right_ext.empty())
-    {
-      corners_prev_right_ext
-          = corners_prev_right_ext | CreateSubPixAdaptor(gray_prev_right);
-    }
+    CalcOpticalFlowPyrLK(gray_prev_left, gray_prev_right, //
+                         corners_prev_left_ext,
+                         corners_prev_right_ext, //
+                         features_found_pl_pr, 0);
 
     auto zipped_view
         = std::views::zip(corners_prev_left_ext, corners_prev_right_ext,
@@ -264,11 +266,6 @@ private:
     CalcOpticalFlowPyrLK(gray_prev_right, gray_next_right, corners_prev_right,
                          corners_next_right, features_found_pr_nr,
                          lk_flags_prev_right_to_next_right);
-    if (!corners_next_right.empty())
-    {
-      corners_next_right
-          = corners_next_right | CreateSubPixAdaptor(gray_next_right);
-    }
 
     auto zipped_view = std::views::zip(corners_prev_left, corners_prev_right,
                                        corners_next_right, features_found_pr_nr)
@@ -337,11 +334,6 @@ private:
     CalcOpticalFlowPyrLK(gray_next_right, gray_next_left, corners_next_right,
                          corners_next_left, features_found_nr_nl,
                          lk_flags_next_right_to_next_left);
-    if (!corners_next_left.empty())
-    {
-      corners_next_left
-          = corners_next_left | CreateSubPixAdaptor(gray_next_left);
-    }
 
     auto zipped_view
         = std::views::zip(corners_prev_left, corners_prev_right,
@@ -405,11 +397,6 @@ private:
     std::vector<unsigned char> features_found_nl_pl;
     CalcOpticalFlowPyrLK(gray_next_left, gray_prev_left, corners_next_left,
                          corners_prev_left_loopback, features_found_nl_pl, 0);
-    if (!corners_prev_left_loopback.empty())
-    {
-      corners_prev_left_loopback
-          = corners_prev_left_loopback | CreateSubPixAdaptor(gray_prev_left);
-    }
 
     auto zipped_view
         = std::views::zip(corners_prev_left, corners_prev_right,
