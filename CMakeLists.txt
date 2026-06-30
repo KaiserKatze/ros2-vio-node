@@ -17,16 +17,13 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+add_compile_options(-Wreorder)
 add_compile_options(-Wshadow)
 add_compile_options(-Wuninitialized)
 add_compile_options(-Wno-maybe-uninitialized)
 add_compile_options(-march=native)
 # C++26 开启反射机制
 add_compile_options(-freflection)
-
-if(MSVC)
-  add_compile_options(/utf-8)
-endif()
 
 # 启用 C++26 反射机制
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16.0")

@@ -74,8 +74,7 @@ public:
               std::vector<PointType> &corners_next_right, bool use_hint) const
   {
     if (!TrackStereoPrevLeftToPrevRight(gray_prev_left, gray_prev_right,
-                                        corners_prev_left, corners_prev_right,
-                                        use_hint))
+                                        corners_prev_left, corners_prev_right))
     {
       return false;
     }
@@ -122,12 +121,11 @@ private:
 
   //===================================
   // 从上一帧左目到上一帧右目
-  bool
-  TrackStereoPrevLeftToPrevRight(const cv::Mat &gray_prev_left,
-                                 const cv::Mat &gray_prev_right,
-                                 std::vector<PointType> &corners_prev_left,
-                                 std::vector<PointType> &corners_prev_right,
-                                 bool use_hint) const
+  bool TrackStereoPrevLeftToPrevRight(
+      const cv::Mat &gray_prev_left, const cv::Mat &gray_prev_right,
+      std::vector<PointType> &corners_prev_left,
+      std::vector<PointType> &corners_prev_right
+  ) const
   {
     // 1. 计算需要补充的角点数量
     const int num_needed{static_cast<int>(maxCorners)
@@ -192,15 +190,8 @@ private:
     std::vector<unsigned char> features_found_pl_pr;
 
     // https://docs.opencv.org/4.13.0/dc/d6b/group__video__track.html#ga473e4b886d0bcc6b65831eb88ed93323
-    const int lk_flags_prev_left_to_prev_right{
-        (use_hint && !corners_prev_right_ext.empty()
-         && corners_prev_left_ext.size() == corners_prev_right_ext.size())
-            ? cv::OPTFLOW_USE_INITIAL_FLOW
-            : 0
-    };
     CalcOpticalFlowPyrLK(gray_prev_left, gray_prev_right, corners_prev_left_ext,
-                         corners_prev_right_ext, features_found_pl_pr,
-                         lk_flags_prev_left_to_prev_right);
+                         corners_prev_right_ext, features_found_pl_pr, 0);
     if (!corners_prev_right_ext.empty())
     {
       corners_prev_right_ext
