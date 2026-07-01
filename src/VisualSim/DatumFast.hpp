@@ -56,7 +56,7 @@ struct DatumFast
   Eigen::Vector3d normalized_translation_;
 
   static std::vector<DatumFast>
-  Load(const std::string &path_estimation_csv,
+  Load(std::string_view path_estimation_csv,
        const Sophus::SO3d &sensor_rotation_wrt_body)
   {
     std::vector<DatumFast> data;

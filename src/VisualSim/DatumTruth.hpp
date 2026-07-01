@@ -56,7 +56,7 @@ struct DatumTruth
   Eigen::Vector3d bias_accel_;
 
   static std::vector<DatumTruth>
-  Load(const std::string &path_truth_csv,
+  Load(std::string_view path_truth_csv,
        const Sophus::SO3d &sensor_rotation_wrt_body)
   {
     std::vector<DatumTruth> data;

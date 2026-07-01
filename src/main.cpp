@@ -16,9 +16,11 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
+#include "euroc_vio/msg/imu.hpp"
 #include <cv_bridge/cv_bridge.hpp>
 #include <geometry_msgs/msg/transform.h>
 #include <image_transport/image_transport.hpp>
@@ -32,7 +34,6 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/magnetic_field.hpp>
 #include <sensor_msgs/msg/temperature.hpp>
-#include "euroc_vio/msg/imu.hpp"
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
@@ -112,7 +113,8 @@ using ApproximateTime_t
                                                       MsgImu>;
 using Synchronizer_t = message_filters::Synchronizer<ApproximateTime_t>;
 
-template <typename RosMsgType> auto ConvertImage(const RosMsgType &msg)
+template <typename RosMsgType>
+auto ConvertImage(const RosMsgType &msg)
 {
   return cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8)->image;
 }
@@ -628,7 +630,8 @@ private:
     return filteredPts;
   }
 
-  template <typename MaskType> size_t MaskLength(MaskType mask) const
+  template <typename MaskType>
+  size_t MaskLength(MaskType mask) const
   {
     return std::ranges::count_if(mask, [](bool e) { return e; });
   }
@@ -945,7 +948,7 @@ private:
   template <typename PointType>
   void PlotFlow(cv::Mat &flow, std::vector<PointType> const &pts0,
                 std::vector<PointType> const &pts1, cv::Size offset0,
-                cv::Size offset1, const std::string &&label) const
+                cv::Size offset1, std::string_view label) const
   {
     for (size_t index{0}; index < pts0.size(); ++index)
     {
@@ -1099,8 +1102,8 @@ private:
 
 public:
   VirsualInertialOdemetry(const char *cam0_topic, const char *cam1_topic,
-                          const char *imu_topic)
-      : Node("VIO"), file(PATH_CSV_FILE, std::ios::out | std::ios::trunc)
+                          const char *imu_topic) :
+    Node("VIO"), file(PATH_CSV_FILE, std::ios::out | std::ios::trunc)
   {
     rclcpp::QoS qos(10);
     cam0_sub.subscribe(this, cam0_topic, qos.get_rmw_qos_profile());
@@ -1120,7 +1123,7 @@ public:
     sync->registerCallback(
         std::bind(&VirsualInertialOdemetry::SyncCallback, this, _1, _2, _3));
 
-        #if 0
+#if 0
     // 生成随机颜色
     cv::RNG rng;
     for (size_t i = 0; i < nColors; ++i)
@@ -1133,7 +1136,7 @@ public:
             "left_ty,left_tz,right_rw,right_rx,right_ry,right_rz,"
             "right_tx,right_ty,right_tz"
          << std::endl;
-         #endif
+#endif
   }
 };
 

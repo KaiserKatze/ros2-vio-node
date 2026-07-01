@@ -4,6 +4,7 @@
 #include <fstream>
 #include <print>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <Eigen/Dense>
@@ -32,7 +33,7 @@ struct Datum
    * @param delim 列分隔字符。
    * @return std::vector<Datum> 读取出的数据集。
    */
-  static std::vector<Datum> ReadCsv(const std::string &filename,
+  static std::vector<Datum> ReadCsv(std::string_view filename,
                                     bool skip_header = true, char delim = ',')
   {
     std::vector<Datum> data;

@@ -24,6 +24,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // ======================== 数据结构 ========================
@@ -31,7 +32,7 @@ using DataRow    = std::vector<double>;
 using DataColumn = std::vector<double>;
 
 // ======================== 工具 ========================
-bool try_parse_double(const std::string &s, double &value)
+bool try_parse_double(std::string_view s, double &value)
 {
   try
   {
@@ -141,7 +142,7 @@ double polyval(const Eigen::VectorXd &c, double x)
 // ======================== gnuplot 绘图 ========================
 void plot_with_gnuplot(const std::vector<double> &t,
                        const std::vector<double> &y,
-                       const Eigen::VectorXd &coeffs, const std::string &title)
+                       const Eigen::VectorXd &coeffs, std::string_view title)
 {
   FILE *gp = popen("gnuplot -persistent", "w");
   if (!gp)

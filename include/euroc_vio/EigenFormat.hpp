@@ -3,6 +3,7 @@
 #include <concepts>
 #include <meta>
 #include <type_traits>
+#include <string_view>
 
 #include <Eigen/Dense>
 

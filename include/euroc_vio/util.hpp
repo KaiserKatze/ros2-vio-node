@@ -1,6 +1,8 @@
 #ifndef UTIL_HPP
 #define UTIL_HPP
 
+#include <string_view>
+
 #include <Eigen/Dense>
 
 struct Util
@@ -8,7 +10,7 @@ struct Util
   /**
    * @brief 打印 cv::Mat 对象的数据量、通道数、形状等信息
    */
-  static void PrintCvMatInfo(const std::string &mat_name, const cv::Mat &mat)
+  static void PrintCvMatInfo(std::string_view mat_name, const cv::Mat &mat)
   {
     const auto mat_type{mat.type()};
     const auto mat_depth{mat.depth()};

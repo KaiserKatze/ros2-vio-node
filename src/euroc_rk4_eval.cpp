@@ -33,6 +33,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <Eigen/Dense>
@@ -67,7 +68,7 @@ double get_item(std::stringstream &ss)
 }
 
 // 简单 CSV 解析函数
-std::vector<GroundTruthData> read_groundtruth_csv(const std::string &filename)
+std::vector<GroundTruthData> read_groundtruth_csv(std::string_view filename)
 {
   std::vector<GroundTruthData> data;
   data.reserve(32767);
@@ -106,7 +107,7 @@ std::vector<GroundTruthData> read_groundtruth_csv(const std::string &filename)
 }
 
 // 解析 EuRoC IMU 数据集 CSV
-std::vector<ImuData> read_imu_csv(const std::string &filename)
+std::vector<ImuData> read_imu_csv(std::string_view filename)
 {
   std::vector<ImuData> data;
   data.reserve(32767);

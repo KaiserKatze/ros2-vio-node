@@ -5,6 +5,7 @@
 #include <cmath>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <Eigen/Dense>
@@ -39,7 +40,7 @@ struct SensorYaml
   ~SensorYaml() = default;
 
   static std::optional<SensorYaml>
-  ReadSensorYaml(const std::string &path_sensor_yaml)
+  ReadSensorYaml(std::string_view path_sensor_yaml)
   {
     SensorYaml result_sensor_config;
     YAML::Node node_sensor{YAML::LoadFile(path_sensor_yaml)};
