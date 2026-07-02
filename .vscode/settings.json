@@ -1,4 +1,5 @@
 {
+  "python.analysis.typeCheckingMode": "strict",
   "chat.agent.maxRequests": 100,
   "cmake.configureOnOpen": false,
   "cmake.configureOnEdit": false,

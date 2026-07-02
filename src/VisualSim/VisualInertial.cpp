@@ -609,7 +609,7 @@ public:
 class FuseEstimator : public AbstractEstimator
 {
 private:
-  using ESKF = ErrorStateKalmanFilter<double>;
+  using ESKF = VisualSim::ErrorStateKalmanFilter<double>;
 
 public:
   FuseEstimator(const EstimatorConfig &config) : AbstractEstimator(config) {}

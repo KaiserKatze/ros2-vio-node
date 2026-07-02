@@ -24,6 +24,9 @@
 // 选择“只使用角位移”还是“使用角位移和平移方向”
 #define ONLY_USE_ANGULAR_DISPLACEMENT 1
 
+namespace VisualSim
+{
+
 /**
  * @brief 基于松耦合的误差状态卡尔曼滤波，为短航程无人机提供姿态解算功能
  */
@@ -629,3 +632,5 @@ private:
 
 #pragma endregion
 };
+
+} // namespace VisualSim
