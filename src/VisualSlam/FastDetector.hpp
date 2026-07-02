@@ -80,7 +80,8 @@ public:
     }
 
     if (!TrackTemporalRight(gray_prev_right, gray_next_right, corners_prev_left,
-                            corners_prev_right, corners_next_right, use_hint))
+                            corners_prev_right, corners_next_left,
+                            corners_next_right, use_hint))
     {
       return false;
     }
@@ -241,19 +242,35 @@ private:
                           const cv::Mat &gray_next_right,
                           std::vector<PointType> &corners_prev_left,
                           std::vector<PointType> &corners_prev_right,
+                          std::vector<PointType> &corners_next_left,
                           std::vector<PointType> &corners_next_right,
                           bool use_hint) const
   {
     // 由于 corners_prev_right 的长度可能比 corners_next_right 的长度大
     // 函数 TrackStereoPrevLeftToPrevRight 新增的角点是追加在 corners_prev_right 的末尾
     // 所以可以把 corners_prev_right 末尾元素添加到 corners_next_right 的末尾
-    if (use_hint && corners_prev_right.size() > corners_next_right.size())
+    if (use_hint)
     {
-      corners_next_right.insert(corners_next_right.end(),
-                                corners_prev_right.begin()
-                                    + corners_next_right.size(),
-                                corners_prev_right.end());
+      if (corners_prev_left.size() > corners_next_left.size())
+      {
+        corners_next_left.insert(corners_next_left.end(),
+                                 corners_prev_left.begin()
+                                     + corners_next_left.size(),
+                                 corners_prev_left.end());
+      }
+
+      if (corners_prev_right.size() > corners_next_right.size())
+      {
+        corners_next_right.insert(corners_next_right.end(),
+                                  corners_prev_right.begin()
+                                      + corners_next_right.size(),
+                                  corners_prev_right.end());
+      }
     }
+    assert(corners_prev_left.size() == corners_prev_right.size()
+           && "corners_prev_left.size() != corners_prev_right.size()");
+    assert(corners_prev_left.size() == corners_next_left.size()
+           && "corners_prev_left.size() != corners_next_left.size()");
     assert(corners_prev_right.size() == corners_next_right.size()
            && "corners_prev_right.size() != corners_next_right.size()");
     std::vector<unsigned char> features_found_pr_nr;
@@ -268,12 +285,13 @@ private:
                          lk_flags_prev_right_to_next_right);
 
     auto zipped_view = std::views::zip(corners_prev_left, corners_prev_right,
-                                       corners_next_right, features_found_pr_nr)
+                                       corners_next_right, corners_next_left,
+                                       features_found_pr_nr)
                        | std::views::filter(
                            [](const auto &tuple)
                            {
                              // 1. 必须是追踪成功的点
-                             return std::get<3>(tuple);
+                             return std::get<4>(tuple);
                            }
                        );
 
@@ -293,14 +311,21 @@ private:
           | std::views::transform([](const auto &tuple)
                                   { return std::get<2>(tuple); })
           | std::ranges::to<std::vector>();
+    Points new_corners_next_left
+        = zipped_view
+          | std::views::transform([](const auto &tuple)
+                                  { return std::get<3>(tuple); })
+          | std::ranges::to<std::vector>();
 
     corners_prev_left  = std::move(new_corners_prev_left);
     corners_prev_right = std::move(new_corners_prev_right);
     corners_next_right = std::move(new_corners_next_right);
+    corners_next_left  = std::move(new_corners_next_left);
 
     return HaveEnoughCorners(corners_prev_left)
            && corners_prev_left.size() == corners_prev_right.size()
-           && corners_prev_left.size() == corners_next_right.size();
+           && corners_prev_left.size() == corners_next_right.size()
+           && corners_prev_left.size() == corners_next_left.size();
   }
 
   //===================================
@@ -314,16 +339,6 @@ private:
                                  std::vector<PointType> &corners_next_right,
                                  bool use_hint) const
   {
-    // 由于 corners_next_right 的长度可能比 corners_next_left 的长度大
-    // 函数 TrackStereoPrevLeftToPrevRight 新增的角点是追加在 corners_next_right 的末尾
-    // 所以可以把 corners_next_right 末尾元素添加到 corners_next_left 的末尾
-    if (use_hint && corners_next_right.size() > corners_next_left.size())
-    {
-      corners_next_left.insert(corners_next_left.end(),
-                               corners_next_right.begin()
-                                   + corners_next_left.size(),
-                               corners_next_right.end());
-    }
     std::vector<unsigned char> features_found_nr_nl;
     const int lk_flags_next_right_to_next_left{
         (use_hint && !corners_next_left.empty()

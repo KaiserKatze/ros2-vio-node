@@ -239,6 +239,7 @@ public:
                                  corners_next_right.size())};
         capacity = std::max(static_cast<size_t>(landmarks_homo.cols), capacity);
         corners_next_left.reserve(capacity);
+        corners_next_right.reserve(capacity);
         // https://docs.opencv.org/4.13.0/d9/d0c/group__calib3d.html#ga1019495a2c8d1743ed5cc23fa0daff8c
         // 由于图像经过了立体矫正，所以畸变系数全为零
         cv::projectPoints(landmarks_nonhomo, rVec_left, tVec_left,
