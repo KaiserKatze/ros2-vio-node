@@ -43,7 +43,6 @@ RUN mkdir gcc && cd gcc && git init && git remote add origin https://gcc.gnu.org
 WORKDIR /app
 RUN rm -rf gcc
 
-
 #==================================================================================================================
 # CMake
 #
@@ -51,8 +50,21 @@ RUN rm -rf gcc
 # @see: https://cmake.org/cmake/help/latest/manual/cmake.1.html
 #==================================================================================================================
 WORKDIR /app
-RUN wget https://github.com/Kitware/CMake/releases/download/v4.3.3/cmake-4.3.3.tar.gz
+RUN mkdir cmake && cd cmake && \
+    export CMAKE_VERSION=4.3.3 && \
+    wget "https://github.com/Kitware/CMake/releases/download/v$CMAKE_VERSION/cmake-$CMAKE_VERSION.tar.gz" && \
+    tar xf "cmake-$CMAKE_VERSION.tar.gz" && \
+    cd "cmake-$CMAKE_VERSION" && \
+    export CMAKE_PREFIX=/usr/local/cmake-$CMAKE_VERSION && \
+    ./bootstrap --prefix=$CMAKE_PREFIX && \
+    make -j$(nproc) && \
+    make install && \
+    export PATH=$CMAKE_PREFIX/bin:$PATH && \
+    echo "export PATH=$CMAKE_PREFIX/bin:$PATH" >> /etc/profile
 
+# 清理
+WORKDIR /app
+RUN rm -rf cmake
 
 #==================================================================================================================
 # Eigen (Vectors & Matrices)
@@ -76,9 +88,14 @@ RUN rm -rf eigen
 # GKlib
 #==================================================================================================================
 
+WORKDIR /app
 RUN git clone --depth 1 -- https://github.com/KarypisLab/GKlib.git gklib && cd gklib \
     make config cc=gcc prefix=/usr/local && \
     make && make install
+
+# 清理
+WORKDIR /app
+RUN rm -rf gklib
 
 #==================================================================================================================
 # METIS
@@ -86,11 +103,16 @@ RUN git clone --depth 1 -- https://github.com/KarypisLab/GKlib.git gklib && cd g
 # @depends GKlib
 #==================================================================================================================
 
+WORKDIR /app
 RUN mkdir metis && cd metis && git init && git remote add origin https://github.com/KarypisLab/METIS.git && \
     export METIS_LATEST_TAG=$(git ls-remote --tags 2>/dev/null | awk '{ n = split($2, parts, "/"); tag = parts[n] }; tag ~ /^v[0-9]+\.[0-9]+\.[0-9]+$/ { print tag } ' | sort -V | tail -1) && \
     git pull -r --depth=1 origin $METIS_LATEST_TAG && \
     make config shared=1 cc=gcc shared=1 prefix=/usr/local gklib_path=/usr/local && \
     make install
+
+# 清理
+WORKDIR /app
+RUN rm -rf metis
 
 #==================================================================================================================
 # Ceres Solver (Optimazition)
@@ -211,6 +233,10 @@ RUN mkdir yamlcpp && cd yamlcpp && git init && git remote add origin https://git
     git pull -r --depth=1 origin $YAMLCPP_LATEST_TAG && \
     mkdir build && cd build && cmake -D YAML_BUILD_SHARED_LIBS=ON .. && \
     make && make install
+
+# 清理
+WORKDIR /app
+RUN rm -rf yamlcpp
 
 #==================================================================================================================
 # 清尾工作
