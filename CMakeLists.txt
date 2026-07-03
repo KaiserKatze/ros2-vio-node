@@ -122,7 +122,10 @@ install(DIRECTORY urdf/
 install(DIRECTORY launch/
   DESTINATION share/${PROJECT_NAME}/launch
 )
-install(PROGRAMS src/ESKF_Optimizer/opt.py
+install(PROGRAMS scripts/ESKF_Optimizer/opt.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+install(FILES scripts/ESKF_Optimizer/config.yaml
   DESTINATION lib/${PROJECT_NAME}
 )
 

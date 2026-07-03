@@ -20,7 +20,7 @@ def generate_launch_description():
     path_workdir = pathlib.PosixPath("/mnt", "e", "Documents")
 
     mav0_path = path_workdir / "mav0"
-    cam0_path = mav0_path / "cam0"
+    cam0_path = mav0_path / "cam1"
     imu0_path = mav0_path / "imu0"
     truth_path = mav0_path / "state_groundtruth_estimate0"
     path_estimation_csv = str(mav0_path / "estimated_motion.csv")
@@ -35,6 +35,10 @@ def generate_launch_description():
 
     # 声明希望在 TrajectoryFactory 中执行的评估器列表
     active_estimators = [
+        # "FastEstimator",
+        # "EulerEstimator",
+        # "RK4Estimator",
+        # "Preintegrator",
         "FuseEstimator",
     ]
 
@@ -57,9 +61,9 @@ def generate_launch_description():
         # 真实数据变换矩阵
         "path_truth_yaml": path_truth_yaml,
         # 单目视觉估计角位移置信度
-        "confidence_angular_displacement": 0.0,
+        "confidence_angular_displacement": 16.54940287490809,
         # 单目视觉估计平移方向置信度
-        "confidence_normalized_translation": 0.0,
+        "confidence_normalized_translation": 1e+6,
         # 轨迹估计类的输出目录
         "output_dir": output_dir,
         # 启用的轨迹估计类列表
@@ -107,25 +111,6 @@ def generate_launch_description():
             )
         )
 
-    # 纯视觉双目里程计
-    csv_filepath = str(path_home / "vio_ws" / "estimated_trajectory.csv")
-    post_nodes.append(
-        Node(
-            package="euroc_vio",
-            executable="SimpleDataLoader",
-            name=f"loader_StereoEstimator",
-            output="screen",
-            parameters=[
-                {
-                    "csv_file": csv_filepath,
-                    "topic_name": "/traj/stereo_est",
-                    "skip_header": True,
-                    "delim": ",",
-                }
-            ],
-        )
-    )
-
     # 启动真值的数据加载与发布器
     post_nodes.append(
         Node(
@@ -136,7 +121,7 @@ def generate_launch_description():
             parameters=[
                 {
                     "csv_file": path_truth_csv,
-                    "topic_name": "/traj/ground_truth",
+                    "topic_name": "/ground_truth",
                     "skip_header": True,
                     "delim": ",",
                 }
