@@ -44,11 +44,31 @@ WORKDIR /app
 RUN rm -rf gcc
 
 #==================================================================================================================
+# GNU Make
+#==================================================================================================================
+
+WORKDIR /app
+RUN mkdir gmake && cd gmake && \
+    export GMAKE_VERSION=4.4.1 && \
+    wget "https://mirrors.cqu.edu.cn/gnu/make/make-$GMAKE_VERSION.tar.gz" && \
+    tar xf "make-$GMAKE_VERSION.tar.gz" && \
+    cd "make-$GMAKE_VERSION" && \
+    export GMAKE_PREFIX=/opt/gmake && \
+    ./configure --prefix=/opt/gmake && make && make install && \
+    export PATH=$GMAKE_PREFIX/bin:$PATH && \
+    echo "export PATH=$GMAKE_PREFIX/bin:$PATH" >> /etc/profile
+
+# 清理
+WORKDIR /app
+RUN rm -rf gmake
+
+#==================================================================================================================
 # CMake
 #
 # @see: https://cmake.org/download/
 # @see: https://cmake.org/cmake/help/latest/manual/cmake.1.html
 #==================================================================================================================
+
 WORKDIR /app
 RUN mkdir cmake && cd cmake && \
     export CMAKE_VERSION=4.3.3 && \
@@ -89,7 +109,8 @@ RUN rm -rf eigen
 #==================================================================================================================
 
 WORKDIR /app
-RUN git clone --depth 1 -- https://github.com/KarypisLab/GKlib.git gklib && cd gklib \
+RUN git clone --depth 1 -- https://github.com/KarypisLab/GKlib.git gklib && \
+    cd gklib && \
     make config cc=gcc prefix=/usr/local && \
     make && make install
 
@@ -104,9 +125,8 @@ RUN rm -rf gklib
 #==================================================================================================================
 
 WORKDIR /app
-RUN mkdir metis && cd metis && git init && git remote add origin https://github.com/KarypisLab/METIS.git && \
-    export METIS_LATEST_TAG=$(git ls-remote --tags 2>/dev/null | awk '{ n = split($2, parts, "/"); tag = parts[n] }; tag ~ /^v[0-9]+\.[0-9]+\.[0-9]+$/ { print tag } ' | sort -V | tail -1) && \
-    git pull -r --depth=1 origin $METIS_LATEST_TAG && \
+RUN git clone --depth 1 -- https://github.com/KarypisLab/METIS.git && \
+    cd METIS && \
     make config shared=1 cc=gcc shared=1 prefix=/usr/local gklib_path=/usr/local && \
     make install
 
@@ -169,7 +189,8 @@ RUN rm -rf sophus
 WORKDIR /app
 RUN mkdir opencv && cd opencv && git init && git remote add origin https://github.com/opencv/opencv.git && \
     export OPENCV_LATEST_TAG=$(git ls-remote --tags 2>/dev/null | awk '{ n = split($2, parts, "/"); tag = parts[n] }; tag ~ /^[0-9]+\.[0-9]+\.[0-9]+$/ { print tag } ' | sort -V | tail -1) && \
-    git pull -r --depth=1 origin $OPENCV_LATEST_TAG && \
+    git fetch --depth=1 origin tag $OPENCV_LATEST_TAG && \
+    git checkout $OPENCV_LATEST_TAG && \
     mkdir build && cd build && \
     cmake .. && \
     make && make install
