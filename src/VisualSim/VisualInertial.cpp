@@ -39,9 +39,9 @@ using namespace std::chrono_literals;
 #include "euroc_vio/main.h"
 #include "zupt.hpp"
 
-#include "DatumFast.hpp"
-#include "DatumImu.hpp"
-#include "DatumTruth.hpp"
+#include "include/euroc_vio/DatumFast.hpp"
+#include "include/euroc_vio/DatumImu.hpp"
+#include "include/euroc_vio/DatumTruth.hpp"
 #include "SensorYaml.hpp"
 
 /**

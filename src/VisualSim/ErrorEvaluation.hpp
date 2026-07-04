@@ -9,7 +9,7 @@
 
 #include <sophus/so3.hpp>
 
-#include "DatumTruth.hpp"
+#include "include/euroc_vio/DatumTruth.hpp"
 
 class ErrorEvaluation
 {

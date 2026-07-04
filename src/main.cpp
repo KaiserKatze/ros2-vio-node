@@ -47,7 +47,6 @@
 #include <opencv2/video/tracking.hpp>
 #include <opencv2/videoio.hpp>
 #include <opencv2/viz/vizcore.hpp>
-// #include <opencv2/xfeatures2d.hpp>
 
 #include "euroc_vio/QuEst.hpp"
 #include "euroc_vio/main.h"

@@ -6,7 +6,7 @@
 
 #include <sophus/so3.hpp>
 
-#include "DatumImu.hpp"
+#include "include/euroc_vio/DatumImu.hpp"
 
 struct Preintegration
 {
