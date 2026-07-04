@@ -188,6 +188,14 @@ RUN rm -rf sophus
 #==================================================================================================================
 
 WORKDIR /app
+RUN mkdir opencv_contrib && cd opencv_contrib && git init && git remote add origin https://github.com/opencv/opencv_contrib.git && \
+    export OPENCV_CONTRIB_LATEST_TAG=$(git ls-remote --tags 2>/dev/null |\
+      awk '{ n = split($2, parts, "/"); tag = parts[n] }; tag ~ /^4\.[0-9]+\.[0-9]+$/ { print tag } ' |\
+      sort -V | tail -1) && \
+    git fetch --depth=1 origin tag $OPENCV_CONTRIB_LATEST_TAG && \
+    git checkout $OPENCV_CONTRIB_LATEST_TAG
+
+WORKDIR /app
 RUN mkdir opencv && cd opencv && git init && git remote add origin https://github.com/opencv/opencv.git && \
     export OPENCV_LATEST_TAG=$(git ls-remote --tags 2>/dev/null |\
       awk '{ n = split($2, parts, "/"); tag = parts[n] }; tag ~ /^4\.[0-9]+\.[0-9]+$/ { print tag } ' |\
@@ -195,8 +203,8 @@ RUN mkdir opencv && cd opencv && git init && git remote add origin https://githu
     git fetch --depth=1 origin tag $OPENCV_LATEST_TAG && \
     git checkout $OPENCV_LATEST_TAG && \
     rm -rf build && mkdir build && cd build && \
-    cmake .. && \
-    make && make install
+    cmake -DOPENCV_EXTRA_MODULES_PATH=../../opencv_contrib/modules .. && \
+    make -j$(nproc) && make install
 
 # 清理
 WORKDIR /app
