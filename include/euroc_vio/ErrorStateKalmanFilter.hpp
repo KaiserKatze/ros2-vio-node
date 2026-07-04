@@ -114,7 +114,7 @@ private:
   using JacobiMeasurement
       = Eigen::Matrix<value_type, dimMonocularData, dimErrorState>;
   // 观测误差的协方差矩阵
-  using CovarianceMeasurement
+  using CovarianceMeasurementFast
       = Eigen::Matrix<value_type, dimMonocularData, dimMonocularData>;
   // 卡尔曼增益矩阵
   using KalmanGain = Eigen::Matrix<value_type, dimErrorState, dimMonocularData>;
@@ -510,7 +510,7 @@ public:
     Vector3 angular_displacement{d_attitude.log()};
 
     JacobiMeasurement H{measurement_jacobian(angular_displacement)};
-    CovarianceMeasurement V{covariance_measurement()};
+    CovarianceMeasurementFast V{covariance_measurement()};
     KalmanGain K{kalman_gain(error_state_covariance_, H, V)};
 
     // 观测残差向量
@@ -717,9 +717,9 @@ private:
    * @brief 获取测量协方差矩阵。
    * @note 置信度数值越小，可以相信的程度越高
    */
-  CovarianceMeasurement covariance_measurement() const noexcept
+  CovarianceMeasurementFast covariance_measurement() const noexcept
   {
-    CovarianceMeasurement V{CovarianceMeasurement::Identity()};
+    CovarianceMeasurementFast V{CovarianceMeasurementFast::Identity()};
 #if (ONLY_USE_ANGULAR_DISPLACEMENT)
     // 设置[角位移估计量]的置信度
     V.diagonal().setConstant(confidence_angular_displacement_);
@@ -744,7 +744,7 @@ private:
    */
   static KalmanGain kalman_gain(const TransitionMatrix &P,
                                 const JacobiMeasurement &H,
-                                const CovarianceMeasurement &V) noexcept
+                                const CovarianceMeasurementFast &V) noexcept
   {
     auto hphv{H * P * H.transpose() + V};
     return hphv.ldlt().solve(H * P.transpose()).transpose();
@@ -761,7 +761,7 @@ private:
   static void
   measurement_update_covariance(TransitionMatrix &P, const KalmanGain &K,
                                 const JacobiMeasurement &H,
-                                const CovarianceMeasurement &V) noexcept
+                                const CovarianceMeasurementFast &V) noexcept
   {
     TransitionMatrix ikh{TransitionMatrix::Identity() - K * H};
     P = ikh * P * ikh.transpose() + K * V * K.transpose();
