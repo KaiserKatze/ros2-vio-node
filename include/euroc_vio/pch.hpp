@@ -1,12 +1,16 @@
 #pragma once
 
+// Eigen
 #include <Eigen/Dense>
 
+// Sophus
 #include <sophus/se3.hpp>
 #include <sophus/so3.hpp>
 
+// Boost
 #include <boost/numeric/odeint.hpp>
 
+// ROS 2
 #include <rclcpp/publisher.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/time.hpp>
@@ -26,6 +30,7 @@
 #include <sensor_msgs/msg/temperature.hpp>
 #include <std_msgs/msg/string.hpp>
 
+// OpenCV core
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/core/check.hpp>
@@ -41,7 +46,11 @@
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/opencv.hpp>
 #include <opencv2/video.hpp>
-#include <opencv2/video/tracking.hpp>
 #include <opencv2/videoio.hpp>
 
+// OpenCV contrib
+#include <opencv2/video/tracking.hpp>
+#include <opencv2/viz/vizcore.hpp>
+
+// YAML
 #include <yaml-cpp/yaml.h>
