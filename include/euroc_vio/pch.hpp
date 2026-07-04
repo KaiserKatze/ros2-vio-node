@@ -43,6 +43,5 @@
 #include <opencv2/video.hpp>
 #include <opencv2/video/tracking.hpp>
 #include <opencv2/videoio.hpp>
-#include <opencv2/viz/vizcore.hpp>
 
 #include <yaml-cpp/yaml.h>
