@@ -36,9 +36,10 @@ class ErrorStateKalmanFilter
 #pragma region PUBLIC_TYPE
 
 public:
-  using Vector3 = Eigen::Vector<value_type, 3>;
-  using Vector6 = Eigen::Vector<value_type, 6>;
-  using Matrix3 = Eigen::Matrix<value_type, 3, 3>;
+  using Vector3  = Eigen::Vector<value_type, 3>;
+  using Vector6  = Eigen::Vector<value_type, 6>;
+  using Matrix3  = Eigen::Matrix<value_type, 3, 3>;
+  using Matrix2X = Eigen::Matrix<value_type, 2, Eigen::Dynamic>;
 
   // 朝向的四元数形式 (仅用于存储，不用于运算)
   using Quaternion = Eigen::Quaternion<value_type>;
@@ -80,6 +81,19 @@ public:
     Vector3 gravity_error_{Vector3::Zero()};
   };
 
+  struct Config
+  {
+    value_type imu_rate_{200.0};         // Hz
+    value_type max_sensor_delay_{35.0};  // milliseconds
+    value_type max_sensor_jitter_{10.0}; // milliseconds
+    int history_buffer_margin_{16};
+    using ProjectionMatrix = Eigen::Matrix<value_type, 3, 4>;
+    // 经过立体矫正后，左目相机的 3x4 投影矩阵
+    ProjectionMatrix proj_left_;
+    // 经过立体矫正后，右目相机的 3x4 投影矩阵
+    ProjectionMatrix proj_right_;
+  };
+
 #pragma endregion
 
 #pragma region PRIVATE_TYPE
@@ -105,6 +119,22 @@ private:
   // 卡尔曼增益矩阵
   using KalmanGain = Eigen::Matrix<value_type, dimErrorState, dimMonocularData>;
 
+  struct HistoryState
+  {
+    // 原始 IMU 数据 (未作零偏矫正)
+    DatumImu imu_;
+    // 名义状态变量
+    NominalStateVariable nomial_;
+    // 过程噪声的协方差矩阵
+    TransitionMatrix P_;
+  };
+
+  struct HistoryBuffer : public std::vector<HistoryState>
+  {
+    std::size_t history_head_;
+    std::size_t history_size_;
+  };
+
 #pragma endregion
 
 #pragma region INITIALIZATION
@@ -113,7 +143,7 @@ public:
   /**
    * @brief 构造函数。
    */
-  ErrorStateKalmanFilter()
+  ErrorStateKalmanFilter(const Config &config) : config_{config}
   {
     assert(error_state_covariance_.allFinite());
   }
@@ -302,6 +332,8 @@ public:
 #pragma endregion
 
     last_imu_time_ = imu_data->timestamp_;
+
+    // TODO 在这里保存历史状态
   }
 
   /**
@@ -379,6 +411,15 @@ public:
     // 立即向标称状态进行负反馈注入复位，重置误差空间
     InjectError();
     last_cam_time_ = monocular_data->timestamp_;
+  }
+
+  void StereoUpdate(std::int64_t timestamp,
+                    std::span<const uint32_t> feature_ids,
+                    const Matrix2X &pts_left,
+                    const Matrix2X &pts_right) noexcept
+  {
+    assert(pts_left.cols() == pts_right.cols()
+           && "pts_left.cols() != pts_right.cols()");
   }
 
 #pragma endregion
@@ -605,6 +646,8 @@ public:
 #pragma region PRIVATE_VARIABLE
 
 private:
+  // ESKF 参数
+  Config config_;
   // 名义状态
   NominalStateVariable nominal_state_{};
   // 误差状态
@@ -629,6 +672,8 @@ private:
   Quaternion prev_attitude_{Quaternion::Identity()};
   // 上一帧 IMU 数据的缓存结构
   DatumImu last_imu_data_{};
+  // 历史状态缓冲区
+  HistoryBuffer history_buffer_;
 
 #pragma endregion
 };
