@@ -32,7 +32,7 @@ using namespace std::chrono_literals;
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/time.hpp>
 
-#include "ErrorStateKalmanFilter.hpp"
+#include "euroc_vio/ErrorStateKalmanFilter.hpp"
 #include "ImuState.hpp"
 #include "euroc_vio/AbstractLoader.hpp"
 #include "euroc_vio/Interpolation.hpp"

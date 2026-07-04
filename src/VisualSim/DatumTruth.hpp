@@ -39,7 +39,6 @@ using namespace std::chrono_literals;
 
 #include "yaml-cpp/yaml.h"
 
-#include "ErrorStateKalmanFilter.hpp"
 #include "ImuState.hpp"
 #include "euroc_vio/AbstractLoader.hpp"
 #include "euroc_vio/Interpolation.hpp"
