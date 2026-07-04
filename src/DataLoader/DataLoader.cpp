@@ -37,7 +37,7 @@ struct Datum
                                     bool skip_header = true, char delim = ',')
   {
     std::vector<Datum> data;
-    std::ifstream file(filename);
+    std::ifstream file{filename};
     if (!file.is_open())
     {
       throw std::runtime_error{std::format("Cannot open requested CSV file: {}",

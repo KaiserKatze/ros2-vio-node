@@ -60,7 +60,7 @@ struct DatumTruth
   {
     std::vector<DatumTruth> data;
 
-    std::ifstream file(path_truth_csv);
+    std::ifstream file{path_truth_csv};
     std::string line;
     size_t line_num{0};
 

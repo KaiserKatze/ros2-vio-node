@@ -145,7 +145,7 @@ public:
     //            attitude.w(), attitude.x(), attitude.y(), attitude.z(), //
     //            position.x(), position.y(), position.z());
 
-    std::ifstream file(path_estimation_csv);
+    std::ifstream file{path_estimation_csv};
     std::string line;
 #if (PUBLISH_STYLE_ALL_AT_ONCE)
     size_t line_num{0};

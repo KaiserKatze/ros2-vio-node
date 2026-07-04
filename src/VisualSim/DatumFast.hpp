@@ -61,7 +61,7 @@ struct DatumFast
   {
     std::vector<DatumFast> data;
 
-    std::ifstream file(path_estimation_csv);
+    std::ifstream file{path_estimation_csv};
     std::string line;
 
 #if (DEBUG)

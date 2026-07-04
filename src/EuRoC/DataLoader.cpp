@@ -37,7 +37,7 @@ struct GroundTruthData
     std::vector<GroundTruthData> data;
     data.reserve(32767);
 
-    std::ifstream file(filename);
+    std::ifstream file{filename};
     std::string line;
 
     // 跳过表头
@@ -74,7 +74,7 @@ struct EstimationData
     std::vector<EstimationData> data;
     data.reserve(32767);
 
-    std::ifstream file(filename);
+    std::ifstream file{filename};
     std::string line;
 
     // 跳过表头
@@ -107,7 +107,7 @@ struct OrbSlam3Data
     std::vector<OrbSlam3Data> data;
     data.reserve(32767);
 
-    std::ifstream file(filename);
+    std::ifstream file{filename};
     std::string line;
 
     // // ORBSLAM3 输出的位置信息需要绕 z 轴正方向旋转 90° 才能大致与 EuRoC 数据集提供的真值匹配

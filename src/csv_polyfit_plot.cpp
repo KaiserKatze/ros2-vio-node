@@ -190,7 +190,7 @@ int main(int argc, char **argv)
 
   if (argc > 1)
   {
-    std::ifstream file(argv[1]);
+    std::ifstream file{argv[1]};
     if (!file)
     {
       std::cerr << "无法打开文件\n";

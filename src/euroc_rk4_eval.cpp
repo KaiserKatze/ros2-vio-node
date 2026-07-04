@@ -72,7 +72,7 @@ std::vector<GroundTruthData> read_groundtruth_csv(std::string_view filename)
 {
   std::vector<GroundTruthData> data;
   data.reserve(32767);
-  std::ifstream file(filename);
+  std::ifstream file{filename};
   std::string line;
   // 跳过表头
   std::getline(file, line);
@@ -111,7 +111,7 @@ std::vector<ImuData> read_imu_csv(std::string_view filename)
 {
   std::vector<ImuData> data;
   data.reserve(32767);
-  std::ifstream file(filename);
+  std::ifstream file{filename};
   std::string line;
   // 跳过表头
   std::getline(file, line);

@@ -57,7 +57,7 @@ struct DatumImu
   {
     std::vector<DatumImu> data;
 
-    std::ifstream file(path_imu_csv);
+    std::ifstream file{path_imu_csv};
     std::string line;
     size_t line_num{0};
 

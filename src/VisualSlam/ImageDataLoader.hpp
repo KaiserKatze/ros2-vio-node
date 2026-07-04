@@ -62,7 +62,7 @@ private:
     const std::filesystem::path path_index{path_mav0 / cam_name / "data.csv"};
     const std::filesystem::path path_dir{path_mav0 / cam_name / "data"};
 
-    std::ifstream file(path_index);
+    std::ifstream file{path_index};
     std::string line;
 
     std::vector<MonocularFrame<std::filesystem::path>> data;
