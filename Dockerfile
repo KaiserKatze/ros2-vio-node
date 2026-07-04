@@ -184,14 +184,17 @@ RUN rm -rf sophus
 # OpenCV (Computer Vision, Image Processing)
 #
 # @see: https://docs.opencv.org/4.x/d0/d3d/tutorial_general_install.html
+# @note: 固定选用 OpenCV 4.x 版本，因为 ROS2 cv_bridge 尚不支持 OpenCV 5
 #==================================================================================================================
 
 WORKDIR /app
 RUN mkdir opencv && cd opencv && git init && git remote add origin https://github.com/opencv/opencv.git && \
-    export OPENCV_LATEST_TAG=$(git ls-remote --tags 2>/dev/null | awk '{ n = split($2, parts, "/"); tag = parts[n] }; tag ~ /^[0-9]+\.[0-9]+\.[0-9]+$/ { print tag } ' | sort -V | tail -1) && \
+    export OPENCV_LATEST_TAG=$(git ls-remote --tags 2>/dev/null |\
+      awk '{ n = split($2, parts, "/"); tag = parts[n] }; tag ~ /^4\.[0-9]+\.[0-9]+$/ { print tag } ' |\
+      sort -V | tail -1) && \
     git fetch --depth=1 origin tag $OPENCV_LATEST_TAG && \
     git checkout $OPENCV_LATEST_TAG && \
-    mkdir build && cd build && \
+    rm -rf build && mkdir build && cd build && \
     cmake .. && \
     make && make install
 

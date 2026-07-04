@@ -1,0 +1,29 @@
+graph TD
+    %% 传感器输入
+    IMU["IMU输入<br>(加速度计/陀螺仪 200Hz)"] --> Pred["IMU捷联惯导积分<br>(名义状态预测)"]
+    IMU --> CovPred["协方差矩阵P预测<br>"$$P = F*P*F' + Q$$]
+
+    %% 预测阶段
+    Pred --> State[("当前系统状态<br>(位置/速度/姿态)")]
+    CovPred --> UpdateJudge{"是否有其他<br>传感器数据到达?"}
+
+    %% 量测更新分支
+    UpdateJudge -- "是 (异步触发)" --> Measure{"判断传感器类型"}
+    UpdateJudge -- "否" --> LoopBack["输出当前状态<br>(控制反馈)"] --> IMU
+
+    %% 各传感器更新逻辑
+    Measure -- "双目相机" --> VIO["双目特征匹配与追踪<br>(视觉里程计更新)"]
+    Measure -- "GPS" --> GPSUpdate["GPS绝对位置与速度更新<br>(修正长期漂移)"]
+    Measure -- "高度计" --> AltUpdate["高度计Z轴数据更新<br>(精确高度修正)"]
+    Measure -- "磁强计" --> MagUpdate["磁强计航向角更新<br>(修正Yaw轴偏置)"]
+
+    %% 滤波更新与状态修正
+    VIO --> EKFUpdate["计算卡尔曼增益K<br>更新误差状态向量 delta_X"]
+    GPSUpdate --> EKFUpdate
+    AltUpdate --> EKFUpdate
+    MagUpdate --> EKFUpdate
+
+    EKFUpdate --> Correct["状态注入与修正<br>(X = X + delta_X)"]
+    Correct --> CovReset["重置误差状态<br>与协方差矩阵P"]
+    CovReset --> State
+    State --> LoopBack
