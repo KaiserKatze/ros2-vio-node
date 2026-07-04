@@ -86,7 +86,7 @@ public:
     value_type imu_rate_{200.0};         // Hz
     value_type max_sensor_delay_{35.0};  // milliseconds
     value_type max_sensor_jitter_{10.0}; // milliseconds
-    int history_buffer_margin_{16};
+    std::size_t history_buffer_margin_{16};
     using ProjectionMatrix = Eigen::Matrix<value_type, 3, 4>;
     // 经过立体矫正后，左目相机的 3x4 投影矩阵
     ProjectionMatrix proj_left_;
@@ -129,10 +129,108 @@ private:
     TransitionMatrix P_;
   };
 
+  /**
+   * @brief 固定容量历史状态环形缓冲区。
+   *
+   * @details
+   * 该缓冲区用于保存 ESKF 的历史状态，以支持延时观测回滚
+   * （Rollback）与重新传播（Replay）。
+   *
+   * 底层采用 std::vector 作为连续存储空间，避免运行过程中发生
+   * 动态内存分配。
+   */
   struct HistoryBuffer : public std::vector<HistoryState>
   {
-    std::size_t history_head_;
-    std::size_t history_size_;
+    /// 当前环形缓冲区头部（最旧元素）的物理下标
+    std::size_t history_head_{0};
+
+    /// 当前缓冲区中有效元素个数
+    std::size_t history_size_{0};
+
+    /**
+     * @brief 初始化固定容量历史缓冲区。
+     * @param capacity 缓冲区容量。
+     */
+    void Initialize(std::size_t capacity)
+    {
+      this->assign(capacity, HistoryState{});
+      history_head_ = 0;
+      history_size_ = 0;
+    }
+
+    /**
+     * @brief 返回缓冲区容量。
+     */
+    [[nodiscard]]
+    std::size_t Capacity() const noexcept
+    {
+      return this->size();
+    }
+
+    /**
+     * @brief 判断缓冲区是否为空。
+     */
+    [[nodiscard]]
+    bool Empty() const noexcept
+    {
+      return history_size_ == 0;
+    }
+
+    /**
+     * @brief 插入一条新的历史状态。
+     *
+     * @details
+     * 若缓冲区已满，则自动覆盖最旧元素。
+     */
+    void Push(const HistoryState &state) noexcept
+    {
+      if (this->empty())
+      {
+        return;
+      }
+
+      if (history_size_ < this->size())
+      {
+        (*this)[(history_head_ + history_size_) % this->size()] = state;
+        ++history_size_;
+      }
+      else
+      {
+        (*this)[history_head_] = state;
+        history_head_          = (history_head_ + 1) % this->size();
+      }
+    }
+
+    /**
+     * @brief 根据时间戳查找历史状态。
+     *
+     * @param timestamp Unix 时间戳。
+     * @return 找到返回指针，否则返回 nullptr。
+     */
+    [[nodiscard]]
+    HistoryState *Find(std::int64_t timestamp) noexcept
+    {
+      for (std::size_t i = 0; i < history_size_; ++i)
+      {
+        auto &state{(*this)[(history_head_ + i) % this->size()]};
+
+        if (state.imu_.timestamp_ == timestamp)
+        {
+          return &state;
+        }
+      }
+
+      return nullptr;
+    }
+
+    /**
+     * @brief const 版本时间戳查找。
+     */
+    [[nodiscard]]
+    const HistoryState *Find(std::int64_t timestamp) const noexcept
+    {
+      return const_cast<HistoryBuffer *>(this)->Find(timestamp);
+    }
   };
 
 #pragma endregion
@@ -142,10 +240,31 @@ private:
 public:
   /**
    * @brief 构造函数。
+   *
+   * @param config ESKF 配置参数。
+   *
+   * @details
+   * 根据 IMU 频率、最大传感器延迟、时间抖动以及安全余量，
+   * 动态计算 History Buffer 的容量。
    */
   ErrorStateKalmanFilter(const Config &config) : config_{config}
   {
     assert(error_state_covariance_.allFinite());
+
+    const value_type total_delay_second{(config_.max_sensor_delay_
+                                         + config_.max_sensor_jitter_)
+                                        * static_cast<value_type>(1e-3)};
+
+    const auto history_capacity{
+        static_cast<std::size_t>(
+            std::ceil(config_.imu_rate_ * total_delay_second)
+        ) + config_.history_buffer_margin_,
+    };
+
+    history_buffer_.Initialize(history_capacity);
+
+    std::print(stderr, "[DEBUG] HistoryBuffer Capacity = {}\n",
+               history_capacity);
   }
 
   /**
@@ -333,7 +452,24 @@ public:
 
     last_imu_time_ = imu_data->timestamp_;
 
-    // TODO 在这里保存历史状态
+    // 保存历史状态
+    // 每一次 IMU 完成状态传播以后，都保存当前滤波器状态。
+    // 后续若收到具有延迟的视觉/GPS等观测，可回滚至对应时间戳，
+    // 完成 Measurement Update 后再重新积分到当前时刻。
+
+    HistoryState history_state;
+
+    // 保存未经零偏校正的原始 IMU 数据
+    history_state.imu_ = *imu_data;
+
+    // 保存当前名义状态
+    history_state.nomial_ = nominal_state_;
+
+    // 保存当前误差协方差
+    history_state.P_ = error_state_covariance_;
+
+    // 写入环形历史缓冲区
+    history_buffer_.Push(history_state);
   }
 
   /**
