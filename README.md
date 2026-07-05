@@ -2,7 +2,11 @@
 ```bash
 # 编译
 rm -rf build install log
-colcon build --packages-select euroc_vio --event-handlers console_direct+
+colcon build --packages-select euroc_vio \
+  --parallel-workers $(nproc) \
+  --cmake-args \
+    -D OpenCV_DIR=/usr/local/lib/cmake/opencv4 \
+  --event-handlers console_direct+
 source ~/vio_ws/install/local_setup.sh
 
 # 生成仿真数据
