@@ -16,6 +16,7 @@
 namespace CornerDetection
 {
 
+// https://docs.opencv.org/4.13.0/df/d74/classcv_1_1FastFeatureDetector.html
 struct FastDetector : public AbstractDetector
 {
   using PointType = cv::Point2f;
@@ -35,6 +36,8 @@ private:
       cv::FastFeatureDetector::TYPE_9_16
   };
 
+  // https://docs.opencv.org/4.13.0/dc/d84/group__core__basic.html#ga524e5e94ebf48db273a71ab275eaf5b5
+  // https://docs.opencv.org/4.13.0/df/d74/classcv_1_1FastFeatureDetector.html#a3bbc39b65bdda963b129ed3841d2de07
   cv::Ptr<cv::FastFeatureDetector> fastFeatureDetector{
       cv::FastFeatureDetector::create(fastThreshold, fastNonmaxSuppression,
                                       fastType)
@@ -145,6 +148,7 @@ private:
     }
 
     // 2. 提取新的角点
+    // https://docs.opencv.org/4.13.0/d2/d29/classcv_1_1KeyPoint.html
     std::vector<cv::KeyPoint> keypoints_prev_left_ext;
     if (corners_prev_left.empty() || corners_prev_right.empty())
     {
