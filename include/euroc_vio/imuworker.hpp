@@ -20,7 +20,7 @@
 #include <boost/numeric/odeint.hpp>
 
 #include "euroc_vio/ahrs.hpp"
-#include "euroc_vio/imustate.hpp"
+#include "euroc_vio/ImuState.hpp"
 #include "euroc_vio/main.h"
 #include "euroc_vio/zupt.hpp"
 
@@ -88,7 +88,7 @@ private:
     try
     {
       const Eigen::Quaterniond q{this->zupt_.EstimateOrientation()};
-      this->state_.SetQuaternion(q);
+      this->state_.SetAttitude(q);
       RCLCPP_INFO(rclcpp::get_logger(NODE_NAME),
                   "Estimated orientation (quaternion): [w: %.3f, x: %.3f, y: "
                   "%.3f, z: %.3f]",
@@ -108,10 +108,10 @@ private:
     msg.pose.position.y = state_.GetPositionY();
     msg.pose.position.z = state_.GetPositionZ();
 
-    msg.pose.orientation.w = state_.GetQuaternionW();
-    msg.pose.orientation.x = state_.GetQuaternionX();
-    msg.pose.orientation.y = state_.GetQuaternionY();
-    msg.pose.orientation.z = state_.GetQuaternionZ();
+    msg.pose.orientation.w = state_.GetAttitudeW();
+    msg.pose.orientation.x = state_.GetAttitudeX();
+    msg.pose.orientation.y = state_.GetAttitudeY();
+    msg.pose.orientation.z = state_.GetAttitudeZ();
   }
 
 #if USE_ZUPT
@@ -146,7 +146,7 @@ private:
       // 再与测量值作差来计算偏差
 
       // 提取当前姿态四元数 (载具参考系到惯性参考系的旋转 C_iv = C_is)
-      Eigen::Quaterniond q{state_.GetQuaternion()};
+      Eigen::Quaterniond q{state_.GetAttitude()};
       // 因为现在 MAV 处于静止状态
       // 所以 acc_sensor 理应等于 -gravity_sensor
       // 即 acc_world 理应等于零
@@ -228,7 +228,7 @@ public:
 
     // 提取当前姿态四元数 (载具参考系到惯性参考系的旋转 C_iv = C_is)
     // 无人机的朝向 = 惯性参考系到载具参考系的旋转 C_vi 的逆 = 载具参考系到惯性参考系的旋转 C_iv
-    Eigen::Quaterniond q{this->state_.GetQuaternion()};
+    Eigen::Quaterniond q{this->state_.GetAttitude()};
     // 传感器参考系下的平均线加速度
     Eigen::Vector3d acc_avg = (accel0 + accel1) * 0.5;
     // 惯性参考系下的平均线加速度
@@ -302,7 +302,7 @@ public:
       }
       q = q * delta_q;
 
-      this->state_.SetQuaternion(q);
+      this->state_.SetAttitude(q);
 
       RCLCPP_INFO(rclcpp::get_logger("ImuWorker"),
                   "\n\tAverage Gyro: [x: %.3f, y: %.3f, z: %.3f]; "
@@ -340,7 +340,7 @@ public:
     this->RK4Update<false>(accel0, accel1, gyro0, gyro1, time0, time1);
 
     // 将 RK4 推算出的纯积分姿态替换为由 Mahony 滤波器校准过的姿态
-    this->state_.SetQuaternion(this->ahrs_->GetQuaternion());
+    this->state_.SetAttitude(this->ahrs_->GetAttitude());
   }
 
   void Integrate(const Vec3 &accel0, const Vec3 &accel1, const Vec3 &gyro0,

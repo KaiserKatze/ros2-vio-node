@@ -1,8 +1,8 @@
-#ifndef IMUSTATE_HPP
-#define IMUSTATE_HPP
+#pragma once
 
 #include <array>
 #include <concepts>
+#include <initializer_list>
 
 template <typename T, typename Idx = std::size_t>
 concept VectorLike = requires(T t, Idx i) {
@@ -11,148 +11,154 @@ concept VectorLike = requires(T t, Idx i) {
 
 #include <Eigen/Dense>
 
-static constexpr size_t index_px = 0;
-static constexpr size_t index_py = 1;
-static constexpr size_t index_pz = 2;
-static constexpr size_t index_vx = 3;
-static constexpr size_t index_vy = 4;
-static constexpr size_t index_vz = 5;
-static constexpr size_t index_qw = 6;
-static constexpr size_t index_qx = 7;
-static constexpr size_t index_qy = 8;
-static constexpr size_t index_qz = 9;
+static constexpr size_t index_px{0};
+static constexpr size_t index_py{1};
+static constexpr size_t index_pz{2};
+static constexpr size_t index_vx{3};
+static constexpr size_t index_vy{4};
+static constexpr size_t index_vz{5};
+static constexpr size_t index_qw{6};
+static constexpr size_t index_qx{7};
+static constexpr size_t index_qy{8};
+static constexpr size_t index_qz{9};
 
 // 状态量定义: [px, py, pz, vx, vy, vz, qw, qx, qy, qz] (大小为 10)
-struct ImuState : public std::array<double, 10>
+template <typename value_type>
+struct ImuState : public std::array<value_type, 10>
 {
   ImuState() :
-    std::array<double, 10>{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0}
+    std::array<value_type, 10>{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0}
   {
   }
 
-  double &GetPositionX()
+  ImuState(std::initializer_list<value_type> &&data) :
+    std::array<value_type, 10>{data}
+  {
+  }
+
+  value_type &GetPositionX()
   {
     return (*this)[index_px];
   }
 
-  double &GetPositionY()
+  value_type &GetPositionY()
   {
     return (*this)[index_py];
   }
 
-  double &GetPositionZ()
+  value_type &GetPositionZ()
   {
     return (*this)[index_pz];
   }
 
-  double &GetVelocityX()
+  value_type &GetVelocityX()
   {
     return (*this)[index_vx];
   }
 
-  double &GetVelocityY()
+  value_type &GetVelocityY()
   {
     return (*this)[index_vy];
   }
 
-  double &GetVelocityZ()
+  value_type &GetVelocityZ()
   {
     return (*this)[index_vz];
   }
 
-  double &GetQuaternionW()
+  value_type &GetAttitudeW()
   {
     return (*this)[index_qw];
   }
 
-  double &GetQuaternionX()
+  value_type &GetAttitudeX()
   {
     return (*this)[index_qx];
   }
 
-  double &GetQuaternionY()
+  value_type &GetAttitudeY()
   {
     return (*this)[index_qy];
   }
 
-  double &GetQuaternionZ()
+  value_type &GetAttitudeZ()
   {
     return (*this)[index_qz];
   }
 
-  double GetPositionX() const
+  value_type GetPositionX() const
   {
     return (*this)[index_px];
   }
 
-  double GetPositionY() const
+  value_type GetPositionY() const
   {
     return (*this)[index_py];
   }
 
-  double GetPositionZ() const
+  value_type GetPositionZ() const
   {
     return (*this)[index_pz];
   }
 
-  Eigen::Vector3d GetPosition() const
+  Eigen::Vector<value_type, 3> GetPosition() const
   {
-    Eigen::Vector3d pos;
-    pos << GetPositionX(), GetPositionY(), GetPositionZ();
+    Eigen::Vector<value_type, 3> pos{GetPositionX(), GetPositionY(),
+                                     GetPositionZ()};
     return pos;
   }
 
-  double GetVelocityX() const
+  value_type GetVelocityX() const
   {
     return (*this)[index_vx];
   }
 
-  double GetVelocityY() const
+  value_type GetVelocityY() const
   {
     return (*this)[index_vy];
   }
 
-  double GetVelocityZ() const
+  value_type GetVelocityZ() const
   {
     return (*this)[index_vz];
   }
 
-  Eigen::Vector3d GetVelocity() const
+  Eigen::Vector<value_type, 3> GetVelocity() const
   {
-    Eigen::Vector3d vel;
-    vel << GetVelocityX(), GetVelocityY(), GetVelocityZ();
+    Eigen::Vector<value_type, 3> vel{GetVelocityX(), GetVelocityY(),
+                                     GetVelocityZ()};
     return vel;
   }
 
-  double GetQuaternionW() const
+  value_type GetAttitudeW() const
   {
     return (*this)[index_qw];
   }
 
-  double GetQuaternionX() const
+  value_type GetAttitudeX() const
   {
     return (*this)[index_qx];
   }
 
-  double GetQuaternionY() const
+  value_type GetAttitudeY() const
   {
     return (*this)[index_qy];
   }
 
-  double GetQuaternionZ() const
+  value_type GetAttitudeZ() const
   {
     return (*this)[index_qz];
   }
 
-  Eigen::Quaterniond GetQuaternion() const
+  Eigen::Quaternion<value_type> GetAttitude() const
   {
-    Eigen::Quaterniond q{GetQuaternionW(), GetQuaternionX(), GetQuaternionY(),
-                         GetQuaternionZ()};
+    Eigen::Quaternion<value_type> q{GetAttitudeW(), GetAttitudeX(),
+                                    GetAttitudeY(), GetAttitudeZ()};
     q.normalize();
     return q;
   }
 
-  void SetPosition(double px, double py, double pz)
+  void SetPosition(value_type px, value_type py, value_type pz)
   {
     (*this)[index_px] = px;
     (*this)[index_py] = py;
@@ -164,7 +170,7 @@ struct ImuState : public std::array<double, 10>
     this->SetPosition(pos[0], pos[1], pos[2]);
   }
 
-  void SetVelocity(double vx, double vy, double vz)
+  void SetVelocity(value_type vx, value_type vy, value_type vz)
   {
     (*this)[index_vx] = vx;
     (*this)[index_vy] = vy;
@@ -176,33 +182,33 @@ struct ImuState : public std::array<double, 10>
     this->SetVelocity(vel[0], vel[1], vel[2]);
   }
 
-  void SetQuaternion(double qw, double qx, double qy, double qz)
+  void SetAttitude(value_type qw, value_type qx, value_type qy, value_type qz)
   {
     (*this)[index_qw] = qw;
     (*this)[index_qx] = qx;
     (*this)[index_qy] = qy;
     (*this)[index_qz] = qz;
     // 必须对四元数进行归一化，保证单位模长约束
-    this->NormalizeQuaternion();
+    this->NormalizeAttitude();
   }
 
-  void SetQuaternion(const VectorLike auto &quat)
+  void SetAttitude(const VectorLike auto &quat)
   {
-    this->SetQuaternion(quat[0], quat[1], quat[2], quat[3]);
+    this->SetAttitude(quat[0], quat[1], quat[2], quat[3]);
   }
 
-  void SetQuaternion(const Eigen::Quaterniond &quat)
+  void SetAttitude(const Eigen::Quaternion<value_type> &quat)
   {
-    this->SetQuaternion(quat.w(), quat.x(), quat.y(), quat.z());
+    this->SetAttitude(quat.w(), quat.x(), quat.y(), quat.z());
   }
 
-  void NormalizeQuaternion()
+  void NormalizeAttitude()
   {
-    double &qw{GetQuaternionW()};
-    double &qx{GetQuaternionX()};
-    double &qy{GetQuaternionY()};
-    double &qz{GetQuaternionZ()};
-    const double q_norm{std::sqrt(qw * qw + qx * qx + qy * qy + qz * qz)};
+    value_type &qw{GetAttitudeW()};
+    value_type &qx{GetAttitudeX()};
+    value_type &qy{GetAttitudeY()};
+    value_type &qz{GetAttitudeZ()};
+    const value_type q_norm{std::sqrt(qw * qw + qx * qx + qy * qy + qz * qz)};
     qw /= q_norm;
     qx /= q_norm;
     qy /= q_norm;
@@ -211,14 +217,15 @@ struct ImuState : public std::array<double, 10>
 };
 
 // 状态量定义: [vx, vy, vz, ax, ay, az, qw', qx', qy', qz'] (大小为 10)
-struct ImuDerivative : public std::array<double, 10>
+template <typename value_type>
+struct ImuDerivative : public std::array<value_type, 10>
 {
   ImuDerivative() :
-    std::array<double, 10>{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
+    std::array<value_type, 10>{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
   {
   }
 
-  void SetVelocity(double vx, double vy, double vz)
+  void SetVelocity(value_type vx, value_type vy, value_type vz)
   {
     (*this)[index_px] = vx;
     (*this)[index_py] = vy;
@@ -230,7 +237,7 @@ struct ImuDerivative : public std::array<double, 10>
     this->SetVelocity(velocity[0], velocity[1], velocity[2]);
   }
 
-  void SetAcceleration(double ax, double ay, double az)
+  void SetAcceleration(value_type ax, value_type ay, value_type az)
   {
     (*this)[index_vx] = ax;
     (*this)[index_vy] = ay;
@@ -242,7 +249,8 @@ struct ImuDerivative : public std::array<double, 10>
     this->SetAcceleration(acceleration[0], acceleration[1], acceleration[2]);
   }
 
-  void SetQuaternionDerivative(double qw, double qx, double qy, double qz)
+  void SetAttitudeDerivative(value_type qw, value_type qx, value_type qy,
+                             value_type qz)
   {
     (*this)[index_qw] = qw;
     (*this)[index_qx] = qx;
@@ -250,17 +258,16 @@ struct ImuDerivative : public std::array<double, 10>
     (*this)[index_qz] = qz;
   }
 
-  void SetQuaternionDerivative(const VectorLike auto &quat_derivative)
+  void SetAttitudeDerivative(const VectorLike auto &quat_derivative)
   {
-    this->SetQuaternionDerivative(quat_derivative[0], quat_derivative[1],
-                                  quat_derivative[2], quat_derivative[3]);
+    this->SetAttitudeDerivative(quat_derivative[0], quat_derivative[1],
+                                quat_derivative[2], quat_derivative[3]);
   }
 
-  void SetQuaternionDerivative(const Eigen::Quaterniond &quat_derivative)
+  void
+  SetAttitudeDerivative(const Eigen::Quaternion<value_type> &quat_derivative)
   {
-    this->SetQuaternionDerivative(quat_derivative.w(), quat_derivative.x(),
-                                  quat_derivative.y(), quat_derivative.z());
+    this->SetAttitudeDerivative(quat_derivative.w(), quat_derivative.x(),
+                                quat_derivative.y(), quat_derivative.z());
   }
 };
-
-#endif /* IMUSTATE_HPP */

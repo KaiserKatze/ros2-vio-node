@@ -39,7 +39,7 @@ using namespace std::chrono_literals;
 
 #include "yaml-cpp/yaml.h"
 
-#include "ImuState.hpp"
+#include "euroc_vio/ImuState.hpp"
 #include "euroc_vio/AbstractLoader.hpp"
 #include "euroc_vio/Interpolation.hpp"
 #include "euroc_vio/main.h"
