@@ -31,7 +31,7 @@ struct GroundTruthData
   double orientation[4]{0.0}; // quaternion (w, x, y, z)
 
   // 简单 CSV 解析函数
-  static std::vector<GroundTruthData> ReadCsv(std::string_view filename,
+  static std::vector<GroundTruthData> ReadCsv(const std::string &filename,
                                               const char delim = ',')
   {
     std::vector<GroundTruthData> data;
@@ -68,7 +68,7 @@ struct EstimationData
   double orientation[4]{0.0}; // quaternion (w, x, y, z)
 
   // 简单 CSV 解析函数
-  static std::vector<EstimationData> ReadCsv(std::string_view filename,
+  static std::vector<EstimationData> ReadCsv(const std::string &filename,
                                              const char delim = ',')
   {
     std::vector<EstimationData> data;
@@ -101,7 +101,7 @@ struct OrbSlam3Data
   double orientation[4]{0.0}; // quaternion (w, x, y, z)
 
   // 简单 CSV 解析函数
-  static std::vector<OrbSlam3Data> ReadCsv(std::string_view filename,
+  static std::vector<OrbSlam3Data> ReadCsv(const std::string &filename,
                                            const char delim = ',')
   {
     std::vector<OrbSlam3Data> data;
