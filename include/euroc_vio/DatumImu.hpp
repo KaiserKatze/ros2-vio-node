@@ -52,7 +52,7 @@ struct DatumImu
   Eigen::Vector3d linear_acceleration_;
 
   static std::vector<DatumImu>
-  Load(std::string_view path_imu_csv,
+  Load(const std::string &path_imu_csv,
        const Sophus::SO3d &sensor_rotation_wrt_body)
   {
     std::vector<DatumImu> data;

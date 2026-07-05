@@ -68,7 +68,7 @@ double get_item(std::stringstream &ss)
 }
 
 // 简单 CSV 解析函数
-std::vector<GroundTruthData> read_groundtruth_csv(std::string_view filename)
+std::vector<GroundTruthData> read_groundtruth_csv(const std::string &filename)
 {
   std::vector<GroundTruthData> data;
   data.reserve(32767);
@@ -107,7 +107,7 @@ std::vector<GroundTruthData> read_groundtruth_csv(std::string_view filename)
 }
 
 // 解析 EuRoC IMU 数据集 CSV
-std::vector<ImuData> read_imu_csv(std::string_view filename)
+std::vector<ImuData> read_imu_csv(const std::string &filename)
 {
   std::vector<ImuData> data;
   data.reserve(32767);
@@ -453,7 +453,8 @@ void test_rk4_orientation(const std::vector<GroundTruthData> &gt_data,
 
 // 忽略位置积分，将 IMU 提供的三轴角速度按照每一个分量分别积分，得到一个三维向量
 void test_rk4_motionless_gyro_error_caused_by_bias(
-    const std::vector<ImuData> &imu_data)
+    const std::vector<ImuData> &imu_data
+)
 {
   if (imu_data.empty())
   {

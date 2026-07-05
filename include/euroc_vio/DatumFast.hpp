@@ -56,7 +56,7 @@ struct DatumFast
   Eigen::Vector3d normalized_translation_;
 
   static std::vector<DatumFast>
-  Load(std::string_view path_estimation_csv,
+  Load(const std::string &path_estimation_csv,
        const Sophus::SO3d &sensor_rotation_wrt_body)
   {
     std::vector<DatumFast> data;
@@ -119,7 +119,8 @@ struct DatumFast
 
 #if (DEBUG)
     log_reflect.flush();
-    std::print(stderr, "[DEBUG] 回写世界坐标系下的角位移和单位化平移向量 ...\n");
+    std::print(stderr,
+               "[DEBUG] 回写世界坐标系下的角位移和单位化平移向量 ...\n");
 #endif
     return data;
   }

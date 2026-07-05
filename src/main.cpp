@@ -1102,7 +1102,7 @@ private:
 public:
   VirsualInertialOdemetry(const char *cam0_topic, const char *cam1_topic,
                           const char *imu_topic) :
-    Node("VIO"), file(PATH_CSV_FILE, std::ios::out | std::ios::trunc)
+    Node("VIO"), file{PATH_CSV_FILE, std::ios::out | std::ios::trunc}
   {
     rclcpp::QoS qos(10);
     cam0_sub.subscribe(this, cam0_topic, qos.get_rmw_qos_profile());
