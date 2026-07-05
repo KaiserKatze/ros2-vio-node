@@ -203,7 +203,10 @@ RUN mkdir opencv && cd opencv && git init && git remote add origin https://githu
     git fetch --depth=1 origin tag $OPENCV_LATEST_TAG && \
     git checkout $OPENCV_LATEST_TAG && \
     rm -rf build && mkdir build && cd build && \
-    cmake -DOPENCV_EXTRA_MODULES_PATH=../../opencv_contrib/modules \
+    cmake -DBUILD_JAVA=OFF \
+          -DBUILD_OBJC=OFF \
+          -DBUILD_KOTLIN_EXTENSIONS=OFF \
+          -DOPENCV_EXTRA_MODULES_PATH=../../opencv_contrib/modules \
           -DBUILD_opencv_legacy=OFF \
           -DBUILD_opencv_cudabgsegm=OFF \
           -DBUILD_opencv_tracking=ON \
