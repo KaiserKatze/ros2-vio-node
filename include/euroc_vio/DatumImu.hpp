@@ -43,7 +43,7 @@ using namespace std::chrono_literals;
 #include "euroc_vio/AbstractLoader.hpp"
 #include "euroc_vio/Interpolation.hpp"
 #include "euroc_vio/main.h"
-#include "zupt.hpp"
+#include "euroc_vio/zupt.hpp"
 
 struct DatumImu
 {
