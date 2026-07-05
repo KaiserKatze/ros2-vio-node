@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <concepts>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -11,6 +13,9 @@
 #include <Eigen/Dense>
 
 #include <yaml-cpp/yaml.h>
+
+template <typename T>
+concept PathLike = std::convertible_to<T, std::filesystem::path>;
 
 struct SensorYaml
 {
@@ -40,7 +45,7 @@ struct SensorYaml
   ~SensorYaml() = default;
 
   static std::optional<SensorYaml>
-  ReadSensorYaml(std::string_view path_sensor_yaml)
+  ReadSensorYaml(const PathLike auto &path_sensor_yaml)
   {
     SensorYaml result_sensor_config;
     YAML::Node node_sensor{YAML::LoadFile(path_sensor_yaml)};
