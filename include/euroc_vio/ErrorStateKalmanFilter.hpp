@@ -18,8 +18,8 @@
 
 #include "euroc_vio/Interpolation.hpp"
 
-#include "include/euroc_vio/DatumFast.hpp"
-#include "include/euroc_vio/DatumImu.hpp"
+#include "euroc_vio/DatumFast.hpp"
+#include "euroc_vio/DatumImu.hpp"
 
 // 选择“只使用角位移”还是“使用角位移和平移方向”
 #define ONLY_USE_ANGULAR_DISPLACEMENT 1
