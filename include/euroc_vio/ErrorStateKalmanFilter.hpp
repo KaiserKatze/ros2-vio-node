@@ -159,8 +159,10 @@ private:
 
   struct HistoryState
   {
-    // 原始 IMU 数据 (未作零偏矫正)
-    DatumImu imu_;
+    // 当前帧、原始 IMU 数据 (未作零偏矫正)
+    DatumImu raw_imu_datum_;
+    // 上一帧、经过零偏矫正的 IMU 数据
+    DatumImu last_imu_datum_;
     // 名义状态变量
     NominalStateVariable nominal_;
     // 过程噪声的协方差矩阵
@@ -168,7 +170,7 @@ private:
 
     auto GetTimestamp() const noexcept
     {
-      return imu_.timestamp_;
+      return raw_imu_datum_.timestamp_;
     }
   };
 
@@ -236,8 +238,21 @@ private:
     [[nodiscard]]
     iterator Find(std::int64_t timestamp) noexcept
     {
-      return std::ranges::lower_bound(buffer_, timestamp, std::less<>(),
-                                      &HistoryState::GetTimestamp);
+      auto it{std::ranges::lower_bound(buffer_, timestamp, std::less<>(),
+                                       &HistoryState::GetTimestamp)};
+      if (it == buffer_.begin())
+      {
+        return buffer_.begin();
+      }
+      if (it == buffer_.end())
+      {
+        return std::prev(buffer_.end());
+      }
+      if (it->GetTimestamp() > timestamp)
+      {
+        return std::prev(it);
+      }
+      return it;
     }
 
     /**
@@ -249,8 +264,21 @@ private:
     [[nodiscard]]
     const_iterator Find(std::int64_t timestamp) const noexcept
     {
-      return std::ranges::lower_bound(buffer_, timestamp, std::less<>(),
-                                      &HistoryState::GetTimestamp);
+      auto it{std::ranges::lower_bound(buffer_, timestamp, std::less<>(),
+                                       &HistoryState::GetTimestamp)};
+      if (it == buffer_.cbegin())
+      {
+        return buffer_.cbegin();
+      }
+      if (it == buffer_.cend())
+      {
+        return std::prev(buffer_.cend());
+      }
+      if (it->GetTimestamp() > timestamp)
+      {
+        return std::prev(it);
+      }
+      return it;
     }
   };
 
@@ -423,27 +451,27 @@ public:
 public:
   /**
    * @brief 每当收到新 IMU 周期采样信号时，更新名义状态与误差状态协方差。
-   * @param imu_data IMU 数据提供的角速度向量和线加速度向量
+   * @param imu_datum IMU 数据提供的角速度向量和线加速度向量
    * @note 调用者必须保证 IMU 数据是在“体坐标系”下的表示
    */
-  void ImuUpdate(const DatumImu *imu_data, bool save_history = true) noexcept
+  void ImuUpdate(const DatumImu *imu_datum, bool record_history = true) noexcept
   {
 #pragma region FOOL_PROOF
 
-    if (imu_data == nullptr)
+    if (imu_datum == nullptr)
     {
       return;
     }
 
     if (last_imu_time_ < 0)
     {
-      last_imu_time_ = imu_data->timestamp_;
-      last_imu_data_ = *imu_data;
+      last_imu_time_  = imu_datum->timestamp_;
+      last_imu_datum_ = *imu_datum;
       return;
     }
 
     const value_type dt{
-        static_cast<value_type>((imu_data->timestamp_ - last_imu_time_) * 1e-9)
+        static_cast<value_type>((imu_datum->timestamp_ - last_imu_time_) * 1e-9)
     };
     if (dt <= 0.0)
     {
@@ -454,18 +482,18 @@ public:
 
 #pragma region WORLD_ANGULAR_VELOCITY_AND_LINEAR_ACCELERATION
 
-    // 假设上一帧 IMU 数据 `last_imu_data_` 中的角速度、线加速度都已经去除零偏
-    Vector3 unbias_gyro_prev{last_imu_data_.angular_velocity_};
-    Vector3 unbias_acc_prev{last_imu_data_.linear_acceleration_};
+    // 假设上一帧 IMU 数据 `last_imu_datum_` 中的角速度、线加速度都已经去除零偏
+    Vector3 unbias_gyro_prev{last_imu_datum_.angular_velocity_};
+    Vector3 unbias_acc_prev{last_imu_datum_.linear_acceleration_};
 
-    // 当前帧 IMU 数据 imu_data 去除零偏
-    Vector3 unbias_gyro_curr{imu_data->angular_velocity_
+    // 当前帧 IMU 数据 imu_datum 去除零偏
+    Vector3 unbias_gyro_curr{imu_datum->angular_velocity_
                              - nominal_state_.gyroscope_bias_};
-    Vector3 unbias_acc_curr{imu_data->linear_acceleration_
+    Vector3 unbias_acc_curr{imu_datum->linear_acceleration_
                             - nominal_state_.accelerometer_bias_};
     // 保存当前帧 IMU 数据
-    last_imu_data_ = DatumImu{
-        imu_data->timestamp_,
+    last_imu_datum_ = DatumImu{
+        imu_datum->timestamp_,
         unbias_gyro_curr,
         unbias_acc_curr,
     };
@@ -526,35 +554,35 @@ public:
 
 #pragma endregion
 
-    last_imu_time_ = imu_data->timestamp_;
+    last_imu_time_ = imu_datum->timestamp_;
 
-    if (save_history)
+    if (record_history)
     {
-      SaveHistoryState(*imu_data);
+      SaveHistoryState(*imu_datum);
     }
   }
 
   /**
    * @brief 每当收到新视觉观测周期采样信号时，执行卡尔曼观测融合及误差校正。
-   * @param monocular_data 单目视觉数据提供的角位移向量和单位化平移向量
+   * @param monocular_datum 单目视觉数据提供的角位移向量和单位化平移向量
    * @note 调用者必须保证单目视觉数据是在“体坐标系”下的表示
    */
-  void MonocularUpdate(const DatumFast *monocular_data) noexcept
+  void MonocularUpdate(const DatumFast *monocular_datum) noexcept
   {
 #pragma region FOOL_PROOF
 
-    if (monocular_data == nullptr)
+    if (monocular_datum == nullptr)
     {
       return;
     }
     if (last_cam_time_ < 0)
     {
-      last_cam_time_ = monocular_data->timestamp_;
+      last_cam_time_ = monocular_datum->timestamp_;
       return;
     }
 
     const value_type dt{static_cast<value_type>(
-        (monocular_data->timestamp_ - last_cam_time_) * 1e-9
+        (monocular_datum->timestamp_ - last_cam_time_) * 1e-9
     )};
     if (dt <= 0.0)
     {
@@ -578,7 +606,7 @@ public:
     // 观测残差向量
 
 #if (ONLY_USE_ANGULAR_DISPLACEMENT)
-    Vector3 measurement_residue{monocular_data->angular_displacement_
+    Vector3 measurement_residue{monocular_datum->angular_displacement_
                                 - angular_displacement};
 #else
     // 由 IMU 数据计算得到的平移方向
@@ -594,9 +622,9 @@ public:
 
     Vector6 measurement_residue;
     measurement_residue.template head<3>()
-        = monocular_data->angular_displacement_ - angular_displacement;
+        = monocular_datum->angular_displacement_ - angular_displacement;
     measurement_residue.template tail<3>()
-        = monocular_data->normalized_translation_ - normalized_translation;
+        = monocular_datum->normalized_translation_ - normalized_translation;
 #endif
 
     prev_attitude_ = nominal_state_.attitude_;
@@ -608,13 +636,20 @@ public:
 
     // 立即向标称状态进行负反馈注入复位，重置误差空间
     InjectError();
-    last_cam_time_ = monocular_data->timestamp_;
+    last_cam_time_ = monocular_datum->timestamp_;
   }
 
   void StereoUpdate(std::int64_t timestamp,
                     std::span<StereoObservation> obs) noexcept
   {
     ++vision_frame_count_;
+
+    typename HistoryBuffer::const_iterator itr{FindHistoryIndex(timestamp)};
+    RollbackToHistory(itr);
+
+    // TODO
+
+    ReplayHistory(itr);
   }
 
 #pragma endregion
@@ -638,18 +673,20 @@ public:
 private:
   /**
    * @brief 保存历史状态
-   * @param imu_data IMU 数据指针
+   * @param imu_datum IMU 数据指针
    *
    * @details
    * 每一次 IMU 完成状态传播以后，都保存当前滤波器状态。
    * 后续若收到具有延迟的视觉/GPS等观测，可回滚至对应时间戳，
    * 完成 Measurement Update 后再重新积分到当前时刻。
    */
-  void SaveHistoryState(const DatumImu &imu_data) noexcept
+  void SaveHistoryState(const DatumImu &imu_datum) noexcept
   {
     HistoryState history_state;
-    // 保存未经零偏校正的原始 IMU 数据
-    history_state.imu_ = imu_data;
+    // 保存当前帧、未经零偏校正的原始 IMU 数据
+    history_state.raw_imu_datum_ = imu_datum;
+    // 保存上一帧、经过零偏矫正的 IMU 数据
+    history_state.last_imu_datum_ = last_imu_datum_;
     // 保存当前名义状态
     history_state.nominal_ = nominal_state_;
     // 保存当前误差协方差
@@ -662,37 +699,42 @@ private:
    * @brief 根据时间戳查找历史状态。
    * @return 返回历史状态的指针
    */
-  HistoryState *FindHistoryIndex(std::int64_t timestamp) const noexcept
+  typename HistoryBuffer::const_iterator
+  FindHistoryIndex(std::int64_t timestamp) const noexcept
   {
     return history_buffer_.Find(timestamp);
-  }
-
-  void CompensateDelay(std::int64_t timestamp) noexcept
-  {
-    RollbackToHistory(FindHistoryIndex(timestamp));
-    // Measurement Update
-    // Replay IMU
   }
 
   /**
    * @brief 回滚到指定历史状态
    */
-  void RollbackToHistory(HistoryState *ptr_state) noexcept
+  void
+  RollbackToHistory(const typename HistoryBuffer::const_iterator &itr) noexcept
   {
-    if (ptr_state == nullptr)
+    if (itr == history_buffer_.cend())
     {
       return;
     }
-    nominal_state_          = ptr_state->nominal_;
-    error_state_covariance_ = ptr_state->error_state_covariance_;
-    last_imu_time_          = ptr_state->imu_.timestamp_;
-    last_imu_data_          = ptr_state->imu_;
+    nominal_state_          = itr->nominal_;
+    error_state_covariance_ = itr->error_state_covariance_;
+    last_imu_time_          = itr->raw_imu_datum_.timestamp_;
+    last_imu_datum_         = itr->last_imu_datum_;
   }
 
   /**
    * @brief 从 index+1 开始重新积分 IMU
    */
-  void ReplayHistory(HistoryState *ptr_state) noexcept {}
+  void ReplayHistory(typename HistoryBuffer::const_iterator itr) noexcept
+  {
+    if (itr == history_buffer_.cend())
+    {
+      return;
+    }
+    for (++itr; itr != history_buffer_.cend(); ++itr)
+    {
+      ImuUpdate(&itr->raw_imu_datum_, false);
+    }
+  }
 
   /**
    * @brief 更新当前帧 Feature Track Table。
@@ -1370,7 +1412,7 @@ private:
   Vector3 prev_position_{Vector3::Zero()};
   Quaternion prev_attitude_{Quaternion::Identity()};
   // 上一帧 IMU 数据的缓存结构
-  DatumImu last_imu_data_{};
+  DatumImu last_imu_datum_{};
   // 历史状态缓冲区
   HistoryBuffer history_buffer_;
   LandmarkDatabase landmark_database_;
