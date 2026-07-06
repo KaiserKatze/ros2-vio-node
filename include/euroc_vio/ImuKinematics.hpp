@@ -3,7 +3,7 @@
 
 #include <Eigen/Dense>
 
-#include "euroc_vio/imustate.hpp"
+#include "euroc_vio/SensorState.hpp"
 
 struct ImuKinematicsParameters
 {
@@ -52,7 +52,7 @@ struct ImuKinematicsODE
                                          + (params_.w1 - params_.w0) * alpha};
 
     // 提取当前姿态四元数 (载体参考系到惯性参考系的旋转 C_is)
-    const Eigen::Quaterniond att_world{x.GetQuaternion()};
+    const Eigen::Quaterniond att_world{x.GetAttitude()};
 
     // 惯性参考系下的线速度
     const Eigen::Vector3d lin_vec_world{x.GetVelocity()};
@@ -78,7 +78,7 @@ struct ImuKinematicsODE
     dxdt.SetAcceleration(lin_acc_world);
 
     // 朝向导数 = 0.5 * 朝向 ** 角速度
-    dxdt.SetQuaternionDerivative(att_derivative_world);
+    dxdt.SetAttitudeDerivative(att_derivative_world);
   }
 };
 

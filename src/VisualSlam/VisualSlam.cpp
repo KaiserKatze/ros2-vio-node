@@ -35,7 +35,7 @@
 #include <opencv2/videoio.hpp>
 #include <opencv2/viz/vizcore.hpp>
 
-#include "EuRoC.hpp"
+#include "euroc_vio/EuRoC.hpp"
 #include "FastDetector.hpp"
 #include "ImageDataLoader.hpp"
 #include "euroc_vio/Integrator.hpp"

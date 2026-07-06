@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <concepts>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -12,10 +14,15 @@
 
 #include <yaml-cpp/yaml.h>
 
+template <typename T>
+concept PathLike = std::convertible_to<T, std::filesystem::path>;
+
 struct SensorYaml
 {
   // 姿态, 变换矩阵
   Eigen::Matrix4d transform_matrix_{Eigen::Matrix4d::Identity()};
+  // 采样频率 (单位: Hz)
+  double rate_hz_{1.0};
   // 陀螺仪白噪声密度 (单位: rad / s / sqrt(Hz))
   double gyroscope_noise_density_{0.0};
   // 陀螺仪零偏随机游走 (单位: rad / s^2 / sqrt(Hz))
@@ -40,7 +47,7 @@ struct SensorYaml
   ~SensorYaml() = default;
 
   static std::optional<SensorYaml>
-  ReadSensorYaml(std::string_view path_sensor_yaml)
+  ReadSensorYaml(const PathLike auto &path_sensor_yaml)
   {
     SensorYaml result_sensor_config;
     YAML::Node node_sensor{YAML::LoadFile(path_sensor_yaml)};
@@ -78,6 +85,8 @@ struct SensorYaml
     };
     Eigen::Map<Eigen::Matrix4d> T_BS_mat{T_BS_data.data()};
     result_sensor_config.transform_matrix_ = std::move(T_BS_mat);
+    result_sensor_config.rate_hz_ = node_sensor["rate_hz"].as<double>();
+    assert(result_sensor_config.rate_hz_ > 0.0);
     return result_sensor_config;
   }
 };

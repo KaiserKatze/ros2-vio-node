@@ -12,8 +12,7 @@
 //
 //=====================================================================================================
 
-#ifndef AHRS_HPP
-#define AHRS_HPP
+#pragma once
 
 //---------------------------------------------------------------------------------------------------
 // Header files
@@ -23,9 +22,9 @@
 #include <cstdint>
 #include <type_traits>
 
+#include "euroc_vio/InvSqrt.hpp"
 #include <Eigen/Dense>
 #include <opencv2/core.hpp>
-#include "euroc_vio/invsqrt.hpp"
 
 // 2 * proportional gain
 template <std::floating_point FloatType>
@@ -39,7 +38,8 @@ static constexpr FloatType twoKpDef{static_cast<FloatType>(2.0 * 0.5)};
 template <std::floating_point FloatType>
 static constexpr FloatType twoKiDef{static_cast<FloatType>(2.0 * 0.0)};
 
-template <std::floating_point FloatType> struct AbstractAHRS
+template <std::floating_point FloatType>
+struct AbstractAHRS
 {
   using Vec3 = Eigen::Matrix<FloatType, 3, 1>;
   using Vec4 = Eigen::Matrix<FloatType, 4, 1>;
@@ -527,5 +527,3 @@ struct MadgwickAHRS : public AbstractAHRS<FloatType>
     return q;
   }
 };
-
-#endif /* AHRS_HPP */

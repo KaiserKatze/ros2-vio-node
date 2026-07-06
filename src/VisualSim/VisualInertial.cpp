@@ -32,17 +32,17 @@ using namespace std::chrono_literals;
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/time.hpp>
 
-#include "euroc_vio/ErrorStateKalmanFilter.hpp"
-#include "ImuState.hpp"
 #include "euroc_vio/AbstractLoader.hpp"
+#include "euroc_vio/ErrorStateKalmanFilter.hpp"
 #include "euroc_vio/Interpolation.hpp"
+#include "euroc_vio/SensorState.hpp"
+#include "euroc_vio/ZUPT.hpp"
 #include "euroc_vio/main.h"
-#include "zupt.hpp"
 
+#include "SensorYaml.hpp"
 #include "euroc_vio/DatumFast.hpp"
 #include "euroc_vio/DatumImu.hpp"
 #include "euroc_vio/DatumTruth.hpp"
-#include "SensorYaml.hpp"
 
 /**
  * @brief 统一的评估器配置与输入数据结构体。
@@ -68,6 +68,20 @@ struct EstimatorConfig
   SensorYaml sensor_config_cam0_{};
   SensorYaml sensor_config_imu0_{};
   SensorYaml sensor_config_truth_{};
+
+  using ProjectionMatrix = Eigen::Matrix<double, 3, 4>;
+  // 经过立体矫正后，左目相机的 3x4 投影矩阵
+  ProjectionMatrix proj_left_{
+      {1.0, 0.0, 0.0, 0.0},
+      {0.0, 1.0, 0.0, 0.0},
+      {0.0, 0.0, 1.0, 0.0},
+  };
+  // 经过立体矫正后，右目相机的 3x4 投影矩阵
+  ProjectionMatrix proj_right_{
+      {1.0, 0.0, 0.0, 0.0},
+      {0.0, 1.0, 0.0, 0.0},
+      {0.0, 0.0, 1.0, 0.0},
+  };
 
   // 评估所需的传感器时序输入数据集
 
@@ -649,7 +663,11 @@ public:
     std::ranges::sort(events, std::less<>{}, [](const TimelineEvent &e)
                       { return std::make_tuple(e.timestamp, !e.is_imu); });
 
-    ESKF eskf;
+    typename ESKF::Config eskf_config;
+    eskf_config.imu_rate_   = config_.sensor_config_imu0_.rate_hz_;
+    eskf_config.proj_left_  = config_.proj_left_;
+    eskf_config.proj_right_ = config_.proj_right_;
+    ESKF eskf{eskf_config};
     // 初始化 ESKF 的标称状态
     typename ESKF::NominalStateVariable init_state;
 
@@ -785,6 +803,52 @@ public:
     const std::vector<std::string> active_estimators{
         this->get_parameter("estimators").as_string_array(),
     };
+
+    this->declare_parameter<std::vector<double>>(
+        "proj_left", std::vector<double>{1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+                                         0.0, 0.0, 1.0, 0.0}
+    );
+    auto proj_left_vec = this->get_parameter("proj_left").as_double_array();
+    if (proj_left_vec.size() == 12)
+    {
+      for (int i = 0; i < 3; ++i)
+      {
+        for (int j = 0; j < 4; ++j)
+        {
+          estimator_config_.proj_left_(i, j) = proj_left_vec[i * 4 + j];
+        }
+      }
+    }
+    else
+    {
+      RCLCPP_WARN(
+          this->get_logger(),
+          "proj_left vector size is not 12, using default identity matrix."
+      );
+    }
+
+    this->declare_parameter<std::vector<double>>(
+        "proj_right", std::vector<double>{1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0,
+                                          0.0, 0.0, 0.0, 1.0, 0.0}
+    );
+    auto proj_right_vec = this->get_parameter("proj_right").as_double_array();
+    if (proj_right_vec.size() == 12)
+    {
+      for (int i = 0; i < 3; ++i)
+      {
+        for (int j = 0; j < 4; ++j)
+        {
+          estimator_config_.proj_right_(i, j) = proj_right_vec[i * 4 + j];
+        }
+      }
+    }
+    else
+    {
+      RCLCPP_WARN(
+          this->get_logger(),
+          "proj_right vector size is not 12, using default identity matrix."
+      );
+    }
 
     if (path_estimation_csv.empty() || path_cam0_yaml.empty()
         || path_imu_csv.empty() || path_imu_yaml.empty()

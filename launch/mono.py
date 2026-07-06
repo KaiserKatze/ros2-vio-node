@@ -63,11 +63,15 @@ def generate_launch_description():
         # 单目视觉估计角位移置信度
         "confidence_angular_displacement": 16.54940287490809,
         # 单目视觉估计平移方向置信度
-        "confidence_normalized_translation": 1e+6,
+        "confidence_normalized_translation": 1e6,
         # 轨迹估计类的输出目录
         "output_dir": output_dir,
         # 启用的轨迹估计类列表
         "estimators": active_estimators,
+        # 左目相机的投影矩阵
+        "proj_left": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        # 右目相机的投影矩阵
+        "proj_right": [1.0, 0.0, 0.0, -0.1, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
     }
 
     # 核心节点：TrajectoryFactory，通过 on_exit 实现顺序执行
