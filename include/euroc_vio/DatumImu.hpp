@@ -39,11 +39,11 @@ using namespace std::chrono_literals;
 
 #include "yaml-cpp/yaml.h"
 
-#include "euroc_vio/ImuState.hpp"
+#include "euroc_vio/SensorState.hpp"
 #include "euroc_vio/AbstractLoader.hpp"
 #include "euroc_vio/Interpolation.hpp"
 #include "euroc_vio/main.h"
-#include "euroc_vio/zupt.hpp"
+#include "euroc_vio/ZUPT.hpp"
 
 struct DatumImu
 {

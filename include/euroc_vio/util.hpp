@@ -1,9 +1,11 @@
-#ifndef UTIL_HPP
-#define UTIL_HPP
+#pragma once
 
 #include <string_view>
+#include <vector>
 
 #include <Eigen/Dense>
+
+#include <opencv2/core/types.hpp>
 
 struct Util
 {
@@ -71,6 +73,43 @@ struct Util
     skew << 0, -z, y, z, 0, -x, -y, x, 0;
     return skew;
   }
-};
 
-#endif /* UTIL_HPP */
+  /**
+ * @brief 使用 Eigen 原生 Map 进行高性能转换（极力推荐）
+ *
+ * OpenCV 的 PointType 在内存中是连续的[x, y, x, y...] 结构。
+ * Eigen 默认是列主序(Column-Major)，其 2xN 矩阵在内存中也是 [row0_col0, row1_col0, ...]
+ * 两者的内存布局完全等价，可以直接进行零拷贝映射！
+ */
+  template <typename PointType = cv::Point2f>
+  static Eigen::Matrix<typename PointType::value_type, 3, Eigen::Dynamic>
+  ConvertToMatrix3X_EigenMap(const std::vector<PointType> &points)
+  {
+    if (points.empty())
+    {
+      return Eigen::Matrix<typename PointType::value_type, 3, Eigen::Dynamic>(
+          3, 0
+      );
+    }
+
+    // 1. 零拷贝映射为 Eigen::Matrix2Xf (2行 N列的 floating_point 矩阵)
+    Eigen::Map<const Eigen::Matrix<typename PointType::value_type, 2,
+                                   Eigen::Dynamic>>
+        mapped_pts(reinterpret_cast<const typename PointType::value_type *>(
+                       points.data()
+                   ),
+                   2, points.size());
+
+    // 2. 初始化目标矩阵
+    Eigen::Matrix<typename PointType::value_type, 3, Eigen::Dynamic> mat{
+        3, points.size()
+    };
+
+    // 3. 利用 Eigen 内部的 SIMD 向量化指令批量执行类型转换和赋值
+    mat.template topRows<2>()
+        = mapped_pts.template cast<typename PointType::value_type>();
+    mat.template bottomRows<1>().setOnes(); // 填充齐次坐标 1.0
+
+    return mat;
+  }
+};

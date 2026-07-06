@@ -3,7 +3,7 @@
 
 #include <Eigen/Dense>
 
-#include "euroc_vio/ImuState.hpp"
+#include "euroc_vio/SensorState.hpp"
 
 struct ImuKinematicsParameters
 {

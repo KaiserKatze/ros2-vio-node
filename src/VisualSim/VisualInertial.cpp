@@ -33,11 +33,11 @@ using namespace std::chrono_literals;
 #include <rclcpp/time.hpp>
 
 #include "euroc_vio/ErrorStateKalmanFilter.hpp"
-#include "euroc_vio/ImuState.hpp"
+#include "euroc_vio/SensorState.hpp"
 #include "euroc_vio/AbstractLoader.hpp"
 #include "euroc_vio/Interpolation.hpp"
 #include "euroc_vio/main.h"
-#include "euroc_vio/zupt.hpp"
+#include "euroc_vio/ZUPT.hpp"
 
 #include "euroc_vio/DatumFast.hpp"
 #include "euroc_vio/DatumImu.hpp"
