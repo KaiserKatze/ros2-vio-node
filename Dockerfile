@@ -98,9 +98,11 @@ RUN mkdir boost && cd boost && git init && \
     export BOOST_LATEST_TAG=$(git ls-remote --tags 2>/dev/null | awk '{ n = split($2, parts, "/"); tag = parts[n] }; tag ~ /^boost-[0-9]+\.[0-9]+\.[0-9]+$/ { print tag }' | sort -V | tail -1) && \
     git fetch --depth=1 origin tag $BOOST_LATEST_TAG && \
     git checkout $BOOST_LATEST_TAG && \
-    git submodule update --init --recursive --depth=1 && \
-    ./bootstrap.sh --prefix=/usr && \
-    ./b2 headers
+    git submodule update --init --recursive && \
+    export BOOST_PREFIX="/usr/local" && \
+    ./bootstrap.sh --prefix=$BOOST_PREFIX && \
+    ./b2 headers && \
+    ./b2 install --prefix=$BOOST_PREFIX
 
 # 清理
 WORKDIR /app
