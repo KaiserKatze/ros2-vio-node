@@ -35,9 +35,9 @@
 #include <opencv2/videoio.hpp>
 #include <opencv2/viz/vizcore.hpp>
 
-#include "euroc_vio/EuRoC.hpp"
 #include "FastDetector.hpp"
 #include "ImageDataLoader.hpp"
+#include "euroc_vio/EuRoC.hpp"
 #include "euroc_vio/Integrator.hpp"
 
 struct StereoSlam : public VisualIntegrator
@@ -265,12 +265,15 @@ public:
       }
 
       const bool found_corners{
-          detector_.FindCorners(image_prev_left_grayscale,
-                                image_prev_right_grayscale,
-                                image_next_left_grayscale,
-                                image_next_right_grayscale, corners_prev_left,
-                                corners_prev_right, corners_next_left,
-                                corners_next_right, true),
+          detector_.FindCorners(image_prev_left_grayscale,  //
+                                image_prev_right_grayscale, //
+                                image_next_left_grayscale,  //
+                                image_next_right_grayscale, //
+                                corners_prev_left,          //
+                                corners_prev_right,         //
+                                corners_next_left,          //
+                                corners_next_right,         //
+                                landmarks_homo.cols > 0),
       };
       assert(corners_prev_left.size() == corners_prev_right.size()
              && corners_prev_left.size() == corners_next_left.size()
