@@ -231,29 +231,26 @@ private:
      * @brief 根据时间戳查找历史状态。
      *
      * @param timestamp Unix 时间戳。
-     * @return 找到返回指针，否则返回 nullptr。
+     * @return 找到返回对应迭代器；未找到返回 End()。
      */
     [[nodiscard]]
-    HistoryState *Find(std::int64_t timestamp) noexcept
+    iterator Find(std::int64_t timestamp) noexcept
     {
-      for (auto &state : buffer_)
-      {
-        if (state.imu_.timestamp_ == timestamp)
-        {
-          return &state;
-        }
-      }
-
-      return nullptr;
+      return std::ranges::lower_bound(buffer_, timestamp, std::less<>(),
+                                      &HistoryState::GetTimestamp);
     }
 
     /**
      * @brief const 版本时间戳查找。
+     *
+     * @param timestamp Unix 时间戳。
+     * @return 找到返回对应常量迭代器；未找到返回 End()。
      */
     [[nodiscard]]
-    const HistoryState *Find(std::int64_t timestamp) const noexcept
+    const_iterator Find(std::int64_t timestamp) const noexcept
     {
-      return const_cast<HistoryBuffer *>(this)->Find(timestamp);
+      return std::ranges::lower_bound(buffer_, timestamp, std::less<>(),
+                                      &HistoryState::GetTimestamp);
     }
   };
 
@@ -639,7 +636,6 @@ public:
 #pragma region PRIVATE_METHOD
 
 private:
-  //
   /**
    * @brief 保存历史状态
    * @param imu_data IMU 数据指针
