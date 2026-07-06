@@ -679,7 +679,7 @@ private:
    */
   void RollbackToHistory(HistoryState *ptr_state) noexcept
   {
-    if (ptr_state != nullptr)
+    if (ptr_state == nullptr)
     {
       return;
     }
