@@ -162,7 +162,7 @@ private:
     // 原始 IMU 数据 (未作零偏矫正)
     DatumImu imu_;
     // 名义状态变量
-    NominalStateVariable nomial_;
+    NominalStateVariable nominal_;
     // 过程噪声的协方差矩阵
     TransitionMatrix error_state_covariance_;
   };
@@ -527,7 +527,7 @@ public:
 
     if (save_history)
     {
-      SaveHistory(*imu_data);
+      SaveHistoryState(*imu_data);
     }
   }
 
@@ -643,27 +643,39 @@ private:
    * 后续若收到具有延迟的视觉/GPS等观测，可回滚至对应时间戳，
    * 完成 Measurement Update 后再重新积分到当前时刻。
    */
-  void SaveHistory(const DatumImu &imu_data) noexcept
+  void SaveHistoryState(const DatumImu &imu_data) noexcept
   {
     HistoryState history_state;
     // 保存未经零偏校正的原始 IMU 数据
     history_state.imu_ = imu_data;
     // 保存当前名义状态
-    history_state.nomial_ = nominal_state_;
+    history_state.nominal_ = nominal_state_;
     // 保存当前误差协方差
     history_state.error_state_covariance_ = error_state_covariance_;
     // 写入环形历史缓冲区
     history_buffer_.Push(history_state);
   }
 
+  /**
+   * @brief 根据时间戳查找历史状态。
+   * @return 返回历史状态的指针
+   */
+  HistoryState *FindHistoryIndex(std::int64_t timestamp) const noexcept
+  {
+    return history_buffer_.Find(timestamp);
+  }
+
   void CompensateDelay(std::int64_t timestamp) noexcept
   {
-    RollbackHistoryState(history_buffer_.Find(timestamp));
+    RollbackToHistory(FindHistoryIndex(timestamp));
     // Measurement Update
     // Replay IMU
   }
 
-  void RollbackHistoryState(HistoryState *ptr_state) noexcept
+  /**
+   * @brief 回滚到指定历史状态
+   */
+  void RollbackToHistory(HistoryState *ptr_state) noexcept
   {
     if (ptr_state != nullptr)
     {
@@ -674,6 +686,11 @@ private:
     last_imu_time_          = ptr_state->imu_.timestamp_;
     last_imu_data_          = ptr_state->imu_;
   }
+
+  /**
+   * @brief 从 index+1 开始重新积分 IMU
+   */
+  void ReplayHistory(HistoryState *ptr_state) noexcept {}
 
   /**
    * @brief 更新当前帧 Feature Track Table。
