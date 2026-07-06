@@ -178,13 +178,14 @@ private:
    * @details
    * 该缓冲区用于保存 ESKF 的历史状态，以支持延时观测回滚
    * （Rollback）与重新传播（Replay）。
-   *
-   * 底层采用 std::vector 作为连续存储空间，避免运行过程中发生
-   * 动态内存分配。
    */
   struct HistoryBuffer
   {
-    boost::circular_buffer<HistoryState> buffer_;
+    using buffer_t       = boost::circular_buffer<HistoryState>;
+    using iterator       = typename buffer_t::iterator;
+    using const_iterator = typename buffer_t::const_iterator;
+
+    buffer_t buffer_;
 
     /**
      * @brief 初始化固定容量历史缓冲区。
