@@ -87,6 +87,26 @@ WORKDIR /app
 RUN rm -rf cmake
 
 #==================================================================================================================
+# Boost Libraries
+#
+# @see: https://github.com/boostorg/boost
+#==================================================================================================================
+
+WORKDIR /app
+RUN mkdir boost && cd boost && git init && \
+    git remote add origin https://github.com/boostorg/boost.git && \
+    export BOOST_LATEST_TAG=$(git ls-remote --tags 2>/dev/null | awk '{ n = split($2, parts, "/"); tag = parts[n] }; tag ~ /^boost-[0-9]+\.[0-9]+\.[0-9]+$/ { print tag }' | sort -V | tail -1) && \
+    git fetch --depth=1 origin tag $BOOST_LATEST_TAG && \
+    git checkout $BOOST_LATEST_TAG && \
+    git submodule update --init --recursive --depth=1 && \
+    ./bootstrap.sh --prefix=/usr && \
+    ./b2 headers
+
+# 清理
+WORKDIR /app
+RUN rm -rf boost
+
+#==================================================================================================================
 # Eigen (Vectors & Matrices)
 #
 # @see: https://libeigen.gitlab.io/eigen/docs-5.0/GettingStarted.html
