@@ -165,6 +165,11 @@ private:
     NominalStateVariable nominal_;
     // 过程噪声的协方差矩阵
     TransitionMatrix error_state_covariance_;
+
+    auto GetTimestamp() const noexcept
+    {
+      return imu_.timestamp_;
+    }
   };
 
   /**
