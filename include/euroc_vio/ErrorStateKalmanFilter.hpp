@@ -19,10 +19,10 @@
 #include <sophus/se3.hpp>
 #include <sophus/so3.hpp>
 
-#include "euroc_vio/Interpolation.hpp"
-
 #include "euroc_vio/DatumFast.hpp"
 #include "euroc_vio/DatumImu.hpp"
+#include "euroc_vio/Interpolation.hpp"
+#include "euroc_vio/StereoObservation.hpp"
 
 // 选择“只使用角位移”还是“使用角位移和平移方向”
 #define ONLY_USE_ANGULAR_DISPLACEMENT 1
@@ -109,20 +109,6 @@ public:
     value_type max_sensor_jitter_{10.0}; // milliseconds
     std::size_t history_buffer_margin_{16};
     StereoCameraModel stereo_camera_model_{};
-  };
-
-  struct StereoObservation
-  {
-    // 路标点 ID
-    std::uint32_t feature_id_{0};
-    // 左目图像中角点坐标
-    Vector2 pt_left_{Vector2::Zero()};
-    // 右目图像中角点坐标
-    Vector2 pt_right_{Vector2::Zero()};
-    // 左目图像中角点响应值 (FAST score)
-    value_type response_left_{0.0};
-    // 右目图像中角点响应值 (FAST score)
-    value_type response_right_{0.0};
   };
 
 #pragma endregion
@@ -640,7 +626,7 @@ public:
   }
 
   void StereoUpdate(std::int64_t timestamp,
-                    std::span<StereoObservation> obs) noexcept
+                    std::span<StereoObservation<value_type>> obs) noexcept
   {
     ++vision_frame_count_;
 
