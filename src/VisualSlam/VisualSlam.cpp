@@ -58,6 +58,12 @@ private:
   CornerDetection::FastDetector detector_{};
   bool do_visualization_{false};
   const std::string window_name_{"Stereo Visual SLAM"};
+  // 初始化 CLAHE 实例
+  // clipLimit: 对比度限制阈值，一般取 2.0 到 4.0 之间。值越大，对比度增强越强，但也可能引入更多噪声。
+  // tileGridSize: 图像划分的网格大小，通常为 8x8。
+  cv::Ptr<cv::CLAHE> clahe_{
+      cv::createCLAHE(3.0, cv::Size(8, 8)),
+  };
 
 public:
   StereoSlam() = delete;
@@ -111,15 +117,11 @@ private:
   }
 
   // 辅助函数：将灰度图转为彩色（BGR）
-  static cv::Mat toColor(const cv::Mat &img) noexcept
+  static cv::Mat ConvertGrayToBGR(const cv::Mat &img) noexcept
   {
-    if (img.channels() == 1)
-    {
-      cv::Mat color;
-      cv::cvtColor(img, color, cv::COLOR_GRAY2BGR);
-      return color;
-    }
-    return img.clone(); // 已是彩色则复制一份
+    cv::Mat color;
+    cv::cvtColor(img, color, cv::COLOR_GRAY2BGR);
+    return color;
   }
 
   static cv::Mat
@@ -132,16 +134,6 @@ private:
                const cv::Mat &image_next_left_grayscale,
                const cv::Mat &image_next_right_grayscale) noexcept
   {
-    // 转换所有图像为彩色
-    cv::Mat img1{toColor(image_prev_left_rectified)};
-    cv::Mat img2{toColor(image_prev_right_rectified)};
-    cv::Mat img3{toColor(image_prev_left_grayscale)};
-    cv::Mat img4{toColor(image_prev_right_grayscale)};
-    cv::Mat img5{toColor(image_next_left_rectified)};
-    cv::Mat img6{toColor(image_next_right_rectified)};
-    cv::Mat img7{toColor(image_next_left_grayscale)};
-    cv::Mat img8{toColor(image_next_right_grayscale)};
-
     // 第一行：前4张
     cv::Mat row1;
     cv::hconcat(std::vector<cv::Mat>{img1, img2, img3, img4}, row1);
@@ -157,20 +149,38 @@ private:
     return result;
   }
 
+  void HandleFrame(const StereoFrame<cv::Mat> &frame, cv::Mat left_rectified,
+                   cv::Mat right_rectified, cv::Mat left_grayscale,
+                   cv::Mat right_grayscale) const noexcept
+  {
+    std::tie(left_rectified, right_rectified)
+        = euroc_.remap(frame.image_left_, frame.image_right_);
+    std::tie(left_grayscale, right_grayscale)
+        = euroc_.grayscale(left_rectified, right_rectified);
+
+    clahe_->apply(left_grayscale, left_grayscale);
+    clahe_->apply(right_grayscale, right_grayscale);
+    left_grayscale  = ConvertGrayToBGR(left_grayscale);
+    right_grayscale = ConvertGrayToBGR(right_grayscale);
+  }
+
 public:
   void StartOdometer()
   {
     WriteDataHeader();
 
     bool init{false};
-    // 初始化 CLAHE 实例
-    // clipLimit: 对比度限制阈值，一般取 2.0 到 4.0 之间。值越大，对比度增强越强，但也可能引入更多噪声。
-    // tileGridSize: 图像划分的网格大小，通常为 8x8。
-    cv::Ptr<cv::CLAHE> clahe{
-        cv::createCLAHE(3.0, cv::Size(8, 8)),
-    };
 
-    StereoFrame<cv::Mat> prev_frame;
+    std::int64_t timestamp;
+    cv::Mat image_prev_left_rectified;
+    cv::Mat image_prev_right_rectified;
+    cv::Mat image_prev_left_grayscale;
+    cv::Mat image_prev_right_grayscale;
+    cv::Mat image_next_left_rectified;
+    cv::Mat image_next_right_rectified;
+    cv::Mat image_next_left_grayscale;
+    cv::Mat image_next_right_grayscale;
+
     std::vector<PointType> corners_prev_left;
     std::vector<PointType> corners_prev_right;
     std::vector<PointType> corners_next_left;
@@ -190,30 +200,19 @@ public:
       StereoFrame<cv::Mat> frame{loader_()};
       if (!init)
       {
-        init       = true;
-        prev_frame = std::move(frame);
+        init = true;
+
+        timestamp = frame.timestamp_;
+        HandleFrame(frame, image_prev_left_rectified,
+                    image_prev_right_rectified, image_prev_left_grayscale,
+                    image_prev_right_grayscale);
+
         ++loader_;
         continue;
       }
 
-      auto [image_prev_left_rectified, image_prev_right_rectified]
-          = euroc_.remap(prev_frame.image_left_, prev_frame.image_right_);
-      auto [image_prev_left_grayscale, image_prev_right_grayscale]
-          = euroc_.grayscale(image_prev_left_rectified,
-                             image_prev_right_rectified);
-
-      auto [image_next_left_rectified, image_next_right_rectified]
-          = euroc_.remap(frame.image_left_, frame.image_right_);
-      auto [image_next_left_grayscale, image_next_right_grayscale]
-          = euroc_.grayscale(image_next_left_rectified,
-                             image_next_right_rectified);
-
-      // 应用 CLAHE 图像增强
-      // 直接在原灰度图变量上进行原地操作（或者覆写），保证后续特征提取和视差计算全部基于增强后的图像
-      clahe->apply(image_prev_left_grayscale, image_prev_left_grayscale);
-      clahe->apply(image_prev_right_grayscale, image_prev_right_grayscale);
-      clahe->apply(image_next_left_grayscale, image_next_left_grayscale);
-      clahe->apply(image_next_right_grayscale, image_next_right_grayscale);
+      HandleFrame(frame, image_next_left_rectified, image_next_right_rectified,
+                  image_next_left_grayscale, image_next_right_grayscale);
 
       // 预测路标点在下一帧的投影
       if (landmarks_homo.cols > 0) // 确认是否存在路标点
@@ -318,7 +317,7 @@ public:
           this->VisualIntegrator::Update(delta_rotation, delta_position);
 
           // 打印位姿
-          WriteDataContent(prev_frame.timestamp_);
+          WriteDataContent(timestamp);
         }
 
         // 只有在追踪成功时，才将本帧的有效特征点保存为下一帧的“上一帧点”
@@ -332,7 +331,12 @@ public:
         corners_prev_right.clear();
       }
 
-      prev_frame = std::move(frame);
+      timestamp                  = frame.timestamp_;
+      image_prev_left_rectified  = std::move(image_next_left_rectified);
+      image_prev_right_rectified = std::move(image_next_right_rectified);
+      image_prev_left_grayscale  = std::move(image_next_left_grayscale);
+      image_prev_right_grayscale = std::move(image_next_right_grayscale);
+
       ++loader_;
     }
   }
