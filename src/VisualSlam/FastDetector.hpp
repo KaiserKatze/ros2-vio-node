@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <numeric>
 #include <ranges>
 #include <vector>
 
@@ -61,30 +62,32 @@ public:
                    std::vector<PointType> &corners_prev_left,
                    std::vector<PointType> &corners_prev_right,
                    std::vector<PointType> &corners_next_left,
-                   std::vector<PointType> &corners_next_right) const
+                   std::vector<PointType> &corners_next_right,
+                   std::vector<std::uint32_t> &feature_ids, bool use_hint) const
   {
-    return FindCorners(gray_prev_left, gray_prev_right, gray_next_left,
-                       gray_next_right, corners_prev_left, corners_prev_right,
-                       corners_next_left, corners_next_right, false);
-  }
+    // 断言：确保 feature_ids 严格递增（随索引增大而增大）
+    assert(std::is_sorted(feature_ids.begin(), feature_ids.end(),
+                          std::less<std::uint32_t>()));
+    assert(gray_prev_left.dims == gray_prev_right.dims
+           && gray_prev_left.rows == gray_prev_right.rows
+           && gray_prev_left.cols == gray_prev_right.cols
+           && gray_prev_left.dims == gray_next_left.dims
+           && gray_prev_left.rows == gray_next_left.rows
+           && gray_prev_left.cols == gray_next_left.cols
+           && gray_prev_left.dims == gray_next_right.dims
+           && gray_prev_left.rows == gray_next_right.rows
+           && gray_prev_left.cols == gray_next_right.cols);
 
-  bool
-  FindCorners(const cv::Mat &gray_prev_left, const cv::Mat &gray_prev_right,
-              const cv::Mat &gray_next_left, const cv::Mat &gray_next_right,
-              std::vector<PointType> &corners_prev_left,
-              std::vector<PointType> &corners_prev_right,
-              std::vector<PointType> &corners_next_left,
-              std::vector<PointType> &corners_next_right, bool use_hint) const
-  {
     if (!TrackStereoPrevLeftToPrevRight(gray_prev_left, gray_prev_right,
-                                        corners_prev_left, corners_prev_right))
+                                        corners_prev_left, corners_prev_right,
+                                        feature_ids))
     {
       return false;
     }
 
     if (!TrackTemporalRight(gray_prev_right, gray_next_right, corners_prev_left,
                             corners_prev_right, corners_next_left,
-                            corners_next_right, use_hint))
+                            corners_next_right, feature_ids, use_hint))
     {
       return false;
     }
@@ -92,14 +95,14 @@ public:
     if (!TrackStereoNextRightToNextLeft(gray_next_right, gray_next_left,
                                         corners_prev_left, corners_prev_right,
                                         corners_next_left, corners_next_right,
-                                        use_hint))
+                                        feature_ids, use_hint))
     {
       return false;
     }
 
     if (!ValidateLoopback(gray_next_left, gray_prev_left, corners_prev_left,
                           corners_prev_right, corners_next_left,
-                          corners_next_right))
+                          corners_next_right, feature_ids))
     {
       return false;
     }
@@ -130,12 +133,16 @@ private:
 
   //===================================
   // 从上一帧左目到上一帧右目
-  bool TrackStereoPrevLeftToPrevRight(
-      const cv::Mat &gray_prev_left, const cv::Mat &gray_prev_right,
-      std::vector<PointType> &corners_prev_left,
-      std::vector<PointType> &corners_prev_right
-  ) const
+  bool
+  TrackStereoPrevLeftToPrevRight(const cv::Mat &gray_prev_left,
+                                 const cv::Mat &gray_prev_right,
+                                 std::vector<PointType> &corners_prev_left,
+                                 std::vector<PointType> &corners_prev_right,
+                                 std::vector<std::uint32_t> &feature_ids) const
   {
+    assert(corners_prev_left.size() == corners_prev_right.size()
+           && corners_prev_left.size() == feature_ids.size());
+
     // 1. 计算需要补充的角点数量
     const int num_needed{static_cast<int>(maxCorners)
                          - static_cast<int>(corners_prev_left.size())};
@@ -168,6 +175,13 @@ private:
       fastFeatureDetector->detect(gray_prev_left, keypoints_prev_left_ext,
                                   mask);
     }
+
+    // 新提取的角点需要赋予 feature_id
+    std::uint32_t feature_last{feature_ids.empty() ? 0 : feature_ids.back()};
+    feature_ids.resize(feature_ids.size() + keypoints_prev_left_ext.size());
+    std::iota(feature_ids.end() - keypoints_prev_left_ext.size(),
+              feature_ids.end(), //
+              feature_last + 1);
 
     if (!HaveEnoughCorners(corners_prev_left, keypoints_prev_left_ext))
     {
@@ -202,12 +216,13 @@ private:
                          features_found_pl_pr, 0);
 
     auto zipped_view
-        = std::views::zip(corners_prev_left_ext, corners_prev_right_ext,
-                          features_found_pl_pr)
+        = std::views::zip(features_found_pl_pr, corners_prev_left_ext,
+                          corners_prev_right_ext, feature_ids)
           | std::views::filter(
               [atol = atol_parallax](const auto &tuple)
               {
-                const auto &[p_prev_left, p_prev_right, found] = tuple;
+                const auto &[found, p_prev_left, p_prev_right, feature_id]
+                    = tuple;
                 // 1. 必须是追踪成功的点
                 // 2. 视差过滤：保证正视差 (即左目图像中的点的横坐标必须大于右目图像中的点的横坐标)
                 // 3. 极线过滤：纵坐标之差必须小于阈值
@@ -248,6 +263,7 @@ private:
                           std::vector<PointType> &corners_prev_right,
                           std::vector<PointType> &corners_next_left,
                           std::vector<PointType> &corners_next_right,
+                          std::vector<std::uint32_t> &feature_ids,
                           bool use_hint) const
   {
     // 由于 corners_prev_right 的长度可能比 corners_next_right 的长度大
@@ -271,12 +287,12 @@ private:
                                   corners_prev_right.end());
       }
     }
+
     assert(corners_prev_left.size() == corners_prev_right.size()
-           && "corners_prev_left.size() != corners_prev_right.size()");
-    assert(corners_prev_left.size() == corners_next_left.size()
-           && "corners_prev_left.size() != corners_next_left.size()");
-    assert(corners_prev_right.size() == corners_next_right.size()
-           && "corners_prev_right.size() != corners_next_right.size()");
+           && corners_prev_left.size() == corners_next_left.size()
+           && corners_prev_right.size() == corners_next_right.size()
+           && corners_prev_left.size() == feature_ids.size());
+
     std::vector<unsigned char> features_found_pr_nr;
     const int lk_flags_prev_right_to_next_right{
         (use_hint && !corners_next_right.empty()
@@ -288,14 +304,14 @@ private:
                          corners_next_right, features_found_pr_nr,
                          lk_flags_prev_right_to_next_right);
 
-    auto zipped_view = std::views::zip(corners_prev_left, corners_prev_right,
-                                       corners_next_right, corners_next_left,
-                                       features_found_pr_nr)
+    auto zipped_view = std::views::zip(features_found_pr_nr, corners_prev_left,
+                                       corners_prev_right, corners_next_right,
+                                       corners_next_left, feature_ids)
                        | std::views::filter(
                            [](const auto &tuple)
                            {
                              // 1. 必须是追踪成功的点
-                             return std::get<4>(tuple);
+                             return std::get<0>(tuple);
                            }
                        );
 
@@ -341,8 +357,14 @@ private:
                                  std::vector<PointType> &corners_prev_right,
                                  std::vector<PointType> &corners_next_left,
                                  std::vector<PointType> &corners_next_right,
+                                 std::vector<std::uint32_t> &feature_ids,
                                  bool use_hint) const
   {
+    assert(corners_prev_left.size() == corners_prev_right.size()
+           && corners_prev_left.size() == corners_next_left.size()
+           && corners_prev_left.size() == corners_next_right.size()
+           && corners_prev_left.size() == feature_ids.size());
+
     std::vector<unsigned char> features_found_nr_nl;
     const int lk_flags_next_right_to_next_left{
         (use_hint && !corners_next_left.empty()
@@ -355,14 +377,14 @@ private:
                          lk_flags_next_right_to_next_left);
 
     auto zipped_view
-        = std::views::zip(corners_prev_left, corners_prev_right,
-                          corners_next_left, corners_next_right,
-                          features_found_nr_nl)
+        = std::views::zip(features_found_nr_nl, corners_prev_left,
+                          corners_prev_right, corners_next_left,
+                          corners_next_right, feature_ids)
           | std::views::filter(
               [atol = atol_parallax](const auto &tuple)
               {
-                const auto &[p_prev_left, p_prev_right, p_next_left,
-                             p_next_right, found] = tuple;
+                const auto &[found, p_prev_left, p_prev_right, p_next_left,
+                             p_next_right, feature_id] = tuple;
                 // 1. 必须是追踪成功的点
                 // 2. 视差过滤：保证正视差 (即左目图像中的点的横坐标必须大于右目图像中的点的横坐标)
                 // 3. 极线过滤：纵坐标之差必须小于阈值
@@ -410,22 +432,29 @@ private:
                         std::vector<PointType> &corners_prev_left,
                         std::vector<PointType> &corners_prev_right,
                         std::vector<PointType> &corners_next_left,
-                        std::vector<PointType> &corners_next_right) const
+                        std::vector<PointType> &corners_next_right,
+                        std::vector<std::uint32_t> &feature_ids) const
   {
+    assert(corners_prev_left.size() == corners_prev_right.size()
+           && corners_prev_left.size() == corners_next_left.size()
+           && corners_prev_left.size() == corners_next_right.size()
+           && corners_prev_left.size() == feature_ids.size());
+
     Points corners_prev_left_loopback;
     std::vector<unsigned char> features_found_nl_pl;
     CalcOpticalFlowPyrLK(gray_next_left, gray_prev_left, corners_next_left,
                          corners_prev_left_loopback, features_found_nl_pl, 0);
 
     auto zipped_view
-        = std::views::zip(corners_prev_left, corners_prev_right,
-                          corners_next_left, corners_next_right,
-                          corners_prev_left_loopback, features_found_nl_pl)
+        = std::views::zip(features_found_nl_pl, corners_prev_left,
+                          corners_prev_right, corners_next_left,
+                          corners_next_right, corners_prev_left_loopback,
+                          feature_ids)
           | std::views::filter(
               [atol = atol_coincidence](const auto &tuple)
               {
-                const auto &[p_prev_left, p_prev_right, p_next_left,
-                             p_next_right, p_loop_back, found] = tuple;
+                const auto &[found, p_prev_left, p_prev_right, p_next_left,
+                             p_next_right, p_loop_back, feature_id] = tuple;
                 // 1. 必须是追踪成功的点
                 // 2. 重合过滤：横、纵坐标之差必须小于阈值
                 return found && (std::abs(p_prev_left.x - p_loop_back.x) < atol)
