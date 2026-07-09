@@ -241,6 +241,7 @@ public:
     std::vector<PointType> corners_prev_right;
     std::vector<PointType> corners_next_left;
     std::vector<PointType> corners_next_right;
+    std::vector<std::uint32_t> feature_ids;
 
     // 世界坐标系 (即以左目光心为原点的坐标系) 中路标点的齐次坐标
     cv::Mat landmarks_homo;
@@ -328,12 +329,13 @@ public:
                                 corners_prev_right,         //
                                 corners_next_left,          //
                                 corners_next_right,         //
+                                feature_ids,                //
                                 landmarks_homo.cols > 0),
       };
       assert(corners_prev_left.size() == corners_prev_right.size()
              && corners_prev_left.size() == corners_next_left.size()
              && corners_prev_left.size() == corners_next_right.size()
-             && "Inconsistent corner array sizes");
+             && corners_prev_left.size() == feature_ids.size());
       if (found_corners)
       {
         // 当视图之间的旋转、平移未知（例如从上一帧右目到下一帧右目，从上一帧左目到下一帧左目）时：
