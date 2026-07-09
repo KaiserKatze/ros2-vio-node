@@ -7,6 +7,7 @@
 #include <format>
 #include <fstream>
 #include <ios>
+#include <numeric>
 #include <print>
 #include <ranges>
 #include <sstream>
@@ -39,11 +40,66 @@
 #include "ImageDataLoader.hpp"
 #include "euroc_vio/EuRoC.hpp"
 #include "euroc_vio/Integrator.hpp"
+#include "euroc_vio/StereoObservation.hpp"
+
+// OpenCV 提取角点时只提供 cv::Point2f 类型
+using PointType = cv::Point2f;
+
+template <typename T>
+static T GetMatValue(const cv::Mat &mat, int row, int col)
+{
+  if (mat.type() == CV_32F)
+  {
+    return static_cast<T>(mat.at<float>(row, col));
+  }
+  else if (mat.type() == CV_64F)
+  {
+    return static_cast<T>(mat.at<double>(row, col));
+  }
+  throw std::runtime_error("Unsupported OpenCV matrix type");
+}
+
+template <typename value_type>
+static std::vector<StereoObservation<value_type>>
+CreateStereoObservationSet(const std::vector<PointType> &pts_left,
+                           const std::vector<PointType> &pts_right, //
+                           const cv::Mat &landmarks_nonhomo,
+                           const std::vector<std::uint32_t> &feature_ids)
+{
+  assert(pts_left.size() == pts_right.size()
+         && pts_left.size() == feature_ids.size());
+  assert(landmarks_nonhomo.type() == CV_32F
+         || landmarks_nonhomo.type() == CV_64F);
+  auto len{pts_left.size()};
+  using len_t = decltype(len);
+  assert(static_cast<len_t>(landmarks_nonhomo.rows) == len);
+  std::vector<StereoObservation<value_type>> result;
+  result.reserve(len);
+  for (len_t i = 0; i < len; ++i)
+  {
+    auto pt_left{pts_left[i]};
+    auto pt_right{pts_right[i]};
+    result.emplace_back(feature_ids[i],
+                        {
+                            pt_left.x,
+                            pt_left.y,
+                        },
+                        {
+                            pt_right.x,
+                            pt_right.y,
+                        },
+                        Vector3{
+                            GetMatValue<value_type>(landmarks_nonhomo, i, 0),
+                            GetMatValue<value_type>(landmarks_nonhomo, i, 1),
+                            GetMatValue<value_type>(landmarks_nonhomo, i, 2),
+                        });
+  }
+  return result;
+}
 
 struct StereoSlam : public VisualIntegrator
 {
 public:
-  using PointType  = cv::Point2f;
   using value_type = double;
   using Vector3    = Eigen::Vector<value_type, 3>;
   using Quaternion = Eigen::Quaternion<value_type>;
