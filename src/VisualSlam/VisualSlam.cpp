@@ -81,15 +81,15 @@ CreateStereoObservationSet(const std::vector<PointType> &pts_left,
     auto pt_left{pts_left[i]};
     auto pt_right{pts_right[i]};
     result.emplace_back(feature_ids[i],
-                        {
+                        Eigen::Vector<value_type, 2>{
                             pt_left.x,
                             pt_left.y,
                         },
-                        {
+                        Eigen::Vector<value_type, 2>{
                             pt_right.x,
                             pt_right.y,
                         },
-                        Vector3{
+                        Eigen::Vector<value_type, 3>{
                             GetMatValue<value_type>(landmarks_nonhomo, i, 0),
                             GetMatValue<value_type>(landmarks_nonhomo, i, 1),
                             GetMatValue<value_type>(landmarks_nonhomo, i, 2),
