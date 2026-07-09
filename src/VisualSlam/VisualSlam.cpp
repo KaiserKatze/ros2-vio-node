@@ -225,7 +225,7 @@ public:
   {
     WriteDataHeader();
 
-    bool init{false};
+    bool init_frame{false};
 
     std::int64_t timestamp;
     cv::Mat image_prev_left_rectified;
@@ -254,9 +254,9 @@ public:
     while (loader_)
     {
       StereoFrame<cv::Mat> frame{loader_()};
-      if (!init)
+      if (!init_frame)
       {
-        init = true;
+        init_frame = true;
 
         timestamp = frame.timestamp_;
         HandleFrame(frame, image_prev_left_rectified,
