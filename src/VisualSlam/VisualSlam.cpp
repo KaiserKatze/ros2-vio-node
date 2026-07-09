@@ -205,9 +205,9 @@ private:
     return result;
   }
 
-  void HandleFrame(const StereoFrame<cv::Mat> &frame, cv::Mat left_rectified,
-                   cv::Mat right_rectified, cv::Mat left_grayscale,
-                   cv::Mat right_grayscale) const noexcept
+  void HandleFrame(const StereoFrame<cv::Mat> &frame, cv::Mat &left_rectified,
+                   cv::Mat &right_rectified, cv::Mat &left_grayscale,
+                   cv::Mat &right_grayscale) const noexcept
   {
     std::tie(left_rectified, right_rectified)
         = euroc_.remap(frame.image_left_, frame.image_right_);
