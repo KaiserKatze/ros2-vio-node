@@ -38,6 +38,7 @@
 
 #include "FastDetector.hpp"
 #include "ImageDataLoader.hpp"
+#include "euroc_vio/ErrorStateKalmanFilter.hpp"
 #include "euroc_vio/EuRoC.hpp"
 #include "euroc_vio/Integrator.hpp"
 #include "euroc_vio/StereoObservation.hpp"
@@ -104,6 +105,7 @@ public:
   using Vector3    = Eigen::Vector<value_type, 3>;
   using Quaternion = Eigen::Quaternion<value_type>;
   using Attitude   = Sophus::SO3<value_type>;
+  using ESKF       = VisualSim::ErrorStateKalmanFilter<value_type>;
 
   const EuRoC::EuRoC euroc_{};
 
@@ -120,6 +122,9 @@ private:
   cv::Ptr<cv::CLAHE> clahe_{
       cv::createCLAHE(3.0, cv::Size(8, 8)),
   };
+  ESKF eskf_;
+
+#pragma region CONSTRUCTORS
 
 public:
   StereoSlam() = delete;
@@ -138,6 +143,8 @@ public:
   }
 
   ~StereoSlam() {}
+
+#pragma endregion
 
 private:
   /**
@@ -226,6 +233,7 @@ public:
     WriteDataHeader();
 
     bool init_frame{false};
+    bool init_landmarks{false};
 
     std::int64_t timestamp;
     cv::Mat image_prev_left_rectified;
@@ -355,6 +363,21 @@ public:
           // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#gac42edda3a3a0f717979589fcd6ac0035
           cv::convertPointsFromHomogeneous(landmarks_homo.t(),
                                            landmarks_nonhomo);
+
+          if (!init_landmarks)
+          {
+            init_landmarks = true;
+            auto corner_set_prev{CreateStereoObservationSet<value_type>(
+                corners_prev_left, corners_prev_right, landmarks_nonhomo,
+                feature_ids
+            )};
+            eskf_.StereoUpdate(timestamp, corner_set_prev);
+          }
+          auto corner_set_next{CreateStereoObservationSet<value_type>(
+              corners_next_left, corners_next_right, landmarks_nonhomo,
+              feature_ids
+          )};
+          eskf_.StereoUpdate(frame.timestamp_, corner_set_next);
 
           // 旋转向量与平移向量
           cv::Mat rVec_cv, tVec_cv;
