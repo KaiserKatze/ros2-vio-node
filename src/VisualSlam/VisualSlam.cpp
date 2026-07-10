@@ -98,7 +98,47 @@ CreateStereoObservationSet(const std::vector<PointType> &pts_left,
   return result;
 }
 
-struct StereoSlam : public VisualIntegrator
+class TrajectoryWriter
+{
+protected:
+  /**
+   * @brief 打印表头和初始位姿
+   */
+  void WriteDataHeader()
+  {
+    // 打印表头
+    std::print(file_traj_, "#timestamp [ns],"
+                           "p_x [m],p_y [m],p_z [m],"
+                           "q_w [],q_x [],q_y [],q_z []\n");
+    // 打印初始位姿
+    WriteDataContent(0);
+  }
+
+  /**
+   * @brief 打印位姿
+   */
+  void WriteDataContent(std::int64_t timestamp)
+  {
+    auto pos{this->VisualIntegrator::pose_.translation()};
+    auto att{this->VisualIntegrator::pose_.so3().unit_quaternion()};
+    std::print(file_traj_,
+               // 时间戳
+               "{:020d},"
+               // 位置
+               "{:.18f},{:.18f},{:.18f},"
+               // 朝向
+               "{:.18f},{:.18f},{:.18f},{:.18f}\n",
+               timestamp,                 //
+               pos.x(), pos.y(), pos.z(), //
+               att.w(), att.x(), att.y(), att.z());
+  }
+
+private:
+  std::ofstream file_traj_{"estimated_trajectory.csv",
+                           std::ios::out | std::ios::trunc};
+};
+
+struct StereoSlam : public VisualIntegrator, private TrajectoryWriter
 {
 public:
   using value_type = double;
@@ -110,8 +150,6 @@ public:
   const EuRoC::EuRoC euroc_{};
 
 private:
-  std::ofstream file_traj_{"estimated_trajectory.csv",
-                           std::ios::out | std::ios::trunc};
   ImageDataLoader loader_;
   CornerDetection::FastDetector detector_{};
   bool do_visualization_{false};
@@ -147,38 +185,6 @@ public:
 #pragma endregion
 
 private:
-  /**
-   * @brief 打印表头和初始位姿
-   */
-  void WriteDataHeader()
-  {
-    // 打印表头
-    std::print(file_traj_, "#timestamp [ns],"
-                           "p_x [m],p_y [m],p_z [m],"
-                           "q_w [],q_x [],q_y [],q_z []\n");
-    // 打印初始位姿
-    WriteDataContent(0);
-  }
-
-  /**
-   * @brief 打印位姿
-   */
-  void WriteDataContent(std::int64_t timestamp)
-  {
-    auto pos{this->VisualIntegrator::pose_.translation()};
-    auto att{this->VisualIntegrator::pose_.so3().unit_quaternion()};
-    std::print(file_traj_,
-               // 时间戳
-               "{:020d},"
-               // 位置
-               "{:.18f},{:.18f},{:.18f},"
-               // 朝向
-               "{:.18f},{:.18f},{:.18f},{:.18f}\n",
-               timestamp,                 //
-               pos.x(), pos.y(), pos.z(), //
-               att.w(), att.x(), att.y(), att.z());
-  }
-
   // 辅助函数：将灰度图转为彩色（BGR）
   static cv::Mat ConvertGrayToBGR(const cv::Mat &img) noexcept
   {
