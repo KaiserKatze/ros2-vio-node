@@ -1,0 +1,6 @@
+graph LR
+    observations(observations) --> assignment(assignment)
+    assignment --> track_maintenance(track maintenance)
+    track_maintenance --> estimation_filtering(estimation filtering)
+    estimation_filtering --> gating(gating)
+    gating --> assignment

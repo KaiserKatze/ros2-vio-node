@@ -1,7 +1,7 @@
 graph TD
     %% 传感器输入
     IMU["IMU输入<br>(加速度计/陀螺仪 200Hz)"] --> Pred["IMU捷联惯导积分<br>(名义状态预测)"]
-    IMU --> CovPred["协方差矩阵P预测<br>"$$P = F*P*F' + Q$$]
+    IMU --> CovPred["协方差矩阵P预测"]
 
     %% 预测阶段
     Pred --> State[("当前系统状态<br>(位置/速度/姿态)")]
