@@ -42,6 +42,7 @@
 #include "euroc_vio/EuRoC.hpp"
 #include "euroc_vio/Integrator.hpp"
 #include "euroc_vio/StereoObservation.hpp"
+#include "euroc_vio/TrackingConfig.hpp"
 
 // OpenCV 提取角点时只提供 cv::Point2f 类型
 using PointType = cv::Point2f;
@@ -98,6 +99,12 @@ CreateStereoObservationSet(const std::vector<PointType> &pts_left,
   return result;
 }
 
+struct SlamConfig:
+{
+  bool config_.do_visualization_;
+  TrackingConfig tracking_config_;
+};
+
 class TrajectoryWriter
 {
 protected:
@@ -150,10 +157,12 @@ public:
   const EuRoC::EuRoC euroc_{};
 
 private:
-  ImageDataLoader loader_;
-  CornerDetection::FastDetector detector_{};
-  bool do_visualization_{false};
   const std::string window_name_{"Stereo Visual SLAM"};
+
+  ImageDataLoader loader_;
+  SlamConfig config_;
+
+  CornerDetection::FastDetector detector_{};
   // 初始化 CLAHE 实例
   // clipLimit: 对比度限制阈值，一般取 2.0 到 4.0 之间。值越大，对比度增强越强，但也可能引入更多噪声。
   // tileGridSize: 图像划分的网格大小，通常为 8x8。
@@ -171,16 +180,14 @@ public:
 
   StereoSlam(StereoSlam &&) = delete;
 
-  StereoSlam(const std::filesystem::path &path_mav0, bool do_visualization) :
-    loader_{path_mav0}, do_visualization_{do_visualization}
+  StereoSlam(const std::filesystem::path &path_mav0, const SlamConfig &config) :
+    loader_{path_mav0}, config_{config}
   {
-    if (do_visualization_)
+    if (config_.do_visualization_)
     {
       cv::namedWindow(window_name_, cv::WINDOW_NORMAL);
     }
   }
-
-  ~StereoSlam() {}
 
 #pragma endregion
 
@@ -322,7 +329,7 @@ public:
 
       // 将前一帧、后一帧的左目、右目的原始图像、增强后的图像展示出来
       cv::Mat vis;
-      if (do_visualization_)
+      if (config_.do_visualization_)
       {
         vis = stitchImages(
             image_prev_left_rectified, image_prev_right_rectified,
