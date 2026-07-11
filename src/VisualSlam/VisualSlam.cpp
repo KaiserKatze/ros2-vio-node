@@ -293,38 +293,11 @@ public:
                   image_next_left_grayscale, image_next_right_grayscale);
 
       // 预测路标点在下一帧的投影
-      if (landmarks_homo.cols > 0) // 确认是否存在路标点
+      if (!eskf_.GetLandmarks().empty()) // 确认是否存在路标点
       {
-        // (左目相机相对于世界坐标系的姿态 = 载具相对于世界坐标系的姿态)取逆
-        // 得到(从世界坐标系到左目相机坐标系的变换)
-        auto inv_pose_left{this->VisualIntegrator::pose_.inverse()};
-        cv::Mat rVec_left;
-        cv::Mat tVec_left;
-        cv::eigen2cv(inv_pose_left.so3().log(), rVec_left);
-        cv::eigen2cv(inv_pose_left.translation(), tVec_left);
-        // (右目相机相对于世界坐标系的姿态)取逆
-        // 得到(从世界坐标系到右目相机坐标系的变换)
-        auto inv_pose_right{inv_pose_left};
-        // 下面相当于令 (inv_pose_right := T_C1C0 * inv_pose_left)
-        inv_pose_right.translation().x() -= euroc_.baseline_length_;
-        cv::Mat rVec_right;
-        cv::Mat tVec_right;
-        cv::eigen2cv(inv_pose_right.so3().log(), rVec_right);
-        cv::eigen2cv(inv_pose_right.translation(), tVec_right);
-        // 准备存储空间
-        size_t capacity{std::max(corners_next_left.size(),
-                                 corners_next_right.size())};
-        capacity = std::max(static_cast<size_t>(landmarks_homo.cols), capacity);
-        corners_next_left.reserve(capacity);
-        corners_next_right.reserve(capacity);
-        // https://docs.opencv.org/4.13.0/d9/d0c/group__calib3d.html#ga1019495a2c8d1743ed5cc23fa0daff8c
-        // 由于图像经过了立体矫正，所以畸变系数全为零
-        cv::projectPoints(landmarks_nonhomo, rVec_left, tVec_left,
-                          camera_matrix, cv::noArray(), corners_next_left,
-                          cv::noArray());
-        cv::projectPoints(landmarks_nonhomo, rVec_right, tVec_right,
-                          camera_matrix, cv::noArray(), corners_next_right,
-                          cv::noArray());
+        std::tie(corners_next_left, corners_next_right, feature_ids)
+            = eskf_.PredictNextCorners<cv::Point2f, int>(euroc_.image_width,
+                                                         euroc_.image_height);
       }
 
       // 将前一帧、后一帧的左目、右目的原始图像、增强后的图像展示出来

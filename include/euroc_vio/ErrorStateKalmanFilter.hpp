@@ -9,6 +9,7 @@
 #include <meta>
 #include <print>
 #include <stdexcept>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
 
@@ -636,6 +637,46 @@ public:
   NominalStateVariable GetNominalState() const noexcept
   {
     return nominal_state_;
+  }
+
+  const auto &GetLandmarks() const noexcept
+  {
+    return landmark_database_.landmarks_;
+  }
+
+  template <class PointType, class LengthType>
+  auto PredictNextCorners(LengthType image_width,
+                          LengthType image_height) const noexcept
+  {
+    std::vector<PointType> pts_left;
+    std::vector<PointType> pts_right;
+    std::vector<std::uint32_t> feature_ids;
+    const auto &landmarks{GetLandmarks()};
+    const auto len{landmarks.size()};
+    pts_left.reserve(len);
+    pts_right.reserve(len);
+    feature_ids.reserve(len);
+    for (const Landmark &landmark : landmarks)
+    {
+      std::uint32_t feature_id{landmark.id_};
+      Vector2 pt_left{ProjectLeft(landmark)};
+      Vector2 pt_right{ProjectRight(landmark)};
+      // 检测像素点是否处于双目图像的取景画幅以内
+      if (0 <= static_cast<LengthType>(pt_left.x())
+          && static_cast<LengthType>(pt_left.x()) < image_width
+          && 0 <= static_cast<LengthType>(pt_left.y())
+          && static_cast<LengthType>(pt_left.y()) < image_height
+          && 0 <= static_cast<LengthType>(pt_right.x())
+          && static_cast<LengthType>(pt_right.x()) < image_width
+          && 0 <= static_cast<LengthType>(pt_right.y())
+          && static_cast<LengthType>(pt_right.y()) < image_height)
+      {
+        pts_left.emplace_back(pt_left.x(), pt_left.y());
+        pts_right.emplace_back(pt_right.x(), pt_right.y());
+        feature_ids.emplace_back(feature_id);
+      }
+    }
+    return std::make_tuple(pts_left, pts_right, feature_ids);
   }
 
 #pragma endregion
