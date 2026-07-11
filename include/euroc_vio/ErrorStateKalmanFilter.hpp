@@ -316,20 +316,6 @@ private:
   {
     std::unordered_map<std::uint32_t, Landmark> landmarks_;
   };
-
-  struct FeatureTrack
-  {
-    std::uint32_t id_{};
-    Vector2 left_{Vector2::Zero()};
-    Vector2 right_{Vector2::Zero()};
-    std::int64_t timestamp_{};
-    bool stereo_valid_{false};
-  };
-
-  struct FeatureTrackTable
-  {
-    std::unordered_map<std::uint32_t, FeatureTrack> tracks_;
-  };
 #pragma endregion
 
 #pragma region INITIALIZATION
@@ -723,37 +709,6 @@ private:
   }
 
   /**
-   * @brief 更新当前帧 Feature Track Table。
-   *
-   * @param timestamp 图像时间戳。
-   * @param feature_ids 当前帧 Feature ID。
-   * @param pts_left 左目像素坐标。
-   * @param pts_right 右目像素坐标。
-   */
-  void UpdateFeatureTrackTable(std::int64_t timestamp,
-                               std::span<const uint32_t> feature_ids,
-                               const Matrix2X &pts_left,
-                               const Matrix2X &pts_right) noexcept
-  {
-    feature_track_table_.tracks_.clear();
-
-    const Eigen::Index count{pts_left.cols()};
-
-    for (Eigen::Index i = 0; i < count; ++i)
-    {
-      FeatureTrack track;
-
-      track.id_           = feature_ids[static_cast<std::size_t>(i)];
-      track.timestamp_    = timestamp;
-      track.left_         = pts_left.col(i);
-      track.right_        = pts_right.col(i);
-      track.stereo_valid_ = true;
-
-      feature_track_table_.tracks_.emplace(track.id_, std::move(track));
-    }
-  }
-
-  /**
    * @brief 根据 Feature ID 查询 Landmark。
    *
    * @param id Feature ID。
@@ -778,10 +733,11 @@ private:
    * Stereo DLT 三角化得到的是当前左目相机坐标系下的三维点。
    * 为了使 Landmark 能够跨帧复用，必须将其转换到世界坐标系后再存储。
    */
-  Landmark &CreateLandmark(const FeatureTrack &track) noexcept
+  Landmark &CreateLandmark(std::int64_t timestamp,
+                           const StereoObservation<value_type> &obs) noexcept
   {
     // 双目三角化，得到当前左目相机坐标系下三维点
-    const Vector3 p_cam{Triangulate(track.left_, track.right_)};
+    const Vector3 &p_cam{obs.landmark_};
 
     // Camera -> Body(IMU)
     const Vector3 p_body{config_.stereo_camera_model_.transform_cam0_ * p_cam};
@@ -794,9 +750,9 @@ private:
 
     // 创建 Landmark
     Landmark landmark;
-    landmark.id_             = track.id_;
+    landmark.id_             = obs.feature_id_;
     landmark.position_       = p_world;
-    landmark.timestamp_      = track.timestamp_;
+    landmark.timestamp_      = timestamp;
     landmark.last_frame_id_  = vision_frame_count_;
     landmark.lost_count_     = 0;
     landmark.observed_count_ = 1;
@@ -1019,7 +975,7 @@ private:
   /**
    * @brief 根据视差估计像素方差。
    */
-  value_type PixelVariance(value_type disparity) const noexcept
+  value_type GetPixelVariance(value_type disparity) const noexcept
   {
     constexpr value_type sigma0{0.5};
     constexpr value_type k{8.0};
@@ -1030,12 +986,13 @@ private:
   /**
    * @brief 构造双目测量噪声协方差矩阵。
    */
-  CovarianceMeasurementStereo
-  StereoMeasurementNoiseCovariance(const FeatureTrack &track) const noexcept
+  CovarianceMeasurementStereo StereoMeasurementNoiseCovariance(
+      const StereoObservation<value_type> &obs
+  ) const noexcept
   {
     CovarianceMeasurementStereo R{CovarianceMeasurementStereo::Zero()};
-    const value_type disparity{std::abs(track.left_.x() - track.right_.x())};
-    const value_type var{PixelVariance(disparity)};
+    const value_type disparity{std::abs(obs.pt_left_.x() - obs.pt_right_.x())};
+    const value_type var{GetPixelVariance(disparity)};
     R.diagonal().setConstant(var);
     return R;
   }
@@ -1402,7 +1359,6 @@ private:
   // 历史状态缓冲区
   HistoryBuffer history_buffer_;
   LandmarkDatabase landmark_database_;
-  FeatureTrackTable feature_track_table_;
 
 #pragma endregion
 };
