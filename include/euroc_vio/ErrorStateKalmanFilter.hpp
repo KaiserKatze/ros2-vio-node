@@ -807,59 +807,6 @@ private:
   }
 
   /**
-   * @brief 根据 Feature ID 查询 Landmark。
-   *
-   * @param id Feature ID。
-   * @return 找到返回指针，否则返回 nullptr。
-   */
-  Landmark *FindLandmark(std::uint32_t id) noexcept
-  {
-    auto iter = landmark_database_.find(id);
-
-    if (iter == landmark_database_.end())
-    {
-      return nullptr;
-    }
-
-    return &iter->second;
-  }
-
-  /**
-   * @brief 创建新的 Landmark。
-   *
-   * @details
-   * Stereo DLT 三角化得到的是当前左目相机坐标系下的三维点。
-   * 为了使 Landmark 能够跨帧复用，必须将其转换到世界坐标系后再存储。
-   */
-  Landmark &CreateLandmark(std::int64_t timestamp,
-                           const StereoObservation<value_type> &obs) noexcept
-  {
-    // 双目三角化，得到当前左目相机坐标系下三维点
-    const Vector3 &p_cam{obs.landmark_};
-
-    // Camera -> Body(IMU)
-    const Vector3 p_body{config_.stereo_camera_model_.transform_cam0_ * p_cam};
-
-    // Body -> World
-    const Vector3 p_world{nominal_state_.pose_ * p_body};
-
-    // 创建 Landmark
-    Landmark landmark;
-    landmark.id_             = obs.feature_id_;
-    landmark.position_       = p_world;
-    landmark.timestamp_      = timestamp;
-    landmark.last_frame_id_  = vision_frame_count_;
-    landmark.lost_count_     = 0;
-    landmark.observed_count_ = 1;
-
-    auto [iter, inserted]
-        = landmark_database_.landmarks_.emplace(landmark.id_,
-                                                std::move(landmark));
-
-    return iter->second;
-  }
-
-  /**
    * @brief 更新所有 Landmark 的生命周期状态。
    *
    * @details
@@ -899,7 +846,8 @@ private:
         Landmark &landmark{landmark_it->second};
         assert(timestamp > landmark.timestamp_);
         landmark.lost_count_ += 1;
-        landmark.status_ = LandmarkStatus::Lost;
+        landmark.observed_count_ = 0;
+        landmark.status_         = LandmarkStatus::Lost;
         ++landmark_it;
       }
 
@@ -981,37 +929,6 @@ private:
         ++iter;
       }
     }
-  }
-
-  /**
-   * @brief 双目三角化。
-   *
-   * @param pixels_left 左目像素。
-   * @param pixels_right 右目像素。
-   *
-   * @return 世界坐标。
-   */
-  Vector3 Triangulate(const Vector2 &pixels_left,
-                      const Vector2 &pixels_right) const noexcept
-  {
-    Eigen::Matrix<value_type, 4, 4> A;
-
-    A.row(0) = pixels_left.x() * config_.proj_left_.row(2)
-               - config_.proj_left_.row(0);
-    A.row(1) = pixels_left.y() * config_.proj_left_.row(2)
-               - config_.proj_left_.row(1);
-    A.row(2) = pixels_right.x() * config_.proj_right_.row(2)
-               - config_.proj_right_.row(0);
-    A.row(3) = pixels_right.y() * config_.proj_right_.row(2)
-               - config_.proj_right_.row(1);
-
-    Eigen::JacobiSVD<Eigen::Matrix<value_type, 4, 4>> svd(A,
-                                                          Eigen::ComputeFullV);
-    Eigen::Vector4<value_type> X = svd.matrixV().col(3);
-
-    X /= X.w();
-
-    return X.template head<3>();
   }
 
   /**
