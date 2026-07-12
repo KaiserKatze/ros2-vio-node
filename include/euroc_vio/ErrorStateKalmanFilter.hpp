@@ -1,17 +1,19 @@
 #pragma once
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <concepts>
 #include <cstdint>
 #include <cstdio>
 #include <format>
+#include <map>
 #include <meta>
 #include <print>
 #include <stdexcept>
 #include <tuple>
 #include <type_traits>
-#include <unordered_map>
+#include <vector>
 
 #include <boost/circular_buffer.hpp>
 
@@ -323,23 +325,52 @@ private:
 
   struct LandmarkDatabase
   {
-    std::unordered_map<std::uint32_t, Landmark> landmarks_;
+    std::map<std::uint32_t, Landmark> landmarks_;
 
     auto find(std::uint32_t id) noexcept
     {
       return landmarks_.find(id);
     }
 
+    auto begin() noexcept
+    {
+      return landmarks_.begin();
+    }
+
+    auto end() noexcept
+    {
+      return landmarks_.end();
+    }
+
+    auto cbegin() const noexcept
+    {
+      return landmarks_.cbegin();
+    }
+
+    auto cend() const noexcept
+    {
+      return landmarks_.cend();
+    }
+
     Landmark *put(const Landmark &landmark)
     {
-      landmarks_[landmark.id_] = landmark;
-      return &landmarks_[landmark.id_];
+      auto [iter, inserted] = landmarks_.emplace(landmark.id_, landmark);
+      if (!inserted)
+      {
+        iter->second = landmark;
+      }
+      return &iter->second;
     }
 
     Landmark *put(Landmark &&landmark)
     {
-      landmarks_[landmark.id_] = std::move(landmark);
-      return &landmarks_[landmark.id_];
+      auto [iter, inserted]
+          = landmarks_.try_emplace(landmark.id_, std::move(landmark));
+      if (!inserted)
+      {
+        iter->second = std::move(landmark);
+      }
+      return &iter->second;
     }
   };
 #pragma endregion
@@ -847,6 +878,59 @@ private:
    *    ├── 再次观测 ---------------> Active
    *    └── 连续丢失>20帧 ---------> Erased
    */
+  void UpdateLandmarks(std::int64_t timestamp,
+                       std::span<StereoObservation<value_type>> obs)
+  {
+    if (obs.empty())
+    {
+      return;
+    }
+
+    auto landmark_it{landmark_database_.begin()};
+    const auto landmark_end{landmark_database_.end()};
+
+    for (const StereoObservation<value_type> &ob : obs)
+    {
+      while (landmark_it != landmark_end && landmark_it->first < ob.feature_id_)
+      {
+        Landmark &landmark{landmark_it->second};
+        assert(timestamp > landmark.timestamp_);
+        landmark.lost_count_ += 1;
+        landmark.status_ = LandmarkStatus::Lost;
+        ++landmark_it;
+      }
+
+      if (landmark_it != landmark_end && landmark_it->first == ob->feature_id_)
+      {
+        Landmark &landmark{landmark_it->second};
+        assert(timestamp > landmark.timestamp_);
+        landmark.timestamp_     = timestamp;
+        landmark.last_frame_id_ = vision_frame_count_;
+        landmark.lost_count_    = 0;
+        landmark.observed_count_ += 1;
+        if (landmark.observed_count_ >= 3)
+        {
+          landmark.status_ = LandmarkStatus::Active;
+        }
+        ++landmark_it;
+        continue;
+      }
+
+      Landmark landmark;
+      landmark.id_ = ob.feature_id_;
+      landmark.position_
+          = nominal_state_.pose_
+            * (config_.stereo_camera_model_.transform_cam0_ * ob.landmark_);
+      landmark.timestamp_      = timestamp;
+      landmark.last_frame_id_  = vision_frame_count_;
+      landmark.lost_count_     = 0;
+      landmark.observed_count_ = 1;
+      landmark_database_.put(std::move(landmark));
+    }
+
+    RemoveLostLandmarks();
+  }
+
   void UpdateLandmarkLifeCycle() noexcept
   {
     constexpr std::uint32_t kInitializeThreshold{3};
@@ -894,8 +978,8 @@ private:
   {
     constexpr std::uint32_t kMaxLostFrames{20};
 
-    for (auto iter = landmark_database_.landmarks_.begin();
-         iter != landmark_database_.landmarks_.end();)
+    for (auto iter = landmark_database_.begin();
+         iter != landmark_database_.end();)
     {
       auto &landmark = iter->second;
 
