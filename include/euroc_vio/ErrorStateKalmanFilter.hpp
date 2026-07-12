@@ -67,6 +67,16 @@ public:
     Vector3 gyroscope_bias_{Vector3::Zero()};
     // 重力加速度
     Vector3 gravity_{-Vector3::UnitZ()};
+
+    auto GetPosition() const noexcept -> Vector3
+    {
+      return pose_.translation();
+    }
+
+    auto GetAttitude() const noexcept -> Attitude
+    {
+      return pose_.so3();
+    }
   };
 
   // 误差状态变量 (指真实状态与估计状态之差，即 $\delta x = x_true - x_est$)

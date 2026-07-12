@@ -727,7 +727,8 @@ public:
 
         // 获取融合后的最新名义状态
         auto state{eskf.GetNominalState()};
-        AppendToCsv(datum_fast.timestamp_, state.position_, state.attitude_);
+        AppendToCsv(datum_fast.timestamp_, state.GetPosition(),
+                    state.GetAttitude());
       }
     }
   }
