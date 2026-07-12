@@ -715,8 +715,9 @@ public:
     for (const Landmark &landmark : landmarks)
     {
       std::uint32_t feature_id{landmark.id_};
-      Vector2 pt_left{ProjectLeft(landmark)};
-      Vector2 pt_right{ProjectRight(landmark)};
+      const auto &landmark_pos{landmark.position_};
+      Vector2 pt_left{ProjectLeftNonhomo(landmark_pos)};
+      Vector2 pt_right{ProjectRightNonhomo(landmark_pos)};
       // 检测像素点是否处于双目图像的取景画幅以内
       if (0 <= static_cast<LengthType>(pt_left.x())
           && static_cast<LengthType>(pt_left.x()) < image_width
@@ -881,6 +882,8 @@ private:
   void UpdateLandmarks(std::int64_t timestamp,
                        std::span<StereoObservation<value_type>> obs)
   {
+    constexpr std::uint32_t threshold_active{3};
+
     if (obs.empty())
     {
       return;
@@ -908,7 +911,7 @@ private:
         landmark.last_frame_id_ = vision_frame_count_;
         landmark.lost_count_    = 0;
         landmark.observed_count_ += 1;
-        if (landmark.observed_count_ >= 3)
+        if (landmark.observed_count_ >= threshold_active)
         {
           landmark.status_ = LandmarkStatus::Active;
         }
@@ -931,42 +934,6 @@ private:
     RemoveLostLandmarks();
   }
 
-  void UpdateLandmarkLifeCycle() noexcept
-  {
-    constexpr std::uint32_t kInitializeThreshold{3};
-
-    for (auto &[id, landmark] : landmark_database_.landmarks_)
-    {
-      // 本帧没有观测到该 Landmark
-      if (landmark.last_frame_id_ != vision_frame_count_)
-      {
-        ++landmark.lost_count_;
-
-        if (landmark.status_ != LandmarkStatus::Erased)
-        {
-          landmark.status_ = LandmarkStatus::Lost;
-        }
-
-        continue;
-      }
-
-      // 本帧观测到了 Landmark
-      landmark.lost_count_ = 0;
-
-      if (landmark.status_ == LandmarkStatus::New)
-      {
-        if (landmark.observed_count_ >= kInitializeThreshold)
-        {
-          landmark.status_ = LandmarkStatus::Active;
-        }
-      }
-      else
-      {
-        landmark.status_ = LandmarkStatus::Active;
-      }
-    }
-  }
-
   /**
    * @brief 擦除长期失踪或已经位于相机后方的 Landmark。
    *
@@ -976,7 +943,7 @@ private:
    */
   void RemoveLostLandmarks() noexcept
   {
-    constexpr std::uint32_t kMaxLostFrames{20};
+    constexpr std::uint32_t threshold_lost{20};
 
     for (auto iter = landmark_database_.begin();
          iter != landmark_database_.end();)
@@ -986,7 +953,7 @@ private:
       bool erase = false;
 
       // 条件1：连续丢失过久
-      if (landmark.lost_count_ > kMaxLostFrames)
+      if (landmark.lost_count_ > threshold_lost)
       {
         erase = true;
       }
@@ -994,33 +961,11 @@ private:
       // 条件2：位于双目相机后方
       if (!erase)
       {
-        // World -> Body
-        const Vector3 point_body{
-            nominal_state_.pose_.inverse() * landmark.position_,
-        };
-
-        // Body -> Camera
-        const Pose T_SB{
-            config_.stereo_camera_model_.transform_cam0_.inverse(),
-        };
-
-        const Vector3 point_camera{
-            T_SB * point_body,
-        };
-
-        Eigen::Vector4<value_type> X;
-        X << point_camera, static_cast<value_type>(1);
-
-        const Eigen::Vector3<value_type> left_h{
-            config_.stereo_camera_model_.proj_left_ * X,
-        };
-
-        const Eigen::Vector3<value_type> right_h{
-            config_.stereo_camera_model_.proj_right_ * X,
-        };
-
-        if (left_h.z() <= static_cast<value_type>(0)
-            || right_h.z() <= static_cast<value_type>(0))
+        const auto &landmark_pos{landmark.position_};
+        const Vector3 pt_left_homo{ProjectLeftHomo(landmark_pos)};
+        const Vector3 pt_right_homo{ProjectRightHomo(landmark_pos)};
+        if (pt_left_homo.z() <= static_cast<value_type>(0)
+            || pt_right_homo.z() <= static_cast<value_type>(0))
         {
           erase = true;
         }
@@ -1074,10 +1019,10 @@ private:
    *
    * @param P 相机 3×4 投影矩阵（立体校正后的左目或右目）。
    * @param landmark 世界坐标系中的 Landmark。
-   * @return 对应像素坐标。
+   * @return 对应像素点的齐次坐标
    */
-  Vector2 Project(const ProjectionMatrix &P,
-                  const Vector3 &landmark) const noexcept
+  Vector3 ProjectHomo(const ProjectionMatrix &P,
+                      const Vector3 &landmark) const noexcept
   {
     // World -> Body
     const Vector3 point_body{
@@ -1093,19 +1038,41 @@ private:
     Eigen::Vector4<value_type> X;
     X << point_camera, static_cast<value_type>(1);
 
-    const Vector3 p{P * X};
+    return P * X;
+  }
 
+  Vector3 ProjectLeftHomo(const Vector3 &landmark) const noexcept
+  {
+    return ProjectHomo(config_.proj_left_, landmark);
+  }
+
+  Vector3 ProjectRightHomo(const Vector3 &landmark) const noexcept
+  {
+    return ProjectHomo(config_.proj_right_, landmark);
+  }
+
+  /**
+   * @brief 将世界坐标系中的 Landmark 投影到指定相机像素平面。
+   *
+   * @param P 相机 3×4 投影矩阵（立体校正后的左目或右目）。
+   * @param landmark 世界坐标系中的 Landmark。
+   * @return 对应像素点的非齐次坐标
+   */
+  Vector2 ProjectNonhomo(const ProjectionMatrix &P,
+                         const Vector3 &landmark) const noexcept
+  {
+    const Vector3 p{ProjectHomo(P, landmark)};
     return p.template head<2>() / p.z();
   }
 
-  Vector2 ProjectLeft(const Vector3 &landmark) const noexcept
+  Vector2 ProjectLeftNonhomo(const Vector3 &landmark) const noexcept
   {
-    return Project(config_.proj_left_, landmark);
+    return ProjectNonhomo(config_.proj_left_, landmark);
   }
 
-  Vector2 ProjectRight(const Vector3 &landmark) const noexcept
+  Vector2 ProjectRightNonhomo(const Vector3 &landmark) const noexcept
   {
-    return Project(config_.proj_right_, landmark);
+    return ProjectNonhomo(config_.proj_right_, landmark);
   }
 
   /**
