@@ -57,12 +57,10 @@ public:
   // 名义状态变量 (记作 $x$)
   struct NominalStateVariable
   {
-    // 位置 $r^{iv}_i$
-    Vector3 position_{Vector3::Zero()};
+    // 姿态 = (朝向 $C_{iv}$, 位置 $r^{iv}_i$)
+    Pose pose_{};
     // 线速度 $\dot{r}^{iv}_i$
     Vector3 linear_velocity_{Vector3::Zero()};
-    // 朝向 $C_{iv}$
-    Quaternion attitude_{Quaternion::Identity()};
     // 加速度计零偏
     Vector3 accelerometer_bias_{Vector3::Zero()};
     // 陀螺仪零偏
@@ -396,7 +394,7 @@ public:
    *       IMU 参考系的 Z 轴正方向与世界参考系的 X 轴正方向近似同向。
    *       从 ESKF 的角度来看，无法保证重力加速度方向是沿 IMU 参考系的 Z 轴负方向的。
    */
-  void SetNominalState(const NominalStateVariable &state) noexcept
+  void SetNominalState(const NominalStateVariable &nominal_state) noexcept
   {
     // 如果初始坐标系是水平的，我们可以将其初始化为 g = [0, 0, -9.81]
     // 但如果初始时刻并非水平，我们可以选择将初始姿态初始化为单位阵
@@ -404,17 +402,18 @@ public:
     // 这种处理方式的好处在于提高了系统的线性度
     // 在初始姿态未知的情况下，处理一个未知的重力向量（已知旋转）
     // 比处理一个未知的旋转（已知重力）在线性化效果上更好
-    const Vector3 gravity_body{state.attitude_.conjugate() * state.gravity_};
-    const Vector3 linear_velocity_body{state.attitude_.conjugate()
-                                       * state.linear_velocity_};
-    nominal_state_.position_           = Vector3::Zero();
-    nominal_state_.linear_velocity_    = linear_velocity_body;
-    nominal_state_.attitude_           = Quaternion::Identity();
+
+    // 从世界坐标系到体坐标系的旋转
+    const auto C_BW{nominal_state.pose_.so3().inverse()};
+    // 体坐标系下的重力加速度
+    const Vector3 gravity_body{C_BW * nominal_state.gravity_};
+    // 设置名义状态
+    nominal_state_.pose_               = {};
+    nominal_state_.linear_velocity_    = Vector3::Zero();
     nominal_state_.accelerometer_bias_ = Vector3::Zero();
     nominal_state_.gyroscope_bias_     = Vector3::Zero();
     nominal_state_.gravity_            = gravity_body;
-    prev_position_                     = nominal_state_.position_;
-    prev_attitude_                     = nominal_state_.attitude_;
+    prev_pose_                         = nominal_state_.pose_;
   }
 
 #pragma endregion
@@ -477,7 +476,7 @@ public:
     Vector3 acc_m{static_cast<value_type>(0.5)
                   * (unbias_acc_prev + unbias_acc_curr)};
 
-    Attitude R_old{nominal_state_.attitude_};
+    Attitude R_old{nominal_state_.pose_.so3()};
     Attitude R_new{
         R_old
         * Attitude::exp(omega_m * dt
@@ -502,9 +501,9 @@ public:
             * dt,
     };
 
-    nominal_state_.position_ += delta_position;
+    nominal_state_.pose_.translation() += delta_position;
     nominal_state_.linear_velocity_ += delta_velocity;
-    nominal_state_.attitude_ = R_new.unit_quaternion();
+    nominal_state_.pose_.so3() = R_new;
 
 #pragma endregion
 
@@ -568,7 +567,7 @@ public:
     Attitude d_attitude{
         // 因为在体坐标系下，$q_t = q_0 \otimes \delta q$
         // 所以 $\delta q = q_0^* \otimes q_t$
-        (prev_attitude_.conjugate() * nominal_state_.attitude_).normalized()
+        prev_pose_.so3().inverse() * nominal_state_.pose_.so3(),
     };
     Vector3 angular_displacement{d_attitude.log()};
 
@@ -584,7 +583,7 @@ public:
 #else
     // 由 IMU 数据计算得到的平移方向
     Vector3 delta_position{
-        nominal_state_.position_ - prev_position_,
+        nominal_state_.pose_.translation() - prev_pose_.translation(),
     };
     value_type delta_position_norm{delta_position.norm()};
     Vector3 normalized_translation{Vector3::Zero()};
@@ -600,8 +599,7 @@ public:
         = monocular_datum->normalized_translation_ - normalized_translation;
 #endif
 
-    prev_attitude_ = nominal_state_.attitude_;
-    prev_position_ = nominal_state_.position_;
+    prev_pose_ = nominal_state_.pose_;
 
     error_state_ = K * measurement_residue;
 
@@ -784,10 +782,7 @@ private:
     const Vector3 p_body{config_.stereo_camera_model_.transform_cam0_ * p_cam};
 
     // Body -> World
-    const Pose T_WB{Attitude{nominal_state_.attitude_},
-                    nominal_state_.position_};
-
-    const Vector3 p_world{T_WB * p_body};
+    const Vector3 p_world{nominal_state_.pose_ * p_body};
 
     // 创建 Landmark
     Landmark landmark;
@@ -889,13 +884,8 @@ private:
       if (!erase)
       {
         // World -> Body
-        const Pose T_WB{
-            Attitude{nominal_state_.attitude_},
-            nominal_state_.position_,
-        };
-
         const Vector3 point_body{
-            T_WB.inverse() * landmark.position_,
+            nominal_state_.pose_.inverse() * landmark.position_,
         };
 
         // Body -> Camera
@@ -978,15 +968,9 @@ private:
   Vector2 Project(const ProjectionMatrix &P,
                   const Vector3 &landmark) const noexcept
   {
-    // 构造当前 IMU(Body) 在世界坐标系中的位姿 T_WB : Body -> World
-    const Pose T_WB{
-        Attitude{nominal_state_.attitude_},
-        nominal_state_.position_,
-    };
-
     // World -> Body
     const Vector3 point_body{
-        T_WB.inverse() * landmark,
+        nominal_state_.pose_.inverse() * landmark,
     };
 
     // Body -> Camera
@@ -1044,14 +1028,13 @@ private:
   void InjectError() noexcept
   {
     // 更新位置: r = r + dr
-    nominal_state_.position_ += error_state_.template segment<3>(0);
+    nominal_state_.pose_.translation() += error_state_.template segment<3>(0);
     // 更新速度: v = v + dv
     nominal_state_.linear_velocity_ += error_state_.template segment<3>(3);
     // 更新姿态: q = q * exp(d_theta)
     auto d_theta{error_state_.template segment<3>(6)};
-    nominal_state_.attitude_
-        = (Attitude{nominal_state_.attitude_} * Attitude::exp(d_theta))
-              .unit_quaternion();
+    nominal_state_.pose_.so3()
+        = nominal_state_.pose_.so3() * Attitude::exp(d_theta);
     // 更新零偏: b = b + db
     nominal_state_.accelerometer_bias_ += error_state_.template segment<3>(9);
     nominal_state_.gyroscope_bias_ += error_state_.template segment<3>(12);
@@ -1307,14 +1290,9 @@ private:
     // 左目像素点坐标 = 左目投影矩阵 (路标点的左目坐标)
     // 右目像素点坐标 = 右目投影矩阵 (路标点的左目坐标)
 
-    const Pose T_WB{
-        Attitude{nominal_state_.attitude_},
-        nominal_state_.position_,
-    };
-
     // World -> Body
     const Vector3 p_body{
-        T_WB.inverse() * landmark,
+        nominal_state_.pose_.inverse() * landmark,
     };
 
     // Body -> Camera
@@ -1339,7 +1317,7 @@ private:
     JacobiLandmarkBody_wrt_ErrorState J_pose{
         JacobiLandmarkBody_wrt_ErrorState::Zero()
     };
-    const Matrix3 R_BW{T_WB.so3().inverse().matrix()};
+    const Matrix3 R_BW{nominal_state_.pose_.so3().inverse().matrix()};
     J_pose.template block<3, 3>(0, 0) = -R_BW;
     J_pose.template block<3, 3>(0, 6) = Attitude::hat(p_body).matrix();
 
@@ -1393,8 +1371,7 @@ private:
   // 图像帧计数器
   std::uint32_t vision_frame_count_{0};
   // 上一帧图像帧的姿态
-  Vector3 prev_position_{Vector3::Zero()};
-  Quaternion prev_attitude_{Quaternion::Identity()};
+  Pose prev_pose_{};
   // 上一帧 IMU 数据的缓存结构
   DatumImu last_imu_datum_{};
   // 历史状态缓冲区
