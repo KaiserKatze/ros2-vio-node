@@ -324,6 +324,11 @@ private:
   struct LandmarkDatabase
   {
     std::unordered_map<std::uint32_t, Landmark> landmarks_;
+
+    auto find(std::uint32_t id) noexcept
+    {
+      return landmarks_.find(id);
+    }
   };
 #pragma endregion
 
@@ -765,9 +770,9 @@ private:
    */
   Landmark *FindLandmark(std::uint32_t id) noexcept
   {
-    auto iter = landmark_database_.landmarks_.find(id);
+    auto iter = landmark_database_.find(id);
 
-    if (iter == landmark_database_.landmarks_.end())
+    if (iter == landmark_database_.end())
     {
       return nullptr;
     }
