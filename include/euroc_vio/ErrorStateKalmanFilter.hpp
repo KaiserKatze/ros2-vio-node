@@ -329,6 +329,18 @@ private:
     {
       return landmarks_.find(id);
     }
+
+    Landmark *put(const Landmark &landmark)
+    {
+      landmarks_[landmark.id_] = landmark;
+      return &landmarks_[landmark.id_];
+    }
+
+    Landmark *put(Landmark &&landmark)
+    {
+      landmarks_[landmark.id_] = std::move(landmark);
+      return &landmarks_[landmark.id_];
+    }
   };
 #pragma endregion
 
