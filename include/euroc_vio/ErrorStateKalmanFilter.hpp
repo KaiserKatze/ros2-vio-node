@@ -676,7 +676,17 @@ public:
     typename HistoryBuffer::const_iterator itr{FindHistoryIndex(timestamp)};
     RollbackToHistory(itr);
 
-    // TODO
+    UpdateLandmarks(timestamp, obs);
+    for (const StereoObservation<value_type> &ob : obs)
+    {
+      auto landmark_id{ob.feature_id_};
+      const auto landmark_it{landmark_database_.find(landmark_id)};
+      const Landmark &landmark{landmark_it->second};
+      const auto &landmark_pos{landmark.position_};
+      JacobiMeasurementStereo H{GetMeasurementJacobiStereo(landmark_pos)};
+      CovarianceMeasurementStereo V{GetMeasurementCovarianceStereo(obs)};
+      // TODO
+    }
 
     ReplayHistory(itr);
   }
@@ -1006,7 +1016,7 @@ private:
   /**
    * @brief 构造双目测量噪声协方差矩阵。
    */
-  CovarianceMeasurementStereo StereoMeasurementNoiseCovariance(
+  CovarianceMeasurementStereo GetMeasurementCovarianceStereo(
       const StereoObservation<value_type> &obs
   ) const noexcept
   {
