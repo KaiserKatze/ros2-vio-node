@@ -150,9 +150,11 @@ private:
   // 投影矩阵对路标点相机坐标的雅克比矩阵
   using JacobiProjection = Eigen::Matrix<value_type, 2, 3>;
   // 双目估计的观测函数的雅可比矩阵
-  using JacobiMeasurementStereo = Eigen::Matrix<value_type, 4, 4>;
+  using JacobiMeasurementStereo = Eigen::Matrix<value_type, 4, dimErrorState>;
   // 双目估计的观测误差的协方差矩阵
   using CovarianceMeasurementStereo = Eigen::Matrix<value_type, 4, 4>;
+  // 双目估计的卡尔曼增益矩阵
+  using KalmanGainStereo = Eigen::Matrix<value_type, dimErrorState, 4>;
 
   struct HistoryState
   {
@@ -631,7 +633,7 @@ public:
 
     JacobiMeasurementFast H{GetMeasurementJacobiFast(angular_displacement)};
     CovarianceMeasurementFast V{GetMeasurementCovarianceFast()};
-    KalmanGainFast K{GetKalmanGainFast(error_state_covariance_, H, V)};
+    KalmanGainFast K{GetKalmanGain(error_state_covariance_, H, V)};
 
     // 观测残差向量
 
@@ -661,7 +663,7 @@ public:
 
     error_state_ = K * measurement_residue;
 
-    UpdateErrorStateCovarianceFast(error_state_covariance_, K, H, V);
+    UpdateErrorStateCovariance(error_state_covariance_, K, H, V);
 
     // 立即向标称状态进行负反馈注入复位，重置误差空间
     InjectError();
@@ -677,17 +679,58 @@ public:
     RollbackToHistory(itr);
 
     UpdateLandmarks(timestamp, obs);
+
+    bool has_valid_update{false};
     for (const StereoObservation<value_type> &ob : obs)
     {
       auto landmark_id{ob.feature_id_};
       const auto landmark_it{landmark_database_.find(landmark_id)};
       const Landmark &landmark{landmark_it->second};
+
+      // 防范自反馈
+      //
+      // 刚初始化的路标点 (New) 完全依赖于当前位姿的三角化。
+      // 必须等待其追踪状态稳定 (Active) 后，才将其视作地图点用于状态更新。
+      // 滤除 New 状态可避免“用自身的先验来强化自身”，防止协方差不合理收缩。
+      if (landmark.status_ != LandmarkStatus::Active)
+      {
+        continue;
+      }
+
+      has_valid_update = true;
+
       const auto &landmark_pos{landmark.position_};
       JacobiMeasurementStereo H{GetMeasurementJacobiStereo(landmark_pos)};
-      CovarianceMeasurementStereo V{GetMeasurementCovarianceStereo(obs)};
-      // TODO
+      CovarianceMeasurementStereo V{GetMeasurementCovarianceStereo(ob)};
+
+      // 预测测量向量
+      Vector2 pt_left_pred{ProjectLeftNonhomo(landmark_pos)};
+      Vector2 pt_right_pred{ProjectLeftNonhomo(landmark_pos)};
+      Vector4 z_pred;
+      z_pred << pt_left_pred, pt_right_pred;
+      // 实际测量向量
+      Vector4 z_meas;
+      z_meas << ob.pt_left_, ob.pt_right_;
+      // 计算测量残差
+      Vector4 residual{z_meas - z_pred};
+      // 序列化更新误差状态
+      Vector4 effective_residual{residual - H * error_state_};
+      // 计算卡尔曼增益
+      KalmanGainStereo K{GetKalmanGainStereo(error_state_covariance_, H, V)};
+      // 累加状态误差
+      error_state_ += K * effective_residual;
+      UpdateErrorStateCovariance(error_state_covariance_, K, H, V);
     }
 
+    // 遍历完当前帧的所有观测后
+    // 如果实际发生了更新
+    // 统一将累加的 error_state_ 注入到 nominal_state_ 并复位
+    if (has_valid_update)
+    {
+      InjectError();
+    }
+
+    // 从视觉时间戳向当前时间重新积分（Re-propagation）
     ReplayHistory(itr);
   }
 
@@ -1017,11 +1060,11 @@ private:
    * @brief 构造双目测量噪声协方差矩阵。
    */
   CovarianceMeasurementStereo GetMeasurementCovarianceStereo(
-      const StereoObservation<value_type> &obs
+      const StereoObservation<value_type> &ob
   ) const noexcept
   {
     CovarianceMeasurementStereo R{CovarianceMeasurementStereo::Zero()};
-    const value_type disparity{std::abs(obs.pt_left_.x() - obs.pt_right_.x())};
+    const value_type disparity{std::abs(ob.pt_left_.x() - ob.pt_right_.x())};
     const value_type var{GetPixelVariance(disparity)};
     R.diagonal().setConstant(var);
     return R;
@@ -1191,9 +1234,10 @@ private:
    * @param H 测量函数的雅可比矩阵
    * @param V 测量噪声的协方差矩阵
    */
-  static KalmanGainFast
-  GetKalmanGainFast(const TransitionMatrix &P, const JacobiMeasurementFast &H,
-                    const CovarianceMeasurementFast &V) noexcept
+  template <class JacobiMeasurement, class CovarianceMeasurement>
+  static auto GetKalmanGain(const TransitionMatrix &P,
+                            const JacobiMeasurement &H,
+                            const CovarianceMeasurement &V) noexcept
   {
     auto hphv{H * P * H.transpose() + V};
     return hphv.ldlt().solve(H * P.transpose()).transpose();
@@ -1207,10 +1251,12 @@ private:
    * @param H 测量函数的雅可比矩阵
    * @param V 测量噪声的协方差矩阵
    */
+  template <class KalmanGain, class JacobiMeasurement,
+            class CovarianceMeasurement>
   static void
-  UpdateErrorStateCovarianceFast(TransitionMatrix &P, const KalmanGainFast &K,
-                                 const JacobiMeasurementFast &H,
-                                 const CovarianceMeasurementFast &V) noexcept
+  UpdateErrorStateCovariance(TransitionMatrix &P, const KalmanGain &K,
+                             const JacobiMeasurement &H,
+                             const CovarianceMeasurement &V) noexcept
   {
     TransitionMatrix ikh{TransitionMatrix::Identity() - K * H};
     P = ikh * P * ikh.transpose() + K * V * K.transpose();
