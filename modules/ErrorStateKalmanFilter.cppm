@@ -182,6 +182,7 @@ private:
      */
     HistoryBuffer(std::size_t capacity) : buffer_{capacity} {}
 
+    [[nodiscard]]
     std::size_t Size() const noexcept
     {
       return buffer_.size();
@@ -731,6 +732,7 @@ public:
    * @brief 获取当前系统的名义状态。
    * @return NominalStateVariable 名义状态变量。
    */
+  [[nodiscard]]
   NominalStateVariable GetNominalState() const noexcept
   {
     return nominal_state_;
@@ -810,6 +812,7 @@ private:
    * @brief 根据时间戳查找历史状态。
    * @return 返回历史状态的指针
    */
+  [[nodiscard]]
   typename HistoryBuffer::const_iterator
   FindHistoryIndex(std::int64_t timestamp) const noexcept
   {
