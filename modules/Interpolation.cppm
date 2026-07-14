@@ -1,13 +1,6 @@
-#pragma once
+export module FastVIO:Interpolation;
 
-#include <algorithm>
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <meta>
-#include <print>
-#include <stdexcept>
+import std;
 
 // 辅助工具：判断一个反射类型是否是特定的 Eigen 类型
 template <typename T>
@@ -15,6 +8,9 @@ consteval bool is_type_of(std::meta::info member_reflect)
 {
   return std::meta::type_of(member_reflect) == ^^T;
 }
+
+export namespace FastVIO
+{
 
 // 插值查找时间戳最近的数据（C++26 反射全自动化版）
 template <typename DataType>
@@ -96,3 +92,5 @@ static DataType Interpolate(const std::vector<DataType> &data,
 
   return interp;
 }
+
+} // namespace FastVIO

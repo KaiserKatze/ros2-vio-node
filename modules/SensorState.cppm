@@ -1,15 +1,13 @@
-#pragma once
+export module FastVIO:Sensor;
 
-#include <array>
-#include <concepts>
-#include <initializer_list>
+import std;
+
+import <Eigen/Dense>;
 
 template <typename T, typename Idx = std::size_t>
 concept VectorLike = requires(T t, Idx i) {
   { t[i] } -> std::convertible_to<double>;
 };
-
-#include <Eigen/Dense>
 
 static constexpr size_t index_px{0};
 static constexpr size_t index_py{1};
@@ -21,6 +19,9 @@ static constexpr size_t index_qw{6};
 static constexpr size_t index_qx{7};
 static constexpr size_t index_qy{8};
 static constexpr size_t index_qz{9};
+
+export namespace FastVIO
+{
 
 // 状态量定义: [px, py, pz, vx, vy, vz, qw, qx, qy, qz] (大小为 10)
 template <typename value_type>
@@ -271,3 +272,5 @@ struct ImuDerivative : public std::array<value_type, 10>
                                 quat_derivative.y(), quat_derivative.z());
   }
 };
+
+} // namespace FastVIO

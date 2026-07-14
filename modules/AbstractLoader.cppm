@@ -1,11 +1,9 @@
-#pragma once
+export module FastVIO:AbstractLoader;
 
-#include <charconv>
-#include <cstdint>
-#include <sstream>
-#include <stdexcept>
-#include <string>
-#include <string_view>
+import std;
+
+export namespace FastVIO
+{
 
 struct AbstractLoader
 {
@@ -76,3 +74,5 @@ struct AbstractLoader
     return result;
   }
 };
+
+} // namespace FastVIO

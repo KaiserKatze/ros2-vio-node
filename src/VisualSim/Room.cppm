@@ -1,16 +1,14 @@
-#pragma once
+export module FastVIO:VisualSim:Room;
 
-#include <algorithm>
-#include <cstdio>
-#include <iostream>
-#include <print>
-#include <sstream>
-#include <stdexcept>
-#include <vector>
+import std;
 
-#include <Eigen/Dense>
+import <Eigen/Dense>;
 
-template <typename value_type> struct Room
+namespace FastVIO::VisualSim
+{
+
+template <typename value_type>
+struct Room
 {
   using Point2  = Eigen::Vector<value_type, 2>;
   using Point3  = Eigen::Vector<value_type, 3>;
@@ -138,3 +136,5 @@ template <typename value_type> struct Room
     throw std::runtime_error(ss.str());
   }
 };
+
+} // namespace FastVIO::VisualSim

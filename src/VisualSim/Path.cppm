@@ -1,18 +1,14 @@
-#pragma once
+export module FastVIO:VisualSim:Path;
 
-#include <algorithm>
-#include <cstddef>
-#include <format>
-#include <functional>
-#include <limits>
-#include <memory>
-#include <optional>
-#include <stdexcept>
+import std;
 
-#include <Eigen/Dense>
+import <Eigen/Dense>;
 
-#include "Room.hpp"
-#include "StereoRig.hpp"
+import FastVIO:VisualSim:Room;
+import FastVIO:VisualSim:StereoRig;
+
+namespace FastVIO::VisualSim
+{
 
 template <typename value_type = double>
 struct AbstractPath
@@ -510,3 +506,5 @@ value_type PathManager<value_type>::GetDuration() const
   }
   return total_duration;
 }
+
+} // namespace FastVIO::VisualSim

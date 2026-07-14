@@ -1,20 +1,15 @@
-#pragma once
+export module FastVIO:FastDetector;
 
-#include <algorithm>
-#include <cassert>
-#include <cmath>
-#include <numeric>
-#include <ranges>
-#include <vector>
+import std;
 
-#include <opencv2/core/mat.hpp>
-#include <opencv2/core/types.hpp>
-#include <opencv2/imgproc.hpp>
-#include <opencv2/opencv.hpp>
+import <opencv2/core/mat.hpp>;
+import <opencv2/core/types.hpp>;
+import <opencv2/imgproc.hpp>;
+import <opencv2/opencv.hpp>;
 
-#include "CornerDetection.hpp"
+import FastVIO:CornerDetection;
 
-namespace CornerDetection
+export namespace FastVIO::CornerDetection
 {
 
 // https://docs.opencv.org/4.13.0/df/d74/classcv_1_1FastFeatureDetector.html
@@ -496,4 +491,4 @@ private:
   }
 };
 
-} // namespace CornerDetection
+} // namespace FastVIO::CornerDetection

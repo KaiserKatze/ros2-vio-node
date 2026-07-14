@@ -1,8 +1,13 @@
-#pragma once
+module;
 
-#include <cstdint>
+import <Eigen/Core>;
 
-#include <Eigen/Core>
+export module FastVIO:Stereo;
+
+import std;
+
+export namespace FastVIO
+{
 
 template <typename value_type = double>
 struct StereoObservation
@@ -19,3 +24,5 @@ struct StereoObservation
   // 通过三角化得到的路标点在左目相机坐标系下的坐标
   Vector3 landmark_{Vector3::Zero()};
 };
+
+} // namespace FastVIO

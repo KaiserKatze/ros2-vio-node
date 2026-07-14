@@ -1,11 +1,7 @@
-#pragma once
+export module EigenFormat;
 
-#include <concepts>
-#include <meta>
-#include <type_traits>
-#include <string_view>
-
-#include <Eigen/Dense>
+import std;
+import <Eigen/Dense>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  §1  Concepts — identify Eigen dense types via static reflection
@@ -109,7 +105,7 @@ consteval std::string dim_string()
 //          't' = type header  MatrixXd(3×4){{ ... }}
 // ─────────────────────────────────────────────────────────────────────────────
 
-namespace std
+export namespace std
 {
 
 template <eigen_fmt::detail::EigenPlainMatrix Mat>
@@ -282,11 +278,7 @@ public:
           }
           out = std::format_to(out, "{}", s);
         }
-                out = std::format_to(out,
-                    i == 0        ? " ⎤
-" :
-                    i == rows - 1 ? " ⎦"   : " ⎥
-");
+        out = std::format_to(out, i == 0 ? "⎤" : i == rows - 1 ? "⎦" : "⎥");
       }
       break;
     }
@@ -373,7 +365,7 @@ public:
 //    't' = with type header
 // ─────────────────────────────────────────────────────────────────────────────
 
-namespace std
+export namespace std
 {
 
 template <eigen_fmt::detail::EigenQuaternionType Q>
@@ -487,7 +479,7 @@ public:
 //  Uses C++26 reflection to obtain the Scalar name from the specialisation.
 // ─────────────────────────────────────────────────────────────────────────────
 
-namespace std
+export namespace std
 {
 
 template <typename Scalar>
@@ -546,7 +538,7 @@ public:
 //    [2] = Mode (int NTTP: Isometry, Affine, AffineCompact, Projective)
 // ─────────────────────────────────────────────────────────────────────────────
 
-namespace std
+export namespace std
 {
 
 template <typename Scalar, int Dim, int Mode, int Options>

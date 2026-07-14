@@ -1,40 +1,28 @@
-#pragma once
+export module FastVIO:ImageDataLoader;
 
-#include <algorithm>
-#include <charconv>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <filesystem>
-#include <format>
-#include <fstream>
-#include <iostream>
-#include <print>
-#include <sstream>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <utility>
-#include <vector>
+import std;
 
-#include <Eigen/Dense>
+import <Eigen/Dense>;
 
-#include <opencv2/calib3d.hpp>
-#include <opencv2/core.hpp>
-#include <opencv2/core/eigen.hpp>
-#include <opencv2/core/mat.hpp>
-#include <opencv2/core/types.hpp>
-#include <opencv2/features2d.hpp>
-#include <opencv2/highgui.hpp>
-#include <opencv2/imgcodecs.hpp>
-#include <opencv2/imgproc.hpp>
-#include <opencv2/opencv.hpp>
-#include <opencv2/video.hpp>
-#include <opencv2/video/tracking.hpp>
-#include <opencv2/videoio.hpp>
-#include <opencv2/viz/vizcore.hpp>
+import <opencv2/calib3d.hpp>;
+import <opencv2/core.hpp>;
+import <opencv2/core/eigen.hpp>;
+import <opencv2/core/mat.hpp>;
+import <opencv2/core/types.hpp>;
+import <opencv2/features2d.hpp>;
+import <opencv2/highgui.hpp>;
+import <opencv2/imgcodecs.hpp>;
+import <opencv2/imgproc.hpp>;
+import <opencv2/opencv.hpp>;
+import <opencv2/video.hpp>;
+import <opencv2/video/tracking.hpp>;
+import <opencv2/videoio.hpp>;
+import <opencv2/viz/vizcore.hpp>;
 
-#include "euroc_vio/AbstractLoader.hpp"
+import FastVIO:AbstractLoader;
+
+export namespace FastVIO
+{
 
 // 单目视觉帧
 template <typename E = std::filesystem::path>
@@ -199,3 +187,5 @@ public:
     return false;
   }
 };
+
+} // namespace FastVIO

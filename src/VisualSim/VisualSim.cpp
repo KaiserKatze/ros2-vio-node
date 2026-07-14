@@ -1,45 +1,25 @@
-#include <algorithm>
-#include <charconv>
-#include <cmath>
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <exception>
-#include <filesystem>
-#include <format>
-#include <fstream>
-#include <iostream>
-#include <limits>
-#include <memory>
-#include <numbers>
-#include <optional>
-#include <print>
-#include <sstream>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <thread>
-#include <type_traits>
-#include <utility>
-#include <vector>
+import std;
 
-#include <Eigen/Dense>
+import <Eigen/Dense>;
 
-#include <opencv2/calib3d.hpp>
-#include <opencv2/core/check.hpp>
-#include <opencv2/core/eigen.hpp>
+import <opencv2/calib3d.hpp>;
+import <opencv2/core/check.hpp>;
+import <opencv2/core/eigen.hpp>;
 
-#include "MeshPlot.hpp"
-#include "Path.hpp"
-#include "Room.hpp"
-#include "StereoRig.hpp"
-#include "euroc_vio/Reflect.hpp"
+import FastVIO:VisualSim:MeshPlot;
+import FastVIO:VisualSim:Path;
+import FastVIO:VisualSim:Room;
+import FastVIO:VisualSim:StereoRig;
+
+import std_reflect;
 
 using namespace std::chrono_literals;
 
 #define START_VISUALIZATION 0
 #define OUTPUT_AS_EUROC 1
+
+namespace FastVIO
+{
 
 template <typename value_type>
 struct VisualSim
@@ -266,16 +246,16 @@ struct VisualSim
                   .cross(path_circle->GetPositionStart()
                          - path_circle->GetPositionCenter())
                   .norm(),
-        path_circle->GetPositionCenter().x(),             //
-        path_circle->GetPositionCenter().y(),             //
-        path_circle->GetPositionCenter().z(),             //
-        path_circle->GetPositionStart().x(),              //
-        path_circle->GetPositionStart().y(),              //
-        path_circle->GetPositionStart().z(),              //
-        path_circle->GetNorm().x(),                       //
-        path_circle->GetNorm().y(),                       //
-        path_circle->GetNorm().z(),                       //
-        enum_to_string(path_circle->GetOrientationMode()) //
+        path_circle->GetPositionCenter().x(),                  //
+        path_circle->GetPositionCenter().y(),                  //
+        path_circle->GetPositionCenter().z(),                  //
+        path_circle->GetPositionStart().x(),                   //
+        path_circle->GetPositionStart().y(),                   //
+        path_circle->GetPositionStart().z(),                   //
+        path_circle->GetNorm().x(),                            //
+        path_circle->GetNorm().y(),                            //
+        path_circle->GetNorm().z(),                            //
+        std::enum_to_string(path_circle->GetOrientationMode()) //
     );
 
 #endif
@@ -668,11 +648,13 @@ struct VisualSim
   }
 };
 
+} // namespace FastVIO
+
 int main()
 {
   try
   {
-    VisualSim<double>{}.Start();
+    FastVIO::VisualSim<double>{}.Start();
   }
   catch (const std::exception &ex)
   {

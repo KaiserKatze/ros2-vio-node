@@ -1,14 +1,17 @@
-#pragma once
+export module FastVIO:VisualSim:Camera;
 
-#include <limits>
-#include <vector>
+import std;
 
-#include <Eigen/Dense>
+import <Eigen/Dense>;
+
+namespace FastVIO::VisualSim
+{
 
 /**
  * @brief 相机
  */
-template <typename value_type> struct Camera
+template <typename value_type>
+struct Camera
 {
   Eigen::Matrix<value_type, 3, 3> intrinsic_{
       Eigen::Matrix<value_type, 3, 3>::Identity(),
@@ -106,3 +109,5 @@ template <typename value_type> struct Camera
     return {visible_indices, visible_pixel_points};
   }
 };
+
+} // namespace FastVIO::VisualSim

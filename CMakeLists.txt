@@ -2,11 +2,47 @@ cmake_minimum_required(VERSION 4.3.2)
 project(euroc_vio)
 
 # --- 编译选项设置 ---
+# @see: https://cmake.org/cmake/help/latest/prop_tgt/CXX_STANDARD.html
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# 要想使用 `import std;` 必须启用 CMake 的实验性功能 `CMAKE_EXPERIMENTAL_CXX_IMPORT_STD`
+# @see: https://github.com/Kitware/CMake/blob/v4.3.2/Help/dev/experimental.rst
+# @see: https://discourse.cmake.org/t/cmake-experimental-cxx-import-std-value-history-and-state/15712
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.4.0")
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
+        "f35a9ac6-8463-4d38-8eec-5d6008153e7d"
+    )
+elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "4.3.0")
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
+        "451f2fe2-a8a2-47c3-bc32-94786d8fc91b"
+    )
+elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "3.30.0")
+    if(CMAKE_VERSION VERSION_LESS "3.31.8")
+        set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
+            "0e5b6991-d74f-4b3d-a41c-cf096e0b2508"
+        )
+    elseif(CMAKE_VERSION VERSION_LESS "4.0.0")
+        set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
+            "d0edc3af-4c50-42ea-a356-e2862fe7a444"
+        )
+    elseif(CMAKE_VERSION VERSION_LESS "4.0.3")
+        set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
+            "a9e1cf81-9932-4810-974b-6eccaf14e457"
+        )
+    elseif(CMAKE_VERSION VERSION_LESS "4.3.0")
+        set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
+            "d0edc3af-4c50-42ea-a356-e2862fe7a444"
+        )
+    endif()
+endif()
+
+set(CMAKE_CXX_MODULE_STD ON)
+set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 
 # 强制使用 GCC
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")

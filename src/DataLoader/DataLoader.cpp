@@ -1,26 +1,20 @@
-#include <cstdint>
-#include <filesystem>
-#include <format>
-#include <fstream>
-#include <print>
-#include <string>
-#include <string_view>
-#include <vector>
+import std;
 
-#include <Eigen/Dense>
+import <Eigen/Dense>;
 
-#include <geometry_msgs/msg/pose_stamped.hpp>
-#include <nav_msgs/msg/path.hpp>
-#include <rclcpp/publisher.hpp>
-#include <rclcpp/rclcpp.hpp>
+import <geometry_msgs/msg/pose_stamped.hpp>;
+import <nav_msgs/msg/path.hpp>;
+import <rclcpp/publisher.hpp>;
+import <rclcpp/rclcpp.hpp>;
 
-#include "euroc_vio/AbstractLoader.hpp"
-#include "euroc_vio/main.h"
+import FastVIO:AbstractLoader;
+
+static constexpr char DEFAULT_FRAME_ID[]{"map"};
 
 /**
  * @brief CSV 位姿数据的物理结构映射。
  */
-struct Datum
+struct DatumTrajectory
 {
   std::int64_t timestamp;
   // px, py, pz, qw, qx, qy, qz
@@ -31,12 +25,13 @@ struct Datum
    * @param filename CSV 文件的绝对路径。
    * @param skip_header 是否跳过第一行头部注释。
    * @param delim 列分隔字符。
-   * @return std::vector<Datum> 读取出的数据集。
+   * @return std::vector<DatumTrajectory> 读取出的数据集。
    */
-  static std::vector<Datum> ReadCsv(const std::string &filename,
-                                    bool skip_header = true, char delim = ',')
+  static std::vector<DatumTrajectory> ReadCsv(const std::string &filename,
+                                              bool skip_header = true,
+                                              char delim       = ',')
   {
-    std::vector<Datum> data;
+    std::vector<DatumTrajectory> data;
     std::ifstream file{filename};
     if (!file.is_open())
     {
@@ -55,13 +50,14 @@ struct Datum
         continue;
       }
       std::stringstream ss(line);
-      Datum datum;
-      datum.timestamp = AbstractLoader::get_item_as_int64(ss, delim);
-      for (size_t i = 0; i < datum.value.size(); ++i)
+      DatumTrajectory DatumTrajectory;
+      DatumTrajectory.timestamp = AbstractLoader::get_item_as_int64(ss, delim);
+      for (size_t i = 0; i < DatumTrajectory.value.size(); ++i)
       {
-        datum.value[i] = AbstractLoader::get_item_as_double(ss, delim);
+        DatumTrajectory.value[i]
+            = AbstractLoader::get_item_as_double(ss, delim);
       }
-      data.push_back(datum);
+      data.push_back(DatumTrajectory);
     }
     return data;
   }
@@ -126,7 +122,7 @@ private:
    */
   void LoadCsv()
   {
-    auto raw_data{Datum::ReadCsv(csv_file_, skip_header_, delim_)};
+    auto raw_data{DatumTrajectory::ReadCsv(csv_file_, skip_header_, delim_)};
     if (raw_data.empty())
     {
       throw std::runtime_error{"CSV 文件为空或无有效数据"};

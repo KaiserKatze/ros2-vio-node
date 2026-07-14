@@ -1,16 +1,17 @@
-#pragma once
+export module FastVIO:VisualSim:StereoRig;
 
-#include <cstdio>
-#include <print>
-#include <tuple>
-#include <vector>
+import std;
 
-#include "Camera.hpp"
+import FastVIO:VisualSim:Camera;
+
+namespace FastVIO::VisualSim
+{
 
 /**
  * @brief 双目相机
  */
-template <typename value_type> struct StereoRig
+template <typename value_type>
+struct StereoRig
 {
   Camera<value_type> camera_left_;
   Camera<value_type> camera_right_;
@@ -26,10 +27,12 @@ template <typename value_type> struct StereoRig
           const Eigen::Vector<value_type, 3> &parent_translation
           = Eigen::Vector<value_type, 3>::Zero()) const
   {
-    auto &&[indices_left, pixels_left] = camera_left_.Project(
-        object_matrix, parent_rotation, parent_translation);
-    auto &&[indices_right, pixels_right] = camera_right_.Project(
-        object_matrix, parent_rotation, parent_translation);
+    auto &&[indices_left, pixels_left]
+        = camera_left_.Project(object_matrix, parent_rotation,
+                               parent_translation);
+    auto &&[indices_right, pixels_right]
+        = camera_right_.Project(object_matrix, parent_rotation,
+                                parent_translation);
 
     // std::print(
     //     stderr,
@@ -107,3 +110,5 @@ template <typename value_type> struct StereoRig
     std::get<2>(frame2) = std::move(common_frame2_image_right);
   }
 };
+
+} // namespace FastVIO::VisualSim

@@ -1,16 +1,18 @@
-#pragma once
+export module FastVIO:VisualSim:MeshPlot;
 
-#include <algorithm>
-#include <map>
-#include <vector>
+import std;
 
-#include <opencv2/core/types.hpp>
-#include <opencv2/highgui.hpp>
-#include <opencv2/imgproc.hpp>
+import <opencv2/core/types.hpp>;
+import <opencv2/highgui.hpp>;
+import <opencv2/imgproc.hpp>;
 
-#include "Room.hpp"
+import FastVIO:VisualSim:Room;
 
-template <typename value_type> struct MeshPlot
+namespace FastVIO::VisualSim
+{
+
+template <typename value_type>
+struct MeshPlot
 {
   using Point2 = Eigen::Vector<value_type, 2>;
   using Point3 = Eigen::Vector<value_type, 3>;
@@ -345,3 +347,5 @@ template <typename value_type> struct MeshPlot
     }
   }
 };
+
+} // namespace FastVIO::VisualSim

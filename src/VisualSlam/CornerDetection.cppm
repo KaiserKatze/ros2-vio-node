@@ -1,43 +1,38 @@
-#pragma once
+export module FastVIO:CornerDetection;
 
-#include <cstdio>
-#include <cstdlib>
-#include <type_traits>
-#include <vector>
+import std;
 
-#include <Eigen/Dense>
+import <Eigen/Dense>;
 
-#include <opencv2/calib3d.hpp>
-#include <opencv2/core.hpp>
-#include <opencv2/core/eigen.hpp>
-#include <opencv2/core/mat.hpp>
-#include <opencv2/core/types.hpp>
-#include <opencv2/features2d.hpp>
-#include <opencv2/highgui.hpp>
-#include <opencv2/imgcodecs.hpp>
-#include <opencv2/imgproc.hpp>
-#include <opencv2/opencv.hpp>
-#include <opencv2/video.hpp>
-#include <opencv2/video/tracking.hpp>
-#include <opencv2/videoio.hpp>
-#include <opencv2/viz/vizcore.hpp>
+import <opencv2/calib3d.hpp>;
+import <opencv2/core.hpp>;
+import <opencv2/core/eigen.hpp>;
+import <opencv2/core/mat.hpp>;
+import <opencv2/core/types.hpp>;
+import <opencv2/features2d.hpp>;
+import <opencv2/highgui.hpp>;
+import <opencv2/imgcodecs.hpp>;
+import <opencv2/imgproc.hpp>;
+import <opencv2/opencv.hpp>;
+import <opencv2/video.hpp>;
+import <opencv2/video/tracking.hpp>;
+import <opencv2/videoio.hpp>;
+import <opencv2/viz/vizcore.hpp>;
 
-// 1. 定义基础 trait：默认不是 vector
 template <typename T>
 struct is_vector : std::false_type
 {
 };
-// 2. 偏特化：匹配 std::vector 模板实例
-// 注意：vector 有两个模板参数，一个是类型 T，一个是分配器 Allocator
+
 template <typename T, typename Alloc>
 struct is_vector<std::vector<T, Alloc>> : std::true_type
 {
 };
-// 3. 封装为 Concept
+
 template <typename T>
 concept StdVectorType = is_vector<std::remove_cvref_t<T>>::value;
 
-namespace CornerDetection
+export namespace FastVIO::CornerDetection
 {
 
 struct AbstractDetector
@@ -122,4 +117,4 @@ inline auto RefineSubPix(const cv::Mat &image, cv::Size win_size = {5, 5},
   return SubPixAdaptor{image, win_size, zero_zone, criteria};
 }
 
-} // namespace CornerDetection
+} // namespace FastVIO::CornerDetection

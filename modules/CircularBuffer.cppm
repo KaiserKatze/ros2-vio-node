@@ -1,7 +1,9 @@
-#pragma once
+export module FastVIO:CircularBuffer;
 
-#include <array>
-#include <cstddef>
+import std;
+
+export namespace FastVIO
+{
 
 /**
  * @brief 可遍历的无锁环形缓冲区（固定容量）
@@ -11,7 +13,8 @@
  * - 容量 N 必须为 2 的幂，利用位运算 (index & (N-1)) 实现快速取模
  * - 提供真正“逻辑顺序”的迭代器（按时间顺序遍历）
  */
-template <typename T, std::size_t N> class CircularBuffer
+template <typename T, std::size_t N>
+class CircularBuffer
 {
   static_assert(N > 0, "Capacity must be positive");
   static_assert((N & (N - 1)) == 0,
@@ -140,3 +143,5 @@ private:
   std::size_t head_{0}; // 单调递增
   std::size_t tail_{0}; // 单调递增
 };
+
+} // namespace FastVIO

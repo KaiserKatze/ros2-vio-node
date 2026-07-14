@@ -1,36 +1,24 @@
-#pragma once
-
-#include <algorithm>
-#include <cassert>
-#include <cmath>
-#include <concepts>
-#include <cstdint>
-#include <cstdio>
-#include <format>
-#include <map>
-#include <meta>
-#include <print>
-#include <stdexcept>
-#include <tuple>
-#include <type_traits>
-#include <vector>
-
-#include <boost/circular_buffer.hpp>
-
-#include <Eigen/Dense>
-
-#include <sophus/se3.hpp>
-#include <sophus/so3.hpp>
-
-#include "euroc_vio/DatumFast.hpp"
-#include "euroc_vio/DatumImu.hpp"
-#include "euroc_vio/Interpolation.hpp"
-#include "euroc_vio/StereoObservation.hpp"
+module;
 
 // 选择“只使用角位移”还是“使用角位移和平移方向”
 #define ONLY_USE_ANGULAR_DISPLACEMENT 1
 
-namespace VisualSim
+export module FastVIO:ErrorStateKalmanFilter;
+
+import std;
+
+import <boost/circular_buffer.hpp>;
+
+import <Eigen/Dense>;
+
+import <sophus/se3.hpp>;
+import <sophus/so3.hpp>;
+
+import FastVIO:DatumFast;
+import FastVIO:DatumImu;
+import FastVIO:Stereo;
+
+namespace FastVIO
 {
 
 /**
@@ -1432,4 +1420,4 @@ private:
 #pragma endregion
 };
 
-} // namespace VisualSim
+} // namespace FastVIO

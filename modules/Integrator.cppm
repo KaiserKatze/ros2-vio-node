@@ -1,11 +1,9 @@
-#pragma once
+export module FastVIO:Integrator;
 
-#include <Eigen/Dense>
-#include <concepts>
-#include <type_traits>
+import <Eigen/Dense>;
 
-#include <sophus/se3.hpp>
-#include <sophus/so3.hpp>
+import <sophus/se3.hpp>;
+import <sophus/so3.hpp>;
 
 template <typename T>
 concept ImuDatumLike = requires {
@@ -18,6 +16,9 @@ concept ImuDatumLike = requires {
       is_same_v<std::decay_t<decltype(std::declval<T>().linear_acceleration_)>,
                 Eigen::Vector3d>;
 };
+
+export namespace FastVIO
+{
 
 struct AbstractIntegrator
 {
@@ -177,3 +178,5 @@ struct VisualIntegrator : public AbstractIntegrator
     pose_.so3()       = estimated_new_attitude;
   }
 };
+
+} // namespace FastVIO

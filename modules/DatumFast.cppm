@@ -1,51 +1,17 @@
-#pragma once
+export module FastVIO:DatumFast;
 
-#include <algorithm>
-#include <cmath>
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <exception>
-#include <filesystem>
-#include <format>
-#include <fstream>
-#include <meta>
-#include <print>
-#include <sstream>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <thread>
+import std;
+
+import <Eigen/Dense>;
+
+import <sophus/so3.hpp>;
+
+import FastVIO:AbstractLoader;
 
 using namespace std::chrono_literals;
 
-#include <Eigen/Dense>
-
-#include <sophus/so3.hpp>
-
-#include <boost/numeric/odeint.hpp>
-
-#include <opencv2/calib3d.hpp>
-#include <opencv2/core/check.hpp>
-#include <opencv2/core/eigen.hpp>
-
-#include <geometry_msgs/msg/pose_stamped.hpp>
-#include <nav_msgs/msg/path.hpp>
-#include <rclcpp/publisher.hpp>
-#include <rclcpp/rclcpp.hpp>
-#include <rclcpp/time.hpp>
-#include <sensor_msgs/msg/image.hpp>
-
-#include "yaml-cpp/yaml.h"
-
-#include "euroc_vio/SensorState.hpp"
-#include "euroc_vio/AbstractLoader.hpp"
-#include "euroc_vio/Interpolation.hpp"
-#include "euroc_vio/main.h"
-#include "euroc_vio/ZUPT.hpp"
-
-#define DEBUG 0
+export namespace FastVIO
+{
 
 struct DatumFast
 {
@@ -60,13 +26,8 @@ struct DatumFast
        const Sophus::SO3d &sensor_rotation_wrt_body)
   {
     std::vector<DatumFast> data;
-
     std::ifstream file{path_estimation_csv};
     std::string line;
-
-#if (DEBUG)
-    std::ofstream log_reflect{"Reflect-DatumFast.csv"};
-#endif
 
     // 跳过表头
     std::getline(file, line);
@@ -99,12 +60,6 @@ struct DatumFast
 
         const DatumFast datum_fast{timestamp, wt, t};
         data.push_back(datum_fast);
-
-#if (DEBUG)
-        std::print(log_reflect,
-                   "{:.6f}, {:.6f}, {:.6f}, {:.6f}, {:.6f}, {:.6f}\n", //
-                   wt.x(), wt.y(), wt.z(), t.x(), t.y(), t.z());
-#endif
       }
       catch (const std::runtime_error &ex)
       {
@@ -116,12 +71,8 @@ struct DatumFast
         };
       }
     } // end while
-
-#if (DEBUG)
-    log_reflect.flush();
-    std::print(stderr,
-               "[DEBUG] 回写世界坐标系下的角位移和单位化平移向量 ...\n");
-#endif
     return data;
   }
 };
+
+} // namespace FastVIO

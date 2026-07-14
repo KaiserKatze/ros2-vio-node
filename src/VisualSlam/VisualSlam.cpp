@@ -1,48 +1,30 @@
-#include <atomic>
-#include <cassert>
-#include <cmath>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <format>
-#include <fstream>
-#include <ios>
-#include <numeric>
-#include <print>
-#include <ranges>
-#include <sstream>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <utility>
-#include <vector>
+import std;
 
-#include <Eigen/Dense>
+import <Eigen/Dense>;
 
-#include <sophus/so3.hpp>
+import <sophus/so3.hpp>;
 
-#include <opencv2/calib3d.hpp>
-#include <opencv2/core.hpp>
-#include <opencv2/core/eigen.hpp>
-#include <opencv2/core/mat.hpp>
-#include <opencv2/core/types.hpp>
-#include <opencv2/features2d.hpp>
-#include <opencv2/highgui.hpp>
-#include <opencv2/imgcodecs.hpp>
-#include <opencv2/imgproc.hpp>
-#include <opencv2/opencv.hpp>
-#include <opencv2/video.hpp>
-#include <opencv2/video/tracking.hpp>
-#include <opencv2/videoio.hpp>
-#include <opencv2/viz/vizcore.hpp>
+import <opencv2/calib3d.hpp>;
+import <opencv2/core.hpp>;
+import <opencv2/core/eigen.hpp>;
+import <opencv2/core/mat.hpp>;
+import <opencv2/core/types.hpp>;
+import <opencv2/features2d.hpp>;
+import <opencv2/highgui.hpp>;
+import <opencv2/imgcodecs.hpp>;
+import <opencv2/imgproc.hpp>;
+import <opencv2/opencv.hpp>;
+import <opencv2/video.hpp>;
+import <opencv2/video/tracking.hpp>;
+import <opencv2/videoio.hpp>;
+import <opencv2/viz/vizcore.hpp>;
 
-#include "FastDetector.hpp"
-#include "ImageDataLoader.hpp"
-#include "euroc_vio/ErrorStateKalmanFilter.hpp"
-#include "euroc_vio/EuRoC.hpp"
-#include "euroc_vio/Integrator.hpp"
-#include "euroc_vio/StereoObservation.hpp"
-#include "euroc_vio/TrackingConfig.hpp"
+import FastVIO:FastDetector;
+import FastVIO:ImageDataLoader;
+import FastVIO:ErrorStateKalmanFilter;
+import FastVIO:EuRoC;
+import FastVIO:Integrator;
+import FastVIO:Stereo;
 
 // OpenCV 提取角点时只提供 cv::Point2f 类型
 using PointType = cv::Point2f;
@@ -101,8 +83,7 @@ CreateStereoObservationSet(const std::vector<PointType> &pts_left,
 
 struct SlamConfig:
 {
-  bool config_.do_visualization_;
-  TrackingConfig tracking_config_;
+  bool do_visualization_;
 };
 
 class TrajectoryWriter
@@ -152,7 +133,7 @@ public:
   using Vector3    = Eigen::Vector<value_type, 3>;
   using Quaternion = Eigen::Quaternion<value_type>;
   using Attitude   = Sophus::SO3<value_type>;
-  using ESKF       = VisualSim::ErrorStateKalmanFilter<value_type>;
+  using ESKF       = Filter::ErrorStateKalmanFilter<value_type>;
 
   const EuRoC::EuRoC euroc_{};
 

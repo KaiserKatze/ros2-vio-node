@@ -1,18 +1,13 @@
-#pragma once
+export module FastVIO:SensorYaml;
 
-#include <algorithm>
-#include <cassert>
-#include <cmath>
-#include <concepts>
-#include <filesystem>
-#include <optional>
-#include <string>
-#include <string_view>
-#include <vector>
+import std;
 
-#include <Eigen/Dense>
+import <Eigen/Dense>;
 
-#include <yaml-cpp/yaml.h>
+import <yaml-cpp/yaml.h>;
+
+namespace FastVIO
+{
 
 template <typename T>
 concept PathLike = std::convertible_to<T, std::filesystem::path>;
@@ -90,3 +85,5 @@ struct SensorYaml
     return result_sensor_config;
   }
 };
+
+} // namespace FastVIO

@@ -1,48 +1,32 @@
-#include <algorithm>
-#include <cmath>
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <exception>
-#include <filesystem>
-#include <format>
-#include <fstream>
-#include <memory>
-#include <print>
-#include <sstream>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <thread>
-#include <vector>
+import std;
 
 using namespace std::chrono_literals;
 
-#include <Eigen/Dense>
+import <Eigen/Dense>;
 
-#include <sophus/so3.hpp>
+import <sophus/so3.hpp>;
 
-#include <boost/numeric/odeint.hpp>
+import <boost/numeric/odeint.hpp>;
 
-#include <opencv2/calib3d.hpp>
-#include <opencv2/core/check.hpp>
-#include <opencv2/core/eigen.hpp>
+import <opencv2/calib3d.hpp>;
+import <opencv2/core/check.hpp>;
+import <opencv2/core/eigen.hpp>;
 
-#include <rclcpp/rclcpp.hpp>
-#include <rclcpp/time.hpp>
+import <rclcpp/rclcpp.hpp>;
+import <rclcpp/time.hpp>;
 
-#include "euroc_vio/AbstractLoader.hpp"
-#include "euroc_vio/ErrorStateKalmanFilter.hpp"
-#include "euroc_vio/Interpolation.hpp"
-#include "euroc_vio/SensorState.hpp"
-#include "euroc_vio/ZUPT.hpp"
-#include "euroc_vio/main.h"
+import FastVIO:AbstractLoader;
+import FastVIO:ErrorStateKalmanFilter;
+import FastVIO:Interpolation;
+import FastVIO:Sensor;
+import FastVIO:ZUPT;
+import FastVIO:SensorYaml;
+import FastVIO:DatumFast;
+import FastVIO:DatumImu;
+import FastVIO:DatumTruth;
 
-#include "SensorYaml.hpp"
-#include "euroc_vio/DatumFast.hpp"
-#include "euroc_vio/DatumImu.hpp"
-#include "euroc_vio/DatumTruth.hpp"
+namespace FastVIO
+{
 
 /**
  * @brief 统一的评估器配置与输入数据结构体。
@@ -623,7 +607,7 @@ public:
 class FuseEstimator : public AbstractEstimator
 {
 private:
-  using ESKF = VisualSim::ErrorStateKalmanFilter<double>;
+  using ESKF = Filter::ErrorStateKalmanFilter<double>;
 
 public:
   FuseEstimator(const EstimatorConfig &config) : AbstractEstimator(config) {}
@@ -1078,12 +1062,14 @@ public:
   }
 };
 
+} // namespace FastVIO
+
 int main(int argc, char *argv[])
 {
   rclcpp::init(argc, argv);
   try
   {
-    auto factory{std::make_shared<TrajectoryFactory>()};
+    auto factory{std::make_shared<FastVIO::TrajectoryFactory>()};
     factory->Run();
   }
   catch (const std::exception &ex)
