@@ -4,7 +4,7 @@
 rm -rf build install log
 colcon build --packages-select euroc_vio \
   --parallel-workers $(nproc) \
-  --cmake-args \
+  --cmake-args -G Ninja \
     -D OpenCV_DIR=/usr/local/lib/cmake/opencv4 \
   --event-handlers console_direct+
 source ~/vio_ws/install/local_setup.sh
