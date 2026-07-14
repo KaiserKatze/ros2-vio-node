@@ -2,7 +2,7 @@ export module std_reflect;
 
 import std;
 
-export namespace std
+export namespace std::meta
 {
 
 // @see: https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2025/p2996r13.html#enum-to-string
@@ -25,4 +25,4 @@ constexpr std::string_view enum_to_string(E value)
   return "<unnamed>";
 }
 
-} // namespace std
+} // namespace std::meta

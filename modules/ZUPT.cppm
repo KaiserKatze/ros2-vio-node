@@ -4,7 +4,7 @@ import std;
 
 import <Eigen/Dense>;
 
-import FastVIO:CircularBuffer;
+import FastVIO;
 
 template <typename T /* Eigen::Vector */, typename U /* float or double */>
   requires std::is_floating_point_v<U>

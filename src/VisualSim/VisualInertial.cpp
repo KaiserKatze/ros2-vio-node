@@ -15,15 +15,7 @@ import <opencv2/core/eigen.hpp>;
 import <rclcpp/rclcpp.hpp>;
 import <rclcpp/time.hpp>;
 
-import FastVIO:AbstractLoader;
-import FastVIO:ErrorStateKalmanFilter;
-import FastVIO:Interpolation;
-import FastVIO:Sensor;
-import FastVIO:ZUPT;
-import FastVIO:SensorYaml;
-import FastVIO:DatumFast;
-import FastVIO:DatumImu;
-import FastVIO:DatumTruth;
+import FastVIO;
 
 namespace FastVIO
 {

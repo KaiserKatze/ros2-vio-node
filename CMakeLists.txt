@@ -89,10 +89,10 @@ set(CORE_MODULE_FILES
   modules/DatumImu.cppm
   modules/DatumTruth.cppm
   modules/ErrorStateKalmanFilter.cppm
-  modules/EuRoC.cppm
   modules/Integrator.cppm
   modules/Interpolation.cppm
   modules/SensorState.cppm
+  modules/SensorYaml.cppm
   modules/StdReflect.cppm
   modules/StereoObservation.cppm
   modules/ZUPT.cppm
@@ -103,11 +103,11 @@ set(VISUAL_SIM_MODULE_FILES
   src/VisualSim/MeshPlot.cppm
   src/VisualSim/Path.cppm
   src/VisualSim/Room.cppm
-  src/VisualSim/SensorYaml.cppm
   src/VisualSim/StereoRig.cppm
 )
 
 set(VISUAL_SLAM_MODULE_FILES
+  src/VisualSlam/EuRoC.cppm
   src/VisualSlam/CornerDetection.cppm
   src/VisualSlam/FastDetector.cppm
   src/VisualSlam/ImageDataLoader.cppm

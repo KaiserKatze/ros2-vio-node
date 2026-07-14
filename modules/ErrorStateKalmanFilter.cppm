@@ -14,9 +14,7 @@ import <Eigen/Dense>;
 import <sophus/se3.hpp>;
 import <sophus/so3.hpp>;
 
-import FastVIO:DatumFast;
-import FastVIO:DatumImu;
-import FastVIO:Stereo;
+import FastVIO;
 
 namespace FastVIO
 {

@@ -6,7 +6,7 @@ import <Eigen/Dense>;
 
 import <sophus/so3.hpp>;
 
-import FastVIO:AbstractLoader;
+import FastVIO;
 
 using namespace std::chrono_literals;
 

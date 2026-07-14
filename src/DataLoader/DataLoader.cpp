@@ -7,7 +7,7 @@ import <nav_msgs/msg/path.hpp>;
 import <rclcpp/publisher.hpp>;
 import <rclcpp/rclcpp.hpp>;
 
-import FastVIO:AbstractLoader;
+import FastVIO;
 
 static constexpr char DEFAULT_FRAME_ID[]{"map"};
 

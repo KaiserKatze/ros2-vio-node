@@ -19,12 +19,7 @@ import <opencv2/video/tracking.hpp>;
 import <opencv2/videoio.hpp>;
 import <opencv2/viz/vizcore.hpp>;
 
-import FastVIO:FastDetector;
-import FastVIO:ImageDataLoader;
-import FastVIO:ErrorStateKalmanFilter;
-import FastVIO:EuRoC;
-import FastVIO:Integrator;
-import FastVIO:Stereo;
+import FastVIO;
 
 // OpenCV 提取角点时只提供 cv::Point2f 类型
 using PointType = cv::Point2f;

@@ -7,7 +7,7 @@ import <opencv2/core/types.hpp>;
 import <opencv2/imgproc.hpp>;
 import <opencv2/opencv.hpp>;
 
-import FastVIO:CornerDetection;
+import FastVIO;
 
 export namespace FastVIO::CornerDetection
 {

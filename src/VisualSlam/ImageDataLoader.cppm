@@ -19,7 +19,7 @@ import <opencv2/video/tracking.hpp>;
 import <opencv2/videoio.hpp>;
 import <opencv2/viz/vizcore.hpp>;
 
-import FastVIO:AbstractLoader;
+import FastVIO;
 
 export namespace FastVIO
 {
