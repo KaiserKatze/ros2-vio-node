@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 4.3.2)
-project(euroc_vio)
 
 # --- 编译选项设置 ---
 # @see: https://cmake.org/cmake/help/latest/prop_tgt/CXX_STANDARD.html
@@ -43,6 +42,8 @@ endif()
 
 set(CMAKE_CXX_MODULE_STD ON)
 set(CMAKE_CXX_SCAN_FOR_MODULES ON)
+
+project(euroc_vio)
 
 # 强制使用 GCC
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
