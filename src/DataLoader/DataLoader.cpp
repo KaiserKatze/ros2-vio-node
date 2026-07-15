@@ -11,6 +11,9 @@ import FastVIO;
 
 static constexpr char DEFAULT_FRAME_ID[]{"map"};
 
+namespace FastVIO
+{
+
 /**
  * @brief CSV 位姿数据的物理结构映射。
  */
@@ -181,12 +184,14 @@ private:
   rclcpp::TimerBase::SharedPtr timer_;
 };
 
+} // namespace FastVIO
+
 int main(int argc, char **argv)
 {
   rclcpp::init(argc, argv);
   try
   {
-    auto node = std::make_shared<TrajectoryPublisher>();
+    auto node = std::make_shared<FastVIO::TrajectoryPublisher>();
     rclcpp::spin(node);
   }
   catch (const std::exception &ex)

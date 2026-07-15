@@ -38,6 +38,9 @@ static T GetMatValue(const cv::Mat &mat, int row, int col)
   throw std::runtime_error("Unsupported OpenCV matrix type");
 }
 
+namespace FastVIO
+{
+
 template <typename value_type>
 static std::vector<StereoObservation<value_type>>
 CreateStereoObservationSet(const std::vector<PointType> &pts_left,
@@ -76,7 +79,7 @@ CreateStereoObservationSet(const std::vector<PointType> &pts_left,
   return result;
 }
 
-struct SlamConfig:
+struct SlamConfig
 {
   bool do_visualization_;
 };
@@ -385,6 +388,8 @@ public:
   }
 };
 
+} // namespace FastVIO
+
 int main(int argc, char *argv[])
 {
   if (argc != 2 && argc != 3)
@@ -405,7 +410,7 @@ int main(int argc, char *argv[])
     std::print(stderr, "Visualization enabled.\n");
   }
 
-  StereoSlam inst{path_mav0, do_visualization};
+  FastVIO::StereoSlam inst{path_mav0, do_visualization};
   inst.StartOdometer();
 
   return 0;
