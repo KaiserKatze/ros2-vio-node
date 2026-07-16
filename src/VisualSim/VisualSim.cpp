@@ -6,10 +6,7 @@ import std;
 #include <opencv2/core/check.hpp>
 #include <opencv2/core/eigen.hpp>
 
-import FastVIO:VisualSim:MeshPlot;
-import FastVIO:VisualSim:Path;
-import FastVIO:VisualSim:Room;
-import FastVIO:VisualSim:StereoRig;
+import FastVIO.VisualSim;
 
 import std_reflect;
 

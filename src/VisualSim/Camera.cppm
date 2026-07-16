@@ -2,7 +2,7 @@ module;
 
 #include <Eigen/Dense>
 
-export module FastVIO:VisualSim:Camera;
+export module FastVIO.VisualSim:Camera;
 
 import std;
 

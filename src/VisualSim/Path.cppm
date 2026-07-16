@@ -2,7 +2,7 @@ module;
 
 #include <Eigen/Dense>
 
-export module FastVIO:VisualSim:Path;
+export module FastVIO.VisualSim:Path;
 
 import std;
 

@@ -2,7 +2,7 @@ module;
 
 #include <Eigen/Dense>
 
-export module FastVIO:VisualSim:StereoRig;
+export module FastVIO.VisualSim:StereoRig;
 
 import std;
 

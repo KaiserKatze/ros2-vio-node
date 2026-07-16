@@ -2,7 +2,7 @@ module;
 
 #include <Eigen/Dense>
 
-export module FastVIO:VisualSim:Room;
+export module FastVIO.VisualSim:Room;
 
 import std;
 

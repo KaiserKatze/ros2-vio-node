@@ -4,7 +4,7 @@ module;
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 
-export module FastVIO:VisualSim:MeshPlot;
+export module FastVIO.VisualSim:MeshPlot;
 
 import std;
 
