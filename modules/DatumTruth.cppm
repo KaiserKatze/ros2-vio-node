@@ -4,7 +4,7 @@ module;
 
 #include <sophus/so3.hpp>
 
-export module FastVIO:DatumFast;
+export module FastVIO:DatumTruth;
 
 import std;
 
