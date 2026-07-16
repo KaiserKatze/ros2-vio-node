@@ -1,10 +1,12 @@
+module;
+
+#include <Eigen/Dense>
+
+#include <yaml-cpp/yaml.h>
+
 export module FastVIO:SensorYaml;
 
 import std;
-
-import <Eigen/Dense>;
-
-import <yaml-cpp/yaml.h>;
 
 namespace FastVIO
 {

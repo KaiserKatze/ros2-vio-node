@@ -1,13 +1,15 @@
+module;
+
+#include <opencv2/core/mat.hpp>
+#include <opencv2/core/types.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/opencv.hpp>
+
 export module FastVIO:FastDetector;
 
 import std;
 
-import <opencv2/core/mat.hpp>;
-import <opencv2/core/types.hpp>;
-import <opencv2/imgproc.hpp>;
-import <opencv2/opencv.hpp>;
-
-import FastVIO;
+import FastVIO:CornerDetection;
 
 export namespace FastVIO::CornerDetection
 {

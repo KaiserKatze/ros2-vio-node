@@ -1,5 +1,12 @@
 module;
 
+#include <boost/circular_buffer.hpp>
+
+#include <Eigen/Dense>
+
+#include <sophus/se3.hpp>
+#include <sophus/so3.hpp>
+
 // 选择“只使用角位移”还是“使用角位移和平移方向”
 #define ONLY_USE_ANGULAR_DISPLACEMENT 1
 
@@ -7,14 +14,9 @@ export module FastVIO:ErrorStateKalmanFilter;
 
 import std;
 
-import <boost/circular_buffer.hpp>;
-
-import <Eigen/Dense>;
-
-import <sophus/se3.hpp>;
-import <sophus/so3.hpp>;
-
-import FastVIO;
+import FastVIO:DatumFast;
+import FastVIO:DatumImu;
+import FastVIO:Stereo;
 
 namespace FastVIO
 {

@@ -2,20 +2,28 @@ import std;
 
 using namespace std::chrono_literals;
 
-import <Eigen/Dense>;
+#include <Eigen/Dense>
 
-import <sophus/so3.hpp>;
+#include <sophus/so3.hpp>
 
-import <boost/numeric/odeint.hpp>;
+#include <boost/numeric/odeint.hpp>
 
-import <opencv2/calib3d.hpp>;
-import <opencv2/core/check.hpp>;
-import <opencv2/core/eigen.hpp>;
+#include <opencv2/calib3d.hpp>
+#include <opencv2/core/check.hpp>
+#include <opencv2/core/eigen.hpp>
 
-import <rclcpp/rclcpp.hpp>;
-import <rclcpp/time.hpp>;
+#include <rclcpp/rclcpp.hpp>
+#include <rclcpp/time.hpp>
 
-import FastVIO;
+import FastVIO:AbstractLoader;
+import FastVIO:ErrorStateKalmanFilter;
+import FastVIO:Interpolation;
+import FastVIO:Sensor;
+import FastVIO:ZUPT;
+import FastVIO:SensorYaml;
+import FastVIO:DatumFast;
+import FastVIO:DatumImu;
+import FastVIO:DatumTruth;
 
 namespace FastVIO
 {

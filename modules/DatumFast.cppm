@@ -1,12 +1,14 @@
+module;
+
+#include <Eigen/Dense>
+
+#include <sophus/so3.hpp>
+
 export module FastVIO:DatumFast;
 
 import std;
 
-import <Eigen/Dense>;
-
-import <sophus/so3.hpp>;
-
-import FastVIO;
+import FastVIO:AbstractLoader;
 
 using namespace std::chrono_literals;
 

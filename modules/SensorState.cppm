@@ -1,8 +1,10 @@
+module;
+
+#include <Eigen/Dense>
+
 export module FastVIO:Sensor;
 
 import std;
-
-import <Eigen/Dense>;
 
 template <typename T, typename Idx = std::size_t>
 concept VectorLike = requires(T t, Idx i) {

@@ -1,6 +1,6 @@
 module;
 
-import <Eigen/Core>;
+#include <Eigen/Core>
 
 export module FastVIO:Stereo;
 

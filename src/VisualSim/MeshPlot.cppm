@@ -1,10 +1,12 @@
+module;
+
+#include <opencv2/core/types.hpp>
+#include <opencv2/highgui.hpp>
+#include <opencv2/imgproc.hpp>
+
 export module FastVIO:VisualSim:MeshPlot;
 
 import std;
-
-import <opencv2/core/types.hpp>;
-import <opencv2/highgui.hpp>;
-import <opencv2/imgproc.hpp>;
 
 import FastVIO:VisualSim:Room;
 

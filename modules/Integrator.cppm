@@ -1,9 +1,11 @@
+module;
+
+#include <Eigen/Dense>
+
+#include <sophus/se3.hpp>
+#include <sophus/so3.hpp>
+
 export module FastVIO:Integrator;
-
-import <Eigen/Dense>;
-
-import <sophus/se3.hpp>;
-import <sophus/so3.hpp>;
 
 template <typename T>
 concept ImuDatumLike = requires {

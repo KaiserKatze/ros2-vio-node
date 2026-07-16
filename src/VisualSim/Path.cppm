@@ -1,8 +1,10 @@
+module;
+
+#include <Eigen/Dense>
+
 export module FastVIO:VisualSim:Path;
 
 import std;
-
-import <Eigen/Dense>;
 
 import FastVIO:VisualSim:Room;
 import FastVIO:VisualSim:StereoRig;

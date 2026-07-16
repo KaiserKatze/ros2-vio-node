@@ -1,8 +1,10 @@
+module;
+
+#include <Eigen/Dense>
+
 export module FastVIO:VisualSim:Room;
 
 import std;
-
-import <Eigen/Dense>;
 
 namespace FastVIO::VisualSim
 {
