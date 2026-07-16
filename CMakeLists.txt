@@ -1,13 +1,5 @@
 cmake_minimum_required(VERSION 4.3.2)
 
-# 强制使用 16.0 以上版本的 GCC 编译器
-if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  message(FATAL_ERROR "GCC (≥ 16.0) is required to build this project")
-endif()
-if(NOT CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16.0")
-  message(FATAL_ERROR "GCC (≥ 16.0) is required to build this project")
-endif()
-
 # --- 编译选项设置 ---
 # @see: https://cmake.org/cmake/help/latest/prop_tgt/CXX_STANDARD.html
 set(CMAKE_CXX_STANDARD 26)
@@ -53,10 +45,15 @@ set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 
 project(euroc_vio)
 
-if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  add_compile_options(-Wall -Wextra -Wpedantic)
+# 强制使用 16.0 以上版本的 GCC 编译器
+if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  message(FATAL_ERROR "GCC is required to build this project! Detected compiler id: ${CMAKE_CXX_COMPILER_ID}")
+endif()
+if(NOT CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16.0")
+  message(FATAL_ERROR "GCC (≥ 16.0) is required to build this project")
 endif()
 
+add_compile_options(-Wall -Wextra -Wpedantic)
 add_compile_options(-Wreorder)
 add_compile_options(-Wshadow)
 add_compile_options(-Wuninitialized)

@@ -5,8 +5,6 @@ set -eux
 echo "Home=$HOME"
 
 rm -rf build log install
-
-export MAKEFLAGS="-j1"
 colcon build --packages-select euroc_vio \
   --parallel-workers 1 \
   --cmake-args -G Ninja \
