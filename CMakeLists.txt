@@ -58,8 +58,6 @@ add_compile_options(-Wshadow)
 add_compile_options(-Wuninitialized)
 add_compile_options(-Wno-maybe-uninitialized)
 add_compile_options(-march=native)
-# C++26 开启反射机制
-add_compile_options(-freflection)
 
 # --- 查找依赖 ---
 find_package(ament_cmake REQUIRED)
@@ -92,6 +90,11 @@ set(CORE_MODULE_FILES
   modules/StdReflect.cppm
   modules/StereoObservation.cppm
   modules/ZUPT.cppm
+)
+set_source_files_properties(
+  modules/Interpolation.cppm
+  modules/StdReflect.cppm
+  PROPERTIES COMPILE_OPTIONS "-freflection"
 )
 
 set(CORE_MODULE_IMPLEMENTATIONS
