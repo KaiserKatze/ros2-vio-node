@@ -51,7 +51,7 @@ struct EuRoC
   Eigen::Matrix3d mat_cam_intrinsic_rectified_;
   Eigen::Vector3d vec_cam_translation_rectified_;
 
-  Eigen::Matrix4d T_C1C0{Eigen::Matrix4d::Identity()};
+  Eigen::Matrix4d T_C1C0;
   cv::Size imageSize{752, 480};
 
   // Output 3x4 projection matrix in the new (rectified) coordinate systems for
@@ -143,6 +143,7 @@ struct EuRoC
     // X_B = T_BC1 * X_C1
     // X_C1 = T_C1C0 * X_C0 = (T_BC1.inverse() * T_BC0) * X_C0
     // T_C1C0 = T_BC1.inverse() * T_BC0;
+    T_C1C0                   = Eigen::Matrix4d::Identity();
     T_C1C0.block<3, 3>(0, 0) = rmat_BC1.transpose() * rmat_BC0;
     T_C1C0.block<3, 1>(0, 3) = rmat_BC1.transpose() * (tvec_BC0 - tvec_BC1);
 

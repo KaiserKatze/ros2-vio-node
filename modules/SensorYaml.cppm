@@ -17,7 +17,7 @@ concept PathLike = std::convertible_to<T, std::filesystem::path>;
 struct SensorYaml
 {
   // 姿态, 变换矩阵
-  Eigen::Matrix4d transform_matrix_{Eigen::Matrix4d::Identity()};
+  Eigen::Matrix4d transform_matrix_;
   // 采样频率 (单位: Hz)
   double rate_hz_{1.0};
   // 陀螺仪白噪声密度 (单位: rad / s / sqrt(Hz))
@@ -29,7 +29,7 @@ struct SensorYaml
   // 加速度计零偏随机游走 (单位: m / s^3 / sqrt(Hz))
   double accelerometer_random_walk_{0.0};
 
-  SensorYaml() {}
+  SensorYaml();
 
   SensorYaml(const Eigen::Matrix4d &transform_matrix) :
     transform_matrix_{transform_matrix}

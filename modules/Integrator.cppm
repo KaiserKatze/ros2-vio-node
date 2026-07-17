@@ -7,6 +7,8 @@ module;
 
 export module FastVIO:Integrator;
 
+import std;
+
 template <typename T>
 concept ImuDatumLike = requires {
   requires std::is_same_v<std::decay_t<decltype(std::declval<T>().timestamp_)>,
@@ -26,15 +28,17 @@ struct AbstractIntegrator
 {
   // 重力加速度大小
   double gravity_world_norm_{9.81};
-  // 重力加速度
-  Eigen::Vector3d gravity_world_{-gravity_world_norm_
-                                 * Eigen::Vector3d::UnitZ()};
+  // 重力加速度 (在实现中完成构造以避免 TU-local 暴露)
+  Eigen::Vector3d gravity_world_;
   // 姿态 (r^{vi}_i,C_iv)
-  Sophus::SE3d pose_{};
+  Sophus::SE3d pose_;
   // 线速度
-  Eigen::Vector3d linear_velocity_{Eigen::Vector3d::Zero()};
+  Eigen::Vector3d linear_velocity_;
   // 先前状态
-  Sophus::SO3d previous_attitude{};
+  Sophus::SO3d previous_attitude_;
+
+  AbstractIntegrator();
+  virtual ~AbstractIntegrator() = default;
 };
 
 /**
@@ -74,8 +78,8 @@ struct ZerothOrderAttitudeIntegrator : public AbstractIntegrator
     };
 
     // 更新朝向
-    previous_attitude = pose_.so3();
-    pose_.so3()       = estimated_new_attitude;
+    previous_attitude_ = pose_.so3();
+    pose_.so3()        = estimated_new_attitude;
   }
 };
 
@@ -120,8 +124,8 @@ struct FirstOrderAttitudeIntegrator : public AbstractIntegrator
     };
 
     // 更新朝向
-    previous_attitude = pose_.so3();
-    pose_.so3()       = estimated_new_attitude;
+    previous_attitude_ = pose_.so3();
+    pose_.so3()        = estimated_new_attitude;
   }
 };
 
@@ -140,7 +144,7 @@ struct MidpointPositionIntegrator : public AbstractIntegrator
     // 惯性参考系下的线加速度
     Eigen::Vector3d linear_acceleration_in_world_frame{
         0.5
-                * (previous_attitude * datum_prev.linear_acceleration_
+                * (previous_attitude_ * datum_prev.linear_acceleration_
                    + pose_.so3() * datum.linear_acceleration_)
             + gravity_world_,
     };
@@ -166,19 +170,7 @@ struct MidpointPositionIntegrator : public AbstractIntegrator
 struct VisualIntegrator : public AbstractIntegrator
 {
   void Update(const Sophus::SO3d &delta_attitude,
-              const Eigen::Vector3d &delta_position)
-  {
-    // 新的朝向
-    Sophus::SO3d estimated_new_attitude{
-        pose_.so3() * delta_attitude,
-    };
-
-    // 更新位置
-    pose_.translation() += pose_.so3() * delta_position;
-    // 更新朝向
-    previous_attitude = pose_.so3();
-    pose_.so3()       = estimated_new_attitude;
-  }
+              const Eigen::Vector3d &delta_position);
 };
 
 } // namespace FastVIO

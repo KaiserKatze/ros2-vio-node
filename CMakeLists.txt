@@ -94,6 +94,11 @@ set(CORE_MODULE_FILES
   modules/ZUPT.cppm
 )
 
+set(CORE_MODULE_IMPLEMENTATIONS
+  modules/Integrator.cpp
+  modules/SensorYaml.cpp
+)
+
 set(VISUAL_SIM_MODULE_FILES
   src/VisualSim/Camera.cppm
   src/VisualSim/MeshPlot.cppm
@@ -107,6 +112,10 @@ set(VISUAL_SLAM_MODULE_FILES
   src/VisualSlam/CornerDetection.cppm
   src/VisualSlam/FastDetector.cppm
   src/VisualSlam/ImageDataLoader.cppm
+)
+
+set(VISUAL_SLAM_MODULE_IMPLEMENTATIONS
+  src/VisualSlam/EuRoC.cpp
 )
 
 # --- 辅助函数定义 ---
@@ -165,6 +174,8 @@ target_sources(
     FILE_SET CXX_MODULES
     TYPE CXX_MODULES
     FILES ${CORE_MODULE_FILES}
+  PRIVATE
+    ${CORE_MODULE_IMPLEMENTATIONS}
 )
 
 # ===== 仿真模块库 =====
@@ -190,6 +201,8 @@ target_sources(
     FILE_SET CXX_MODULES
     TYPE CXX_MODULES
     FILES ${VISUAL_SLAM_MODULE_FILES}
+  PRIVATE
+    ${VISUAL_SLAM_MODULE_IMPLEMENTATIONS}
 )
 
 # ===== 目标： 融合数据与轨迹估计 =====
