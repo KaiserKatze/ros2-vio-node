@@ -14,9 +14,9 @@ export module FastVIO:ErrorStateKalmanFilter;
 
 import std;
 
-import FastVIO:DatumFast;
-import FastVIO:DatumImu;
-import FastVIO:Stereo;
+import :DatumFast;
+import :DatumImu;
+import :Stereo;
 
 namespace FastVIO
 {

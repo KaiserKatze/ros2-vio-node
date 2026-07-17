@@ -1,6 +1,12 @@
+module;
+
+#include <meta>
+#include <string_view>
+#include <type_traits>
+
 export module std_reflect;
 
-import std;
+// import std;
 
 export namespace std::meta
 {

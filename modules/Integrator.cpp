@@ -7,7 +7,7 @@ module;
 
 module FastVIO;
 
-import FastVIO:Integrator;
+import :Integrator;
 
 namespace FastVIO
 {

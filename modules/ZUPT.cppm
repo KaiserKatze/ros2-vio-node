@@ -6,7 +6,7 @@ export module FastVIO:ZUPT;
 
 import std;
 
-import FastVIO:CircularBuffer;
+import :CircularBuffer;
 
 template <typename T /* Eigen::Vector */, typename U /* float or double */>
   requires std::is_floating_point_v<U>

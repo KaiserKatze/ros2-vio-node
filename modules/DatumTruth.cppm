@@ -8,7 +8,7 @@ export module FastVIO:DatumTruth;
 
 import std;
 
-import FastVIO:AbstractLoader;
+import :AbstractLoader;
 
 using namespace std::chrono_literals;
 

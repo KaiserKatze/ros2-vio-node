@@ -6,7 +6,7 @@ module;
 
 module FastVIO;
 
-import FastVIO:SensorYaml;
+import :SensorYaml;
 
 namespace FastVIO
 {
