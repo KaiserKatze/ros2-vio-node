@@ -16,6 +16,7 @@ RUN apt-get update -y && \
 # GCC
 #
 # @see: https://gcc.gnu.org/install/prerequisites.html
+# @see: https://gcc.gnu.org/releases.html
 # @see: https://github.com/KaiserKatze/Blog/wiki/0x0301-C-&-CPP
 #==================================================================================================================
 
