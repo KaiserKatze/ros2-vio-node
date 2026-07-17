@@ -1,10 +1,13 @@
 module;
 
+#include <limits>
+#include <vector>
+
 #include <Eigen/Dense>
 
 export module FastVIO.VisualSim:Camera;
 
-import std;
+// import std;
 
 namespace FastVIO::VisualSim
 {

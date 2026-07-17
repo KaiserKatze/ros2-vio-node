@@ -1,10 +1,19 @@
 module;
 
+#include <algorithm>
+#include <cstddef>
+#include <format>
+#include <functional>
+#include <limits>
+#include <memory>
+#include <optional>
+#include <stdexcept>
+
 #include <Eigen/Dense>
 
 export module FastVIO.VisualSim:Path;
 
-import std;
+// import std;
 
 import :Room;
 import :StereoRig;

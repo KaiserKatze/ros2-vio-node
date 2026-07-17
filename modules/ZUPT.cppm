@@ -1,10 +1,16 @@
 module;
 
+#include <algorithm>
+#include <cstddef>
+#include <cstdio>
+#include <format>
+#include <print>
+
 #include <Eigen/Dense>
 
 export module FastVIO:ZUPT;
 
-import std;
+// import std;
 
 import :CircularBuffer;
 

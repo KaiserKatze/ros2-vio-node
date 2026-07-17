@@ -1,10 +1,12 @@
 module;
 
+#include <cstdint>
+
 #include <Eigen/Core>
 
 export module FastVIO:Stereo;
 
-import std;
+// import std;
 
 export namespace FastVIO
 {

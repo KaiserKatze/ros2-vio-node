@@ -1,10 +1,15 @@
 module;
 
+#include <cstdio>
+#include <print>
+#include <tuple>
+#include <vector>
+
 #include <Eigen/Dense>
 
 export module FastVIO.VisualSim:StereoRig;
 
-import std;
+// import std;
 
 import :Camera;
 

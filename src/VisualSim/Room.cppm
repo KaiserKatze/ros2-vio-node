@@ -1,10 +1,18 @@
 module;
 
+#include <algorithm>
+#include <cstdio>
+#include <iostream>
+#include <print>
+#include <sstream>
+#include <stdexcept>
+#include <vector>
+
 #include <Eigen/Dense>
 
 export module FastVIO.VisualSim:Room;
 
-import std;
+// import std;
 
 namespace FastVIO::VisualSim
 {

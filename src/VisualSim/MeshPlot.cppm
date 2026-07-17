@@ -1,5 +1,9 @@
 module;
 
+#include <algorithm>
+#include <map>
+#include <vector>
+
 #include <Eigen/Dense>
 
 #include <opencv2/core/types.hpp>
@@ -8,7 +12,7 @@ module;
 
 export module FastVIO.VisualSim:MeshPlot;
 
-import std;
+// import std;
 
 import :Room;
 
