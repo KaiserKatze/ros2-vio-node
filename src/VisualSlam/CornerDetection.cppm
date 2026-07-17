@@ -1,10 +1,7 @@
 module;
 
-#include <Eigen/Dense>
-
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
-#include <opencv2/core/eigen.hpp>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/core/types.hpp>
 #include <opencv2/features2d.hpp>

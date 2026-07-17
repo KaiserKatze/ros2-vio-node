@@ -9,7 +9,7 @@ export module FastVIO:FastDetector;
 
 import std;
 
-import FastVIO:CornerDetection;
+import :CornerDetection;
 
 export namespace FastVIO::CornerDetection
 {

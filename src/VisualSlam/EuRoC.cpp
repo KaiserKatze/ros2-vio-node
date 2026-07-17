@@ -19,7 +19,7 @@ module;
 
 module FastVIO;
 
-import FastVIO:EuRoC;
+import :EuRoC;
 
 namespace FastVIO
 {

@@ -1,5 +1,7 @@
 module;
 
+#include <Eigen/Dense>
+
 #include <opencv2/core/types.hpp>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
@@ -8,7 +10,7 @@ export module FastVIO.VisualSim:MeshPlot;
 
 import std;
 
-import FastVIO.VisualSim:Room;
+import :Room;
 
 namespace FastVIO::VisualSim
 {
