@@ -36,8 +36,8 @@ export namespace FastVIO::CornerDetection
 
 struct AbstractDetector
 {
-  static constexpr size_t minCorners{10};
-  static constexpr size_t maxCorners{200};
+  static constexpr std::size_t minCorners{10};
+  static constexpr std::size_t maxCorners{200};
   static_assert(minCorners <= maxCorners,
                 "minCorners must be less than or equal to maxCorners");
   static constexpr double atol_parallax{1.5};
@@ -95,7 +95,7 @@ struct SubPixAdaptor
         cv::cornerSubPix(adaptor.image_, vec_f, adaptor.win_size_,
                          adaptor.zero_zone_, adaptor.criteria_);
 
-        for (size_t i = 0; i < vec.size(); ++i)
+        for (std::size_t i = 0; i < vec.size(); ++i)
         {
           vec[i].x = vec_f[i].x;
           vec[i].y = vec_f[i].y;

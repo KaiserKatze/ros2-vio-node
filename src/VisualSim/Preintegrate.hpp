@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <span>
 
 #include <Eigen/Core>
@@ -62,7 +63,7 @@ struct Preintegration
 
     double sum_dt{0.0};
 
-    for (size_t i = 0; i < imu_data.size() - 1; ++i)
+    for (std::size_t i = 0; i < imu_data.size() - 1; ++i)
     {
       const auto &imu_i{imu_data[i]};
       const auto &imu_j{imu_data[i + 1]};

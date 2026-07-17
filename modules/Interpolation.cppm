@@ -44,10 +44,10 @@ DataType Interpolate(const std::vector<DataType> &data,
   }
 
   // 标准二分查找定位左右区间
-  size_t left{0}, right{data.size() - 1};
+  std::size_t left{0}, right{data.size() - 1};
   while (left + 1 < right)
   {
-    size_t mid{(left + right) / 2};
+    std::size_t mid{(left + right) / 2};
     if (data[mid].timestamp_ < timestamp)
     {
       left = mid;

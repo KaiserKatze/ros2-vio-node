@@ -36,7 +36,7 @@ struct DatumImu
 
     std::ifstream file{path_imu_csv};
     std::string line;
-    size_t line_num{0};
+    std::size_t line_num{0};
 
     // 跳过表头
     std::getline(file, line);

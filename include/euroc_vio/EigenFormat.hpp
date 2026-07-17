@@ -1,7 +1,16 @@
+module;
+
+#include <concepts>
+#include <cstddef>
+#include <meta>
+#include <string_view>
+#include <type_traits>
+
+import <Eigen/Dense>;
+
 export module EigenFormat;
 
-import std;
-import <Eigen/Dense>;
+// import std;
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  §1  Concepts — identify Eigen dense types via static reflection

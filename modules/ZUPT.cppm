@@ -27,7 +27,7 @@ T GetAverage_IQR(std::vector<std::pair<T, U>> &points)
   std::ranges::sort(points, std::less<>{},
                     [](const auto &e) { return e.second; });
 
-  size_t n{points.size()};
+  std::size_t n{points.size()};
 
   // 辅助 Lambda：使用线性插值计算任意百分位数
   auto get_percentile = [&](U percentile) -> U
@@ -38,7 +38,7 @@ T GetAverage_IQR(std::vector<std::pair<T, U>> &points)
     }
 
     U pos{(static_cast<U>(n) - static_cast<U>(1.0)) * percentile};
-    size_t idx{static_cast<size_t>(std::floor(pos))};
+    std::size_t idx{static_cast<std::size_t>(std::floor(pos))};
     U frac{pos - static_cast<U>(idx)};
 
     if (idx + 1 < n)

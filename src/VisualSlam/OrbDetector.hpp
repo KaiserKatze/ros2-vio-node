@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <iostream>
 #include <ranges>
@@ -84,7 +85,7 @@ public:
           // 按响应值降序排序，保留最显著的角点
           std::ranges::sort(new_kp, std::greater<>{}, &cv::KeyPoint::response);
 
-          if (new_kp.size() > static_cast<size_t>(num_needed))
+          if (new_kp.size() > static_cast<std::size_t>(num_needed))
           {
             new_kp.resize(num_needed);
           }

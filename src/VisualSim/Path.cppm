@@ -431,7 +431,7 @@ public:
   std::optional<typename StereoRig<value_type>::Frame>
   GetImage(const StereoRig<value_type> &rig, value_type time) const;
 
-  auto operator[](size_t index) const;
+  auto operator[](std::size_t index) const;
 
   value_type GetDuration() const;
 
@@ -501,7 +501,7 @@ PathManager<value_type>::GetImage(const StereoRig<value_type> &rig,
 }
 
 template <typename value_type>
-auto PathManager<value_type>::operator[](size_t index) const
+auto PathManager<value_type>::operator[](std::size_t index) const
 {
   return queue_path_[index];
 }

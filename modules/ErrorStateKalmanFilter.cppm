@@ -2,6 +2,7 @@ module;
 
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <cmath>
 #include <concepts>
 #include <cstdint>

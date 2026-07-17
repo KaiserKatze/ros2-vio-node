@@ -40,7 +40,7 @@ struct DatumFast
 
     // 跳过表头
     std::getline(file, line);
-    size_t line_num{0};
+    std::size_t line_num{0};
     while (std::getline(file, line))
     {
       ++line_num;

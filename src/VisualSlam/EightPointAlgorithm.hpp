@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <tuple>
 
 #include <Eigen/Dense>
@@ -46,7 +47,7 @@ struct ProjectiveGeometry
     virtual void DistortPoint(Eigen::Vector2d &) const {}
   };
 
-  template <size_t nk = 2, size_t np = 2, typename E = double>
+  template <std::size_t nk = 2, std::size_t np = 2, typename E = double>
   struct DistortFunctionBrownConrady : DistortFunction
   {
     using VectorK = Eigen::Matrix<E, nk, 1>;

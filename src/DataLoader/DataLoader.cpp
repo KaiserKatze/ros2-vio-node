@@ -55,7 +55,7 @@ struct DatumTrajectory
       std::stringstream ss(line);
       DatumTrajectory DatumTrajectory;
       DatumTrajectory.timestamp = AbstractLoader::get_item_as_int64(ss, delim);
-      for (size_t i = 0; i < DatumTrajectory.value.size(); ++i)
+      for (std::size_t i = 0; i < DatumTrajectory.value.size(); ++i)
       {
         DatumTrajectory.value[i]
             = AbstractLoader::get_item_as_double(ss, delim);
@@ -163,7 +163,7 @@ private:
       return;
     }
 
-    static size_t index{0};
+    static std::size_t index{0};
     const auto &msg_pose{path_msg_.poses[index]};
     nav_msgs::msg::Path path_pose_msg;
     path_pose_msg.header.frame_id = DEFAULT_FRAME_ID;

@@ -1,6 +1,7 @@
 module;
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdio>
 #include <iostream>
 #include <print>
@@ -116,9 +117,9 @@ struct Room
     //====================================
     // 更新矩阵表示
 
-    const size_t total{object_points_.size()};
+    const std::size_t total{object_points_.size()};
     object_matrix_.resize(3, total);
-    for (size_t i = 0; i < total; ++i)
+    for (std::size_t i = 0; i < total; ++i)
     {
       const auto point{object_points_[i]};
       object_matrix_.col(i) = Point3{
@@ -138,7 +139,7 @@ struct Room
     auto it{std::lower_bound(object_points_.begin(), object_points_.end(), p)};
     if (it != object_points_.end() && *it == p)
     {
-      return static_cast<size_t>(std::distance(object_points_.begin(), it));
+      return static_cast<std::size_t>(std::distance(object_points_.begin(), it));
     }
     std::stringstream ss;
     ss << "找不到点 [" << p[0] << ", " << p[1] << ", " << p[2]

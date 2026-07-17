@@ -58,8 +58,8 @@ using namespace std::chrono_literals;
 inline static constexpr char PATH_CSV_FILE[] = "euroc_vio.csv";
 
 template <typename VectorType>
-std::vector<size_t> KeepSmallestElement(const VectorType &input,
-                                        size_t maxCount)
+std::vector<std::size_t> KeepSmallestElement(const VectorType &input,
+                                        std::size_t maxCount)
 {
   if (maxCount == 0)
   {
@@ -67,9 +67,9 @@ std::vector<size_t> KeepSmallestElement(const VectorType &input,
   }
   const auto buildIndexedVec = [](const VectorType &vec)
   {
-    std::vector<std::pair<typename VectorType::value_type, size_t>> indexed;
+    std::vector<std::pair<typename VectorType::value_type, std::size_t>> indexed;
     indexed.reserve(vec.size());
-    for (size_t i = 0; i < vec.size(); ++i)
+    for (std::size_t i = 0; i < vec.size(); ++i)
     {
       indexed.emplace_back(vec[i], i);
     }
@@ -80,7 +80,7 @@ std::vector<size_t> KeepSmallestElement(const VectorType &input,
   if (maxCount >= indexed.size())
   {
     std::sort(indexed.begin(), indexed.end(), compare);
-    std::vector<size_t> indices;
+    std::vector<std::size_t> indices;
     indices.reserve(indexed.size());
     for (const auto &p : indexed)
     {
@@ -92,9 +92,9 @@ std::vector<size_t> KeepSmallestElement(const VectorType &input,
                    indexed.end(), compare);
   // 前 maxCount 个元素不一定有序，需要排序
   std::sort(indexed.begin(), indexed.begin() + maxCount, compare);
-  std::vector<size_t> indices;
+  std::vector<std::size_t> indices;
   indices.reserve(maxCount);
-  for (size_t i = 0; i < maxCount; ++i)
+  for (std::size_t i = 0; i < maxCount; ++i)
   {
     indices.push_back(indexed[i].second);
   }
@@ -267,14 +267,14 @@ struct EuRoC
   auto Solve(std::vector<PointType> const &pts0,
              std::vector<PointType> const &pts1) const
   {
-    const size_t numPts{pts0.size()};
+    const std::size_t numPts{pts0.size()};
     if (numPts != pts1.size())
     {
       throw std::runtime_error{"pts0 and pts1 must have the same size"};
     }
     Eigen::Matrix3Xd M0(3, numPts);
     Eigen::Matrix3Xd M1(3, numPts);
-    for (size_t i{0}; i < numPts; ++i)
+    for (std::size_t i{0}; i < numPts; ++i)
     {
       const PointType &pt0{pts0[i]};
       const PointType &pt1{pts1[i]};
@@ -318,7 +318,7 @@ struct Corners
 
 struct CornerPair
 {
-  size_t frame_index;
+  std::size_t frame_index;
   cv::Point2i corner_left;
   cv::Point2i corner_right;
 };
@@ -342,7 +342,7 @@ struct CornerPair
 //     std::vector<cv::Point3f> result;
 //     result.reserve(pts0.size());
 
-//     for (size_t i{0}; i < pts0.size(); ++i)
+//     for (std::size_t i{0}; i < pts0.size(); ++i)
 //     {
 //       const cv::Point2i &pt0{pts0[i]};
 //       const cv::Point2i &pt1{pts1[i]};
@@ -392,7 +392,7 @@ private:
   } prev;
 
   /* QuEst 算法支持 5 个以上角点 */
-  static constexpr size_t minCorners{5};
+  static constexpr std::size_t minCorners{5};
   static constexpr int maxCorners{100};
   static constexpr double qualityLevel{0.3};
   static constexpr double minDistance{7.0};
@@ -406,7 +406,7 @@ private:
   static constexpr int maxLevel{2};
 
   std::vector<cv::Scalar> colors;
-  static constexpr size_t nColors{255};
+  static constexpr std::size_t nColors{255};
 
   const EuRoC euroc{};
 
@@ -414,7 +414,7 @@ private:
   std::vector<std::vector<CornerPair>> corner_track_store;
 
   // 记录已经处理的图像帧的个数
-  size_t frame_counter{0};
+  std::size_t frame_counter{0};
 
   std::fstream file;
 
@@ -463,7 +463,7 @@ private:
                         std::vector<unsigned char> const &status) const
   {
     std::vector<cv::Point2f> result;
-    for (size_t i{0}; i < pts.size(); ++i)
+    for (std::size_t i{0}; i < pts.size(); ++i)
     {
       if (status[i] == 1)
       {
@@ -619,7 +619,7 @@ private:
   VectorType FilterWithMask(VectorType &pts, MaskType &mask) const
   {
     VectorType filteredPts;
-    for (size_t i{0}; i < pts.size(); ++i)
+    for (std::size_t i{0}; i < pts.size(); ++i)
     {
       if (mask[i])
       {
@@ -630,7 +630,7 @@ private:
   }
 
   template <typename MaskType>
-  size_t MaskLength(MaskType mask) const
+  std::size_t MaskLength(MaskType mask) const
   {
     return std::ranges::count_if(mask, [](bool e) { return e; });
   }
@@ -660,7 +660,7 @@ private:
     };
     const std::vector<bool> mask{CreateMask(ptsLeft, ptsRight, compare)};
     // 得到的 error 向量与筛选后的 ptsLeft 等长
-    if (const size_t countCorners{MaskLength(mask)}; countCorners < minCorners)
+    if (const std::size_t countCorners{MaskLength(mask)}; countCorners < minCorners)
     {
       std::stringstream ss;
       ss << "Not enough corners after parallax filtering, "
@@ -703,7 +703,7 @@ private:
         throw std::runtime_error{
             "sumL1Error and error must have the same size"};
       }
-      for (size_t i{0}; i < sumL1Error.size(); ++i)
+      for (std::size_t i{0}; i < sumL1Error.size(); ++i)
       {
         sumL1Error[i] += error[i];
       }
@@ -722,7 +722,7 @@ private:
                                Compare compare) const
   {
     std::vector<bool> mask(pts0.size(), false);
-    for (size_t i{0}; i < pts0.size(); ++i)
+    for (std::size_t i{0}; i < pts0.size(); ++i)
     {
       const cv::Point2f ptMinus{pts0[i] - pts1[i]};
       if (compare(ptMinus))
@@ -789,7 +789,7 @@ private:
     {
       throw std::runtime_error{"sumL1Error and error must have the same size"};
     }
-    for (size_t i{0}; i < sumL1Error.size(); ++i)
+    for (std::size_t i{0}; i < sumL1Error.size(); ++i)
     {
       sumL1Error[i] += error[i];
     }
@@ -803,7 +803,7 @@ private:
    * @param gray_r1 右目灰度图像
    */
   bool FindCorners(const cv::Mat &gray_l1, const cv::Mat &gray_r1,
-                   Corners &corners, const size_t frame_index)
+                   Corners &corners, const std::size_t frame_index)
   {
     std::vector<double> sumL1Error;
     // 上一帧左目角点
@@ -885,15 +885,15 @@ private:
            corners_loopback.size());
 
     // 根据 sumL1Error 将角点排序，保留误差最小的 20 个交点
-    static constexpr size_t maxCorners{20};
-    const std::vector<size_t> bestIndices{
+    static constexpr std::size_t maxCorners{20};
+    const std::vector<std::size_t> bestIndices{
         KeepSmallestElement(sumL1Error, maxCorners)};
 
     corners.corners_l0.reserve(maxCorners);
     corners.corners_r0.reserve(maxCorners);
     corners.corners_l1.reserve(maxCorners);
     corners.corners_r1.reserve(maxCorners);
-    for (const size_t bestIndex : bestIndices)
+    for (const std::size_t bestIndex : bestIndices)
     {
       const cv::Point2i best_corner_l0{
           static_cast<cv::Point2i>(corners_l0[bestIndex])};
@@ -949,7 +949,7 @@ private:
                 std::vector<PointType> const &pts1, cv::Size offset0,
                 cv::Size offset1, std::string_view label) const
   {
-    for (size_t index{0}; index < pts0.size(); ++index)
+    for (std::size_t index{0}; index < pts0.size(); ++index)
     {
       cv::Point2f pt0{pts0[index]};
       cv::Point2f pt1{pts1[index]};
@@ -1125,7 +1125,7 @@ public:
 #if 0
     // 生成随机颜色
     cv::RNG rng;
-    for (size_t i = 0; i < nColors; ++i)
+    for (std::size_t i = 0; i < nColors; ++i)
     {
       colors.push_back(cv::Scalar(rng.uniform(0, 256), rng.uniform(0, 256),
                                   rng.uniform(0, 256)));

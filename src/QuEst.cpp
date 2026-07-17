@@ -3,7 +3,7 @@
 #include <iostream>
 #include <random>
 #include <vector>
-
+#include <cstddef>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -136,12 +136,12 @@ public:
               const VectorXd &b8, const VectorXd &b9, const VectorXd &b10);
 
   // static bool QuEst_degenerate(const CMatrixDouble& allData, const
-  // std::vector<size_t>& useIndices); static void QuEst_fit(const
-  // CMatrixDouble& allData, const std::vector<size_t>& useIndices,
+  // std::vector<std::size_t>& useIndices); static void QuEst_fit(const
+  // CMatrixDouble& allData, const std::vector<std::size_t>& useIndices,
   // 	vector<CMatrixDouble>& fitModels);
   // static void QuEst_distance(const CMatrixDouble& allData, const
   // vector<CMatrixDouble>& testModels, 	const double distanceThreshold, unsigned
-  // int& out_bestModelIndex, std::vector<size_t>& out_inlierIndices);
+  // int& out_bestModelIndex, std::vector<std::size_t>& out_inlierIndices);
 };
 
 // class constructor ----------
@@ -700,11 +700,11 @@ void QuEst::QuEst_RANSAC(const Matrix3Xd &x1, const Matrix3Xd &x2)
 
   // 	// run RANSAC ----------
   // 	CMatrixDouble best_model;
-  // 	std::vector<size_t> best_inliers;
+  // 	std::vector<std::size_t> best_inliers;
   // 	const double DIST_THRESHOLD = 0.0001;  // 1e-4
   // 	const unsigned int minimumSizeSamplesToFit = 20;
   // 	const double prob_good_sample = 0.8;
-  // 	const size_t maxIter = 20;
+  // 	const std::size_t maxIter = 20;
 
   // 	math::RANSAC myransac;
   // 	myransac.execute(data,
@@ -1059,11 +1059,11 @@ void QuEst::QuEst_distance(const MatrixXd &data, const VectorXd &test_model,
 }
 
 // bool QuEst::QuEst_degenerate(const CMatrixDouble& allData, const
-// std::vector<size_t>& useIndices){ 	return false;
+// std::vector<std::size_t>& useIndices){ 	return false;
 // }
 
 // void QuEst::QuEst_fit(const CMatrixDouble& allData, const
-// std::vector<size_t>& useIndices, 	vector<CMatrixDouble>& fitModels){
+// std::vector<std::size_t>& useIndices, 	vector<CMatrixDouble>& fitModels){
 
 // // cout<<"fit function start
 // ---------------------------------------"<<endl<<endl;
@@ -1155,7 +1155,7 @@ void QuEst::QuEst_distance(const MatrixXd &data, const VectorXd &test_model,
 
 // void QuEst::QuEst_distance(const CMatrixDouble& allData, const
 // vector<CMatrixDouble>& testModels, 	const double distanceThreshold,unsigned
-// int& out_bestModelIndex,std::vector<size_t>& out_inlierIndices){
+// int& out_bestModelIndex,std::vector<std::size_t>& out_inlierIndices){
 
 // 	out_bestModelIndex = 0;
 // 	const CMatrixDouble& M = testModels[0];
