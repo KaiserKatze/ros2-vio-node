@@ -6,7 +6,7 @@ export module FastVIO.VisualSim:StereoRig;
 
 import std;
 
-import FastVIO:VisualSim:Camera;
+import FastVIO.VisualSim:Camera;
 
 namespace FastVIO::VisualSim
 {

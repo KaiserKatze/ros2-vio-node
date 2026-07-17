@@ -6,8 +6,8 @@ export module FastVIO.VisualSim:Path;
 
 import std;
 
-import FastVIO:VisualSim:Room;
-import FastVIO:VisualSim:StereoRig;
+import FastVIO.VisualSim:Room;
+import FastVIO.VisualSim:StereoRig;
 
 namespace FastVIO::VisualSim
 {

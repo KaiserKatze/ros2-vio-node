@@ -8,7 +8,7 @@ export module FastVIO.VisualSim:MeshPlot;
 
 import std;
 
-import FastVIO:VisualSim:Room;
+import FastVIO.VisualSim:Room;
 
 namespace FastVIO::VisualSim
 {
