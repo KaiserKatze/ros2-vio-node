@@ -3,17 +3,13 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
-#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <format>
 #include <map>
 #include <meta>
 #include <print>
-#include <stdexcept>
 #include <tuple>
-#include <type_traits>
 #include <vector>
 
 #include <boost/circular_buffer.hpp>
@@ -25,7 +21,6 @@
 
 #include "euroc_vio/DatumFast.hpp"
 #include "euroc_vio/DatumImu.hpp"
-#include "euroc_vio/Interpolation.hpp"
 #include "euroc_vio/StereoObservation.hpp"
 
 // 选择“只使用角位移”还是“使用角位移和平移方向”
@@ -121,6 +116,20 @@ public:
     value_type max_sensor_jitter_{10.0}; // milliseconds
     std::size_t history_buffer_margin_{16};
     StereoCameraModel stereo_camera_model_{};
+
+    using ProjectionMatrix = Eigen::Matrix<double, 3, 4>;
+    // 经过立体矫正后，左目相机的 3x4 投影矩阵
+    ProjectionMatrix proj_left_{
+        {1.0, 0.0, 0.0, 0.0},
+        {0.0, 1.0, 0.0, 0.0},
+        {0.0, 0.0, 1.0, 0.0},
+    };
+    // 经过立体矫正后，右目相机的 3x4 投影矩阵
+    ProjectionMatrix proj_right_{
+        {1.0, 0.0, 0.0, 0.0},
+        {0.0, 1.0, 0.0, 0.0},
+        {0.0, 0.0, 1.0, 0.0},
+    };
   };
 
 #pragma endregion
@@ -470,7 +479,7 @@ public:
     // 体坐标系下的重力加速度
     const Vector3 gravity_body{C_BW * nominal_state.gravity_};
     // 设置名义状态
-    nominal_state_.pose_               = {};
+    nominal_state_.pose_               = Pose{};
     nominal_state_.linear_velocity_    = Vector3::Zero();
     nominal_state_.accelerometer_bias_ = Vector3::Zero();
     nominal_state_.gyroscope_bias_     = Vector3::Zero();

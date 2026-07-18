@@ -1,2 +1,4 @@
 # THIS IS A YAML FILE FOR CLANGD CONFIGURATION
 # @see: https://clangd.llvm.org/config.html
+CompileFlags:                     # Tweak the parse settings
+  Add: [-xc++, -Wall]             # treat all files as C++, enable more warnings

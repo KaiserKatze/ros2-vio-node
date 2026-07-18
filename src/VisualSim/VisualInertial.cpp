@@ -32,16 +32,15 @@ using namespace std::chrono_literals;
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/time.hpp>
 
+#include "SensorYaml.hpp"
 #include "euroc_vio/AbstractLoader.hpp"
+#include "euroc_vio/DatumFast.hpp"
+#include "euroc_vio/DatumImu.hpp"
+#include "euroc_vio/DatumTruth.hpp"
 #include "euroc_vio/ErrorStateKalmanFilter.hpp"
 #include "euroc_vio/Interpolation.hpp"
 #include "euroc_vio/SensorState.hpp"
 #include "euroc_vio/ZUPT.hpp"
-#include "SensorYaml.hpp"
-#include "euroc_vio/DatumFast.hpp"
-#include "euroc_vio/DatumImu.hpp"
-#include "euroc_vio/DatumTruth.hpp"
-
 
 namespace FastVIO
 {
@@ -675,9 +674,11 @@ public:
 
     if (config_.use_true_init_pose_ && !config_.data_truth_.empty())
     {
-      init_state.position_           = config_.data_truth_[0].position_;
+      init_state.pose_ = typename ESKF::Pose{
+          config_.data_truth_[0].attitude_,
+          config_.data_truth_[0].position_,
+      };
       init_state.linear_velocity_    = config_.data_truth_[0].velocity_;
-      init_state.attitude_           = config_.data_truth_[0].attitude_;
       init_state.accelerometer_bias_ = config_.data_truth_[0].bias_accel_;
       init_state.gyroscope_bias_     = config_.data_truth_[0].bias_gyro_;
       init_state.gravity_
@@ -686,10 +687,6 @@ public:
     else
     {
       // TODO 尚未编码专用的初始姿态解算机制
-      if (!config_.data_truth_.empty())
-      {
-        init_state.attitude_ = config_.data_truth_[0].attitude_;
-      }
     }
     eskf.SetNominalState(init_state);
 
@@ -730,7 +727,7 @@ public:
         // 获取融合后的最新名义状态
         auto state{eskf.GetNominalState()};
         AppendToCsv(datum_fast.timestamp_, state.GetPosition(),
-                    state.GetAttitude());
+                    state.GetAttitude().unit_quaternion());
       }
     }
   }
