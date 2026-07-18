@@ -21,7 +21,7 @@ colcon build --packages-select euroc_vio \
 
 rm -rf build install log
 colcon build --packages-select euroc_vio \
-  --parallel-workers $(nproc) \
+  --parallel-workers 1 \
   --cmake-args -G Ninja \
     -D CMAKE_BUILD_TYPE=RelWithDebInfo \
     -D OpenCV_DIR=/usr/local/lib/cmake/opencv4 \
