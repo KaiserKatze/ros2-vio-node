@@ -210,6 +210,8 @@ RUN rm -rf sophus
 # @note: 固定选用 OpenCV 4.x 版本，因为 ROS2 cv_bridge 尚不支持 OpenCV 5
 #==================================================================================================================
 
+RUN apt-get install -y libgtk2.0-dev pkg-config
+
 WORKDIR /app
 RUN mkdir opencv_contrib && cd opencv_contrib && git init && git remote add origin https://github.com/opencv/opencv_contrib.git && \
     export OPENCV_CONTRIB_LATEST_TAG=$(git ls-remote --tags 2>/dev/null |\
