@@ -195,18 +195,8 @@ public:
 
     typename ESKF::Config eskf_config;
 
-    auto path_cam0_yaml{path_mav0 / "cam0" / "sensor.yaml"};
-    auto opt_sensor_config_cam0{SensorYaml::ReadSensorYaml(path_cam0_yaml)};
-    if (opt_sensor_config_cam0.has_value())
-    {
-      auto sensor_config_cam0_ = opt_sensor_config_cam0.value();
-    }
-    else
-    {
-      throw std::runtime_error{std::format(
-          "Failed to parse camera config yaml '{}'.", path_cam0_yaml.c_str()
-      )};
-    }
+    cv::cv2eigen(euroc_.P0, eskf_config.stereo_camera_model_.proj_left_);
+    cv::cv2eigen(euroc_.P1, eskf_config.stereo_camera_model_.proj_right_);
 
     auto path_imu0_yaml{path_mav0 / "imu0" / "sensor.yaml"};
     auto opt_sensor_config_imu0{SensorYaml::ReadSensorYaml(path_imu0_yaml)};
@@ -221,15 +211,6 @@ public:
           "Failed to parse IMU config yaml '{}'.", path_imu0_yaml.c_str()
       )};
     }
-
-    using ProjectionMatrix = Eigen::Matrix<double, 3, 4>;
-    // 经过立体矫正后，左目相机的 3x4 投影矩阵
-    ProjectionMatrix proj_left{};
-    // 经过立体矫正后，右目相机的 3x4 投影矩阵
-    ProjectionMatrix proj_right{};
-    // TODO 从 EuRoC 实例中获取投影矩阵
-    eskf_config.proj_left_  = proj_left;
-    eskf_config.proj_right_ = proj_right;
 
     eskf_ = ESKF{eskf_config};
   }
@@ -492,7 +473,7 @@ int main(int argc, char *argv[])
     std::print(stderr, "Visualization enabled.\n");
   }
 
-  SlamConfig config;
+  FastVIO::SlamConfig config;
   config.do_visualization_ = do_visualization;
 
   FastVIO::StereoSlam inst{path_mav0, config};

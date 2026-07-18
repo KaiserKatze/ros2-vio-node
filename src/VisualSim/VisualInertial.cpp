@@ -663,9 +663,9 @@ public:
                       { return std::make_tuple(e.timestamp, !e.is_imu); });
 
     typename ESKF::Config eskf_config;
-    eskf_config.imu_rate_   = config_.sensor_config_imu0_.rate_hz_;
-    eskf_config.proj_left_  = config_.proj_left_;
-    eskf_config.proj_right_ = config_.proj_right_;
+    eskf_config.imu_rate_ = config_.sensor_config_imu0_.rate_hz_;
+    eskf_config.stereo_camera_model_.proj_left_  = config_.proj_left_;
+    eskf_config.stereo_camera_model_.proj_right_ = config_.proj_right_;
     ESKF eskf{eskf_config};
     // 初始化 ESKF 的标称状态
     typename ESKF::NominalStateVariable init_state;

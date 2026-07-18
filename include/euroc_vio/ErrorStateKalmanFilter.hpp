@@ -9,6 +9,7 @@
 #include <map>
 #include <meta>
 #include <print>
+#include <ranges>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -117,20 +118,6 @@ public:
     value_type max_sensor_jitter_{10.0}; // milliseconds
     std::size_t history_buffer_margin_{16};
     StereoCameraModel stereo_camera_model_{};
-
-    using ProjectionMatrix = Eigen::Matrix<double, 3, 4>;
-    // 经过立体矫正后，左目相机的 3x4 投影矩阵
-    ProjectionMatrix proj_left_{
-        {1.0, 0.0, 0.0, 0.0},
-        {0.0, 1.0, 0.0, 0.0},
-        {0.0, 0.0, 1.0, 0.0},
-    };
-    // 经过立体矫正后，右目相机的 3x4 投影矩阵
-    ProjectionMatrix proj_right_{
-        {1.0, 0.0, 0.0, 0.0},
-        {0.0, 1.0, 0.0, 0.0},
-        {0.0, 0.0, 1.0, 0.0},
-    };
   };
 
 #pragma endregion
@@ -198,6 +185,8 @@ private:
     using const_iterator = typename buffer_t::const_iterator;
 
     buffer_t buffer_;
+
+    HistoryBuffer() : buffer_{} {}
 
     /**
      * @brief 初始化固定容量历史缓冲区。
@@ -398,6 +387,8 @@ private:
 #pragma region INITIALIZATION
 
 public:
+  ErrorStateKalmanFilter() {}
+
   /**
    * @brief 构造函数。
    *
@@ -784,7 +775,7 @@ public:
     pts_left.reserve(len);
     pts_right.reserve(len);
     feature_ids.reserve(len);
-    for (const Landmark &landmark : landmarks)
+    for (const Landmark &landmark : landmarks | std::views::values)
     {
       std::uint32_t feature_id{landmark.id_};
       const auto &landmark_pos{landmark.position_};
@@ -924,7 +915,7 @@ private:
         ++landmark_it;
       }
 
-      if (landmark_it != landmark_end && landmark_it->first == ob->feature_id_)
+      if (landmark_it != landmark_end && landmark_it->first == ob.feature_id_)
       {
         Landmark &landmark{landmark_it->second};
         assert(timestamp > landmark.timestamp_);
@@ -1033,12 +1024,12 @@ private:
 
   Vector3 ProjectLeftHomo(const Vector3 &landmark) const noexcept
   {
-    return ProjectHomo(config_.proj_left_, landmark);
+    return ProjectHomo(config_.stereo_camera_model_.proj_left_, landmark);
   }
 
   Vector3 ProjectRightHomo(const Vector3 &landmark) const noexcept
   {
-    return ProjectHomo(config_.proj_right_, landmark);
+    return ProjectHomo(config_.stereo_camera_model_.proj_right_, landmark);
   }
 
   /**
@@ -1057,12 +1048,12 @@ private:
 
   Vector2 ProjectLeftNonhomo(const Vector3 &landmark) const noexcept
   {
-    return ProjectNonhomo(config_.proj_left_, landmark);
+    return ProjectNonhomo(config_.stereo_camera_model_.proj_left_, landmark);
   }
 
   Vector2 ProjectRightNonhomo(const Vector3 &landmark) const noexcept
   {
-    return ProjectNonhomo(config_.proj_right_, landmark);
+    return ProjectNonhomo(config_.stereo_camera_model_.proj_right_, landmark);
   }
 
   /**
@@ -1446,7 +1437,7 @@ private:
   // 上一帧 IMU 数据的缓存结构
   DatumImu last_imu_datum_{};
   // 历史状态缓冲区
-  HistoryBuffer history_buffer_;
+  HistoryBuffer history_buffer_{};
   LandmarkDatabase landmark_database_;
 
 #pragma endregion
