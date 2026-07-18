@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -36,7 +37,7 @@ bool try_parse_double(std::string_view s, double &value)
 {
   try
   {
-    size_t idx;
+    std::size_t idx;
     value = std::stod(s, &idx);
     return idx > 0;
   }
@@ -51,7 +52,7 @@ std::vector<DataRow> read_csv_stream(std::istream &in)
 {
   std::vector<DataRow> data;
   std::string line;
-  // size_t line_number = 0;
+  // std::size_t line_number = 0;
 
   // 跳过表头
   std::getline(in, line);
@@ -160,7 +161,7 @@ void plot_with_gnuplot(const std::vector<double> &t,
               "'-' with lines lw 2 title 'polyfit'\n");
 
   // 原始数据
-  for (size_t i = 0; i < t.size(); ++i)
+  for (std::size_t i = 0; i < t.size(); ++i)
   {
     fprintf(gp, "%f %f\n", t[i], y[i]);
   }
@@ -214,7 +215,7 @@ int main(int argc, char **argv)
   auto itr                 = data.cbegin();
   const DataRow &first_row = *itr;
 
-  size_t n_columns = first_row.size();
+  std::size_t n_columns = first_row.size();
   if (n_columns < 2)
   {
     std::cerr << "第一行的列数 (" << n_columns << ") 小于2!\n";
@@ -252,7 +253,7 @@ int main(int argc, char **argv)
     //   break; // 只处理前 10 秒的数据，避免过长时间导致拟合过度复杂
     // }
     t.push_back(time_delta);
-    for (size_t i = 1; i < n_columns; ++i)
+    for (std::size_t i = 1; i < n_columns; ++i)
     {
       columns[i].push_back(row[i]);
     }
@@ -261,7 +262,7 @@ int main(int argc, char **argv)
   int degree;
   degree = 2; //
 
-  for (size_t i = 1; i < n_columns; ++i)
+  for (std::size_t i = 1; i < n_columns; ++i)
   {
     const DataColumn &column = columns[i];
     // 最小二乘拟合

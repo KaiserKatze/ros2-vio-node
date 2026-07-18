@@ -37,12 +37,14 @@ using namespace std::chrono_literals;
 #include "euroc_vio/Interpolation.hpp"
 #include "euroc_vio/SensorState.hpp"
 #include "euroc_vio/ZUPT.hpp"
-#include "euroc_vio/main.h"
-
 #include "SensorYaml.hpp"
 #include "euroc_vio/DatumFast.hpp"
 #include "euroc_vio/DatumImu.hpp"
 #include "euroc_vio/DatumTruth.hpp"
+
+
+namespace FastVIO
+{
 
 /**
  * @brief 统一的评估器配置与输入数据结构体。
@@ -196,7 +198,7 @@ public:
       estimated_attitude = Sophus::SO3d(config_.data_truth_[0].attitude_);
     }
 
-    for (size_t i = 0; i + 1 < config_.data_fast_.size(); ++i)
+    for (std::size_t i = 0; i + 1 < config_.data_fast_.size(); ++i)
     {
       const DatumFast &datum_fast{config_.data_fast_[i]};
       Sophus::SO3d delta_rotation{
@@ -623,7 +625,7 @@ public:
 class FuseEstimator : public AbstractEstimator
 {
 private:
-  using ESKF = VisualSim::ErrorStateKalmanFilter<double>;
+  using ESKF = ErrorStateKalmanFilter<double>;
 
 public:
   FuseEstimator(const EstimatorConfig &config) : AbstractEstimator(config) {}
@@ -642,19 +644,19 @@ public:
       // 标识当前事件是否属于惯性测量单元
       bool is_imu;
       // 记录当前帧在各自容器(data_fast_或data_imu_)中的原始索引值
-      size_t index;
+      std::size_t index;
     };
 
     std::vector<TimelineEvent> events;
     events.reserve(config_.data_fast_.size() + config_.data_imu_.size());
 
     // 填充单目视觉特征帧信息至时间轴中
-    for (size_t i = 0; i < config_.data_fast_.size(); ++i)
+    for (std::size_t i = 0; i < config_.data_fast_.size(); ++i)
     {
       events.push_back({config_.data_fast_[i].timestamp_, false, i});
     }
     // 填充高频惯性特征帧信息至时间轴中
-    for (size_t i = 0; i < config_.data_imu_.size(); ++i)
+    for (std::size_t i = 0; i < config_.data_imu_.size(); ++i)
     {
       events.push_back({config_.data_imu_[i].timestamp_, true, i});
     }
@@ -1078,12 +1080,14 @@ public:
   }
 };
 
+} // namespace FastVIO
+
 int main(int argc, char *argv[])
 {
   rclcpp::init(argc, argv);
   try
   {
-    auto factory{std::make_shared<TrajectoryFactory>()};
+    auto factory{std::make_shared<FastVIO::TrajectoryFactory>()};
     factory->Run();
   }
   catch (const std::exception &ex)

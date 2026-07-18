@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <tuple>
 
 #include <Eigen/Dense>
@@ -46,7 +47,7 @@ struct ProjectiveGeometry
     virtual void DistortPoint(Eigen::Vector2d &) const {}
   };
 
-  template <size_t nk = 2, size_t np = 2, typename E = double>
+  template <std::size_t nk = 2, std::size_t np = 2, typename E = double>
   struct DistortFunctionBrownConrady : DistortFunction
   {
     using VectorK = Eigen::Matrix<E, nk, 1>;
@@ -61,7 +62,8 @@ struct ProjectiveGeometry
       if (points.rows() != 3)
       {
         throw std::runtime_error(
-            "DistortFunctionBrownConrady::Distort: points must be 3xN.");
+            "DistortFunctionBrownConrady::Distort: points must be 3xN."
+        );
       }
       Eigen::Matrix2Xd nonhomo;
       Homo2Nonhomo(points, nonhomo);
@@ -115,7 +117,8 @@ struct ProjectiveGeometry
     if (modelPointsInWorldCoordinates.rows() != 3)
     {
       throw std::runtime_error(
-          "Project: modelPointsInWorldCoordinates must be 3xN.");
+          "Project: modelPointsInWorldCoordinates must be 3xN."
+      );
     }
     Eigen::Matrix3d rtMat;
     Eigen::Matrix3Xd modelPointsInCameraCoordinates;
@@ -151,14 +154,16 @@ struct ProjectiveGeometry
   }
 };
 
-template <typename value_type = float> struct EightPointAlgorithm
+template <typename value_type = float>
+struct EightPointAlgorithm
 {
   /**
  * @brief 各向同性逆归一化
  * @return 各向同性归一化变换矩阵
  */
   static Eigen::Matrix<value_type, 3, 3> IsotropicScalingNormalize(
-      Eigen::Matrix<value_type, 3, Eigen::Dynamic> &points)
+      Eigen::Matrix<value_type, 3, Eigen::Dynamic> &points
+  )
   {
     if (points.rows() != 3 || points.cols() == 0)
     {
@@ -217,7 +222,8 @@ template <typename value_type = float> struct EightPointAlgorithm
         const Eigen::Matrix<value_type, 3, Eigen::Dynamic> &pixel_left,
         const Eigen::Matrix<value_type, 3, Eigen::Dynamic> &pixel_right,
         const Eigen::Matrix<value_type, 3, 3> &T_left,
-        const Eigen::Matrix<value_type, 3, 3> &T_right) :
+        const Eigen::Matrix<value_type, 3, 3> &T_right
+    ) :
       mat_cam_left_{mat_cam_left}, mat_cam_right_{mat_cam_right},
       rotation_{rotation}, translation_{translation}, pixel_left_{pixel_left},
       pixel_right_{pixel_right}, T_left_{T_left}, T_right_{T_right}
@@ -230,7 +236,8 @@ template <typename value_type = float> struct EightPointAlgorithm
         const Eigen::Matrix<value_type, 3, 3> &rotation,
         const Eigen::Vector<value_type, 3> &translation,
         const Eigen::Matrix<value_type, 3, Eigen::Dynamic> &pixel_left,
-        const Eigen::Matrix<value_type, 3, Eigen::Dynamic> &pixel_right) :
+        const Eigen::Matrix<value_type, 3, Eigen::Dynamic> &pixel_right
+    ) :
       TriangulationConfig{
           mat_cam_left,
           mat_cam_right,
@@ -273,7 +280,8 @@ template <typename value_type = float> struct EightPointAlgorithm
     }
 
     Eigen::Matrix<value_type, 3, 3> ComputeEssentialMatrix(
-        const Eigen::Matrix<value_type, 3, 3> &fundamental_matrix) const
+        const Eigen::Matrix<value_type, 3, 3> &fundamental_matrix
+    ) const
     {
       return mat_cam_right_.transpose() * fundamental_matrix * mat_cam_left_;
     }
@@ -289,7 +297,8 @@ template <typename value_type = float> struct EightPointAlgorithm
     if (config.pixel_left_.cols() != config.pixel_right_.cols())
     {
       throw std::runtime_error(
-          "Triangulate: number of pixel points in two views must match.");
+          "Triangulate: number of pixel points in two views must match."
+      );
     }
 
     Eigen::Matrix<value_type, 3, 4> projectMatrix_left;
@@ -326,7 +335,8 @@ template <typename value_type = float> struct EightPointAlgorithm
 
     Eigen::JacobiSVD<decltype(matA)> svd{matA, Eigen::ComputeThinV};
     Eigen::Vector<value_type, Eigen::Dynamic> matA_svd_result{
-        svd.matrixV().col(svd.matrixV().cols() - 1)};
+        svd.matrixV().col(svd.matrixV().cols() - 1)
+    };
     Eigen::Map<decltype(matA)> modelPointsInWorldCoordinates{
         matA_svd_result.data(),
         4,
@@ -372,7 +382,8 @@ template <typename value_type = float> struct EightPointAlgorithm
     // 进行第一次奇异值分解（给出最小二乘解）
     Eigen::JacobiSVD<decltype(matW)> svd1{matW, Eigen::ComputeFullV};
     Eigen::Vector<value_type, Eigen::Dynamic> matW_svd_result{
-        svd1.matrixV().col(svd1.matrixV().cols() - 1)};
+        svd1.matrixV().col(svd1.matrixV().cols() - 1)
+    };
 
     // 进行第二次奇异值分解（保证基础矩阵的秩为2）
     Eigen::JacobiSVD<Eigen::Matrix<value_type, 3, 3>> svd2{
@@ -412,7 +423,8 @@ template <typename value_type = float> struct EightPointAlgorithm
       const value_type u_right{config.pixel_right_(0, i)};
       const value_type v_right{config.pixel_right_(1, i)};
       Eigen::RowVector<value_type, 3> zero_vector{
-          Eigen::RowVector<value_type, 3>::Zero()};
+          Eigen::RowVector<value_type, 3>::Zero()
+      };
       matA.row(2 * i + 0)                //
           << -config.pixel_left_.col(i), // -u_left, -v_left, -1.0,
           zero_vector,                   //
@@ -428,9 +440,11 @@ template <typename value_type = float> struct EightPointAlgorithm
     }
 
     Eigen::JacobiSVD<Eigen::Matrix<value_type, Eigen::Dynamic, 9>> svd{
-        matA, Eigen::ComputeThinV};
+        matA, Eigen::ComputeThinV
+    };
     Eigen::Vector<value_type, 9> matA_svd_result{
-        svd.matrixV().col(svd.matrixV().cols() - 1)};
+        svd.matrixV().col(svd.matrixV().cols() - 1)
+    };
     Eigen::Map<Eigen::Matrix<value_type, 3, 3>> matH{matA_svd_result.data(), 3,
                                                      3};
 
@@ -443,7 +457,8 @@ template <typename value_type = float> struct EightPointAlgorithm
   }
 
   static auto DecomposeEssentialMatrix(
-      const Eigen::Matrix<value_type, 3, 3> &essential_matrix)
+      const Eigen::Matrix<value_type, 3, 3> &essential_matrix
+  )
   {
     const Eigen::Matrix<value_type, 3, 3> matW{
         {0.0, -1.0, 0.0},
@@ -483,7 +498,8 @@ template <typename value_type = float> struct EightPointAlgorithm
         Eigen::ComputeFullV,
     };
     Eigen::Vector<value_type, 3> vecT{
-        svd2.matrixV().col(svd2.matrixV().cols() - 1)};
+        svd2.matrixV().col(svd2.matrixV().cols() - 1),
+    };
 
     // TODO
     // 选择一对特征点，进行三角化，理论上正确的一组解 (R, T) 可以保证对应的路标点在两个相机坐标系下的 Z 坐标都是正数

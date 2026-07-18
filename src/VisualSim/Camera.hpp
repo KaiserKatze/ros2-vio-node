@@ -1,14 +1,19 @@
 #pragma once
 
+#include <cstddef>
 #include <limits>
 #include <vector>
 
 #include <Eigen/Dense>
 
+namespace FastVIO::VisualSim
+{
+
 /**
  * @brief 相机
  */
-template <typename value_type> struct Camera
+template <typename value_type>
+struct Camera
 {
   Eigen::Matrix<value_type, 3, 3> intrinsic_{
       Eigen::Matrix<value_type, 3, 3>::Identity(),
@@ -51,7 +56,7 @@ template <typename value_type> struct Camera
     return pixel_point;
   }
 
-  std::pair<std::vector<size_t>, std::vector<Point2>>
+  std::pair<std::vector<std::size_t>, std::vector<Point2>>
   Project(const Eigen::Matrix<value_type, 3, Eigen::Dynamic> &object_matrix,
           const Eigen::Matrix<value_type, 3, 3> &parent_rotation
           = Eigen::Matrix<value_type, 3, 3>::Identity(),
@@ -78,7 +83,7 @@ template <typename value_type> struct Camera
     };
 
     // 检查三维点是否处于相机视域内
-    std::vector<size_t> visible_indices;
+    std::vector<std::size_t> visible_indices;
     std::vector<Point2> visible_pixel_points;
     visible_indices.reserve(n_points);
     visible_pixel_points.reserve(n_points);
@@ -106,3 +111,5 @@ template <typename value_type> struct Camera
     return {visible_indices, visible_pixel_points};
   }
 };
+
+} // namespace FastVIO::VisualSim

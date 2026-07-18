@@ -2,33 +2,26 @@ cmake_minimum_required(VERSION 4.3.2)
 project(euroc_vio)
 
 # --- 编译选项设置 ---
+# @see: https://cmake.org/cmake/help/latest/prop_tgt/CXX_STANDARD.html
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_VERBOSE_MAKEFILE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# 强制使用 GCC
+# 强制使用 16.0 以上版本的 GCC 编译器
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  message(FATAL_ERROR "GCC is required to build this project")
+  message(FATAL_ERROR "GCC is required to build this project! Detected compiler id: ${CMAKE_CXX_COMPILER_ID}")
+endif()
+if(NOT CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16.1")
+  message(FATAL_ERROR "GCC (≥ 16.1) is required to build this project")
 endif()
 
-if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  add_compile_options(-Wall -Wextra -Wpedantic)
-endif()
-
+add_compile_options(-Wall -Wextra -Wpedantic)
 add_compile_options(-Wreorder)
 add_compile_options(-Wshadow)
 add_compile_options(-Wuninitialized)
 add_compile_options(-Wno-maybe-uninitialized)
 add_compile_options(-march=native)
-# C++26 开启反射机制
-add_compile_options(-freflection)
-
-# 启用 C++26 反射机制
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16.0")
-    add_compile_options(-freflection)
-endif()
 
 # --- 查找依赖 ---
 find_package(ament_cmake REQUIRED)
@@ -45,7 +38,6 @@ find_package(Sophus REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(Boost REQUIRED)
 find_package(yaml-cpp REQUIRED)
-find_package(Armadillo REQUIRED)
 
 # --- 辅助函数定义 ---
 function(add_ros2_executable node_name source_path)
@@ -78,15 +70,14 @@ target_include_directories(common_pch
 target_link_libraries(common_pch
   INTERFACE
   Eigen3::Eigen
+  Sophus::Sophus
+  Boost::boost
   ${OpenCV_LIBRARIES}
   yaml-cpp::yaml-cpp
-
   rclcpp::rclcpp
-
   cv_bridge::cv_bridge
   message_filters::message_filters
   image_transport::image_transport
-
   nav_msgs::nav_msgs__rosidl_typesupport_cpp
   nav_msgs::nav_msgs__rosidl_generator_cpp
   geometry_msgs::geometry_msgs__rosidl_typesupport_cpp

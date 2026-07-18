@@ -14,6 +14,9 @@
 
 #include <yaml-cpp/yaml.h>
 
+namespace FastVIO
+{
+
 template <typename T>
 concept PathLike = std::convertible_to<T, std::filesystem::path>;
 
@@ -90,3 +93,5 @@ struct SensorYaml
     return result_sensor_config;
   }
 };
+
+} // namespace FastVIO

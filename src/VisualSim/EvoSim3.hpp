@@ -81,7 +81,7 @@ public:
   {
     std::ifstream fin_temp_evo_sim3{path_temp_tum_file_};
     std::string line;
-    size_t line_num{0};
+    std::size_t line_num{0};
     while (std::getline(fin_temp_evo_sim3, line))
     {
       ++line_num;

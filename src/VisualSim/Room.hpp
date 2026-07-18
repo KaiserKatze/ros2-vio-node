@@ -1,7 +1,9 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdio>
+#include <format>
 #include <iostream>
 #include <print>
 #include <sstream>
@@ -10,7 +12,11 @@
 
 #include <Eigen/Dense>
 
-template <typename value_type> struct Room
+namespace FastVIO::VisualSim
+{
+
+template <typename value_type>
+struct Room
 {
   using Point2  = Eigen::Vector<value_type, 2>;
   using Point3  = Eigen::Vector<value_type, 3>;
@@ -27,8 +33,8 @@ template <typename value_type> struct Room
   const Point3 center_{
       //房间的几何中心
       depth_ * static_cast<value_type>(0.5),
-      width_ *static_cast<value_type>(0.5),
-      height_ *static_cast<value_type>(0.5),
+      width_ * static_cast<value_type>(0.5),
+      height_ * static_cast<value_type>(0.5),
   };
 
   const int cnt_sep_depth_;
@@ -108,9 +114,9 @@ template <typename value_type> struct Room
     //====================================
     // 更新矩阵表示
 
-    const size_t total{object_points_.size()};
+    const std::size_t total{object_points_.size()};
     object_matrix_.resize(3, total);
-    for (size_t i = 0; i < total; ++i)
+    for (std::size_t i = 0; i < total; ++i)
     {
       const auto point{object_points_[i]};
       object_matrix_.col(i) = Point3{
@@ -127,14 +133,17 @@ template <typename value_type> struct Room
   auto GetIndex(const Point3i &p) const
   {
     // 利用已有序的 object_points_ 通过二分查找快速拿到全局索引，避开浮点比较
-    auto it{std::lower_bound(object_points_.begin(), object_points_.end(), p)};
-    if (it != object_points_.end() && *it == p)
+    auto beg{object_points_.begin()};
+    auto end{object_points_.end()};
+    auto it{std::lower_bound(beg, end, p)};
+    if (it != end && *it == p)
     {
-      return static_cast<size_t>(std::distance(object_points_.begin(), it));
+      return static_cast<std::size_t>(std::distance(beg, it));
     }
-    std::stringstream ss;
-    ss << "找不到点 [" << p[0] << ", " << p[1] << ", " << p[2]
-       << "] 对应的路标点索引!";
-    throw std::runtime_error(ss.str());
+    throw std::runtime_error(
+        std::format("找不到点 [{}, {}, {}] 对应的路标点索引!", p[0], p[1], p[2])
+    );
   }
 };
+
+} // namespace FastVIO::VisualSim

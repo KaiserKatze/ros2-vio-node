@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cmath>
 #include <concepts>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <format>
@@ -30,7 +31,7 @@
 // 选择“只使用角位移”还是“使用角位移和平移方向”
 #define ONLY_USE_ANGULAR_DISPLACEMENT 1
 
-namespace VisualSim
+namespace FastVIO
 {
 
 /**
@@ -1435,4 +1436,4 @@ private:
 #pragma endregion
 };
 
-} // namespace VisualSim
+} // namespace FastVIO

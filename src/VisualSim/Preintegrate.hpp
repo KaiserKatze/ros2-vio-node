@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <span>
 
 #include <Eigen/Core>
@@ -26,9 +27,8 @@ struct Preintegration
   Preintegration() noexcept {}
 
   Preintegration(const Eigen::Vector3d &initial_position,
-                       const Eigen::Quaterniond &initial_attitude,
-                       const Eigen::Vector3d &initial_linear_velocity) noexcept
-    :
+                 const Eigen::Quaterniond &initial_attitude,
+                 const Eigen::Vector3d &initial_linear_velocity) noexcept :
     final_position_{initial_position}, final_attitude_{initial_attitude},
     final_linear_velocity_{initial_linear_velocity}
   {
@@ -62,7 +62,7 @@ struct Preintegration
 
     double sum_dt{0.0};
 
-    for (size_t i = 0; i < imu_data.size() - 1; ++i)
+    for (std::size_t i = 0; i < imu_data.size() - 1; ++i)
     {
       const auto &imu_i{imu_data[i]};
       const auto &imu_j{imu_data[i + 1]};

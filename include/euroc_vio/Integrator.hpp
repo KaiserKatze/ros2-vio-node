@@ -1,8 +1,9 @@
 #pragma once
 
-#include <Eigen/Dense>
 #include <concepts>
 #include <type_traits>
+
+#include <Eigen/Dense>
 
 #include <sophus/se3.hpp>
 #include <sophus/so3.hpp>
@@ -19,6 +20,9 @@ concept ImuDatumLike = requires {
                 Eigen::Vector3d>;
 };
 
+namespace FastVIO
+{
+
 struct AbstractIntegrator
 {
   // 重力加速度大小
@@ -31,7 +35,7 @@ struct AbstractIntegrator
   // 线速度
   Eigen::Vector3d linear_velocity_{Eigen::Vector3d::Zero()};
   // 先前状态
-  Sophus::SO3d previous_attitude{};
+  Sophus::SO3d previous_attitude_{};
 };
 
 /**
@@ -71,8 +75,8 @@ struct ZerothOrderAttitudeIntegrator : public AbstractIntegrator
     };
 
     // 更新朝向
-    previous_attitude = pose_.so3();
-    pose_.so3()       = estimated_new_attitude;
+    previous_attitude_ = pose_.so3();
+    pose_.so3()        = estimated_new_attitude;
   }
 };
 
@@ -117,8 +121,8 @@ struct FirstOrderAttitudeIntegrator : public AbstractIntegrator
     };
 
     // 更新朝向
-    previous_attitude = pose_.so3();
-    pose_.so3()       = estimated_new_attitude;
+    previous_attitude_ = pose_.so3();
+    pose_.so3()        = estimated_new_attitude;
   }
 };
 
@@ -137,7 +141,7 @@ struct MidpointPositionIntegrator : public AbstractIntegrator
     // 惯性参考系下的线加速度
     Eigen::Vector3d linear_acceleration_in_world_frame{
         0.5
-                * (previous_attitude * datum_prev.linear_acceleration_
+                * (previous_attitude_ * datum_prev.linear_acceleration_
                    + pose_.so3() * datum.linear_acceleration_)
             + gravity_world_,
     };
@@ -177,3 +181,5 @@ struct VisualIntegrator : public AbstractIntegrator
     pose_.so3()       = estimated_new_attitude;
   }
 };
+
+} // namespace FastVIO

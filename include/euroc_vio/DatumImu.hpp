@@ -1,49 +1,18 @@
 #pragma once
 
-#include <algorithm>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <exception>
-#include <filesystem>
 #include <format>
 #include <fstream>
-#include <meta>
-#include <print>
-#include <sstream>
 #include <stdexcept>
 #include <string>
-#include <string_view>
-#include <thread>
-
-using namespace std::chrono_literals;
 
 #include <Eigen/Dense>
 
 #include <sophus/so3.hpp>
 
-#include <boost/numeric/odeint.hpp>
-
-#include <opencv2/calib3d.hpp>
-#include <opencv2/core/check.hpp>
-#include <opencv2/core/eigen.hpp>
-
-#include <geometry_msgs/msg/pose_stamped.hpp>
-#include <nav_msgs/msg/path.hpp>
-#include <rclcpp/publisher.hpp>
-#include <rclcpp/rclcpp.hpp>
-#include <rclcpp/time.hpp>
-#include <sensor_msgs/msg/image.hpp>
-
-#include "yaml-cpp/yaml.h"
-
-#include "euroc_vio/SensorState.hpp"
-#include "euroc_vio/AbstractLoader.hpp"
-#include "euroc_vio/Interpolation.hpp"
-#include "euroc_vio/main.h"
-#include "euroc_vio/ZUPT.hpp"
+namespace FastVIO
+{
 
 struct DatumImu
 {
@@ -59,7 +28,7 @@ struct DatumImu
 
     std::ifstream file{path_imu_csv};
     std::string line;
-    size_t line_num{0};
+    std::size_t line_num{0};
 
     // 跳过表头
     std::getline(file, line);
@@ -102,3 +71,5 @@ struct DatumImu
     return data;
   }
 };
+
+} // namespace FastVIO

@@ -7,6 +7,9 @@
 #include <string>
 #include <string_view>
 
+namespace FastVIO
+{
+
 struct AbstractLoader
 {
   static std::string_view trim(std::string_view str)
@@ -76,3 +79,5 @@ struct AbstractLoader
     return result;
   }
 };
+
+} // namespace FastVIO

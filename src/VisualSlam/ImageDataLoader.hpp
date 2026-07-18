@@ -17,11 +17,8 @@
 #include <utility>
 #include <vector>
 
-#include <Eigen/Dense>
-
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
-#include <opencv2/core/eigen.hpp>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/core/types.hpp>
 #include <opencv2/features2d.hpp>
@@ -35,6 +32,9 @@
 #include <opencv2/viz/vizcore.hpp>
 
 #include "euroc_vio/AbstractLoader.hpp"
+
+namespace FastVIO
+{
 
 // 单目视觉帧
 template <typename E = std::filesystem::path>
@@ -199,3 +199,5 @@ public:
     return false;
   }
 };
+
+} // namespace FastVIO

@@ -1,13 +1,13 @@
 #include <algorithm>
 #include <chrono> // time module
-#include <iostream>
-#include <random>
-#include <vector>
-
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <iostream>
+#include <random>
+#include <vector>
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/core.hpp>
@@ -136,19 +136,19 @@ public:
               const VectorXd &b8, const VectorXd &b9, const VectorXd &b10);
 
   // static bool QuEst_degenerate(const CMatrixDouble& allData, const
-  // std::vector<size_t>& useIndices); static void QuEst_fit(const
-  // CMatrixDouble& allData, const std::vector<size_t>& useIndices,
+  // std::vector<std::size_t>& useIndices); static void QuEst_fit(const
+  // CMatrixDouble& allData, const std::vector<std::size_t>& useIndices,
   // 	vector<CMatrixDouble>& fitModels);
   // static void QuEst_distance(const CMatrixDouble& allData, const
   // vector<CMatrixDouble>& testModels, 	const double distanceThreshold, unsigned
-  // int& out_bestModelIndex, std::vector<size_t>& out_inlierIndices);
+  // int& out_bestModelIndex, std::vector<std::size_t>& out_inlierIndices);
 };
 
 // class constructor ----------
-QuEst::QuEst()
-    : sub_1(nh_, "/cam1/rgb/image_color", 1), // /cam1/rgb/image_raw
-      sub_2(nh_, "/cam2/rgb/image_color", 1), // /cam2/rgb/image_raw
-      sync(MySyncPolicy(100), sub_1, sub_2)
+QuEst::QuEst() :
+  sub_1(nh_, "/cam1/rgb/image_color", 1), // /cam1/rgb/image_raw
+  sub_2(nh_, "/cam2/rgb/image_color", 1), // /cam2/rgb/image_raw
+  sync(MySyncPolicy(100), sub_1, sub_2)
 {
 
   pub = nh_.advertise<geometry_msgs::Transform>("quest_msg", 1);
@@ -330,11 +330,12 @@ void QuEst::GetKeyPointsAndDescriptors(const Mat &img_1_input,
   // 	);
 
   // use SIFT features ----------
-  Ptr<Feature2D> detector = SIFT::create(0,   // nfeatures
-                                         3,   // nOctaveLayers
-                                         .04, // contrastThreshold
-                                         10,  // edgeThreshold
-                                         1.6  // sigma
+  Ptr<Feature2D> detector = SIFT::create(
+      0,   // nfeatures
+      3,   // nOctaveLayers
+      .04, // contrastThreshold
+      10,  // edgeThreshold
+      1.6  // sigma
   );
 
   // // use ORB features ----------
@@ -356,8 +357,9 @@ void QuEst::GetKeyPointsAndDescriptors(const Mat &img_1_input,
 
   // show feature points in each image ----------
   Mat image_1_show;
-  drawKeypoints(img_1_input, keypoints_1_raw, image_1_show, Scalar::all(-1),
-                4 // draw rich points
+  drawKeypoints(
+      img_1_input, keypoints_1_raw, image_1_show, Scalar::all(-1),
+      4 // draw rich points
   );
   namedWindow("keypoints_1", WINDOW_NORMAL);
   imshow("keypoints_1", image_1_show);
@@ -385,7 +387,8 @@ void QuEst::MatchFeaturePoints(const Mat &descriptors_1,
   vector<DMatch> matches_raw;
   matcher.match(
       descriptors_1, descriptors_2,
-      matches_raw); // cout<<"match numbers: "<<matches_raw.size()<<endl<<endl;
+      matches_raw
+  ); // cout<<"match numbers: "<<matches_raw.size()<<endl<<endl;
 
   // sort distance, select 10 best ones ----------
   vector<double> distance;
@@ -700,11 +703,11 @@ void QuEst::QuEst_RANSAC(const Matrix3Xd &x1, const Matrix3Xd &x2)
 
   // 	// run RANSAC ----------
   // 	CMatrixDouble best_model;
-  // 	std::vector<size_t> best_inliers;
+  // 	std::vector<std::size_t> best_inliers;
   // 	const double DIST_THRESHOLD = 0.0001;  // 1e-4
   // 	const unsigned int minimumSizeSamplesToFit = 20;
   // 	const double prob_good_sample = 0.8;
-  // 	const size_t maxIter = 20;
+  // 	const std::size_t maxIter = 20;
 
   // 	math::RANSAC myransac;
   // 	myransac.execute(data,
@@ -732,7 +735,8 @@ bool QuEst::ransac(
     bool (*QuEst_degenerate)(const MatrixXd &, const vector<int> &),
     const MatrixXd &data_2, const vector<int> &ind_2,
     const int minimumSizeSamplesToFit, VectorXd &best_model,
-    vector<int> &best_inliers)
+    vector<int> &best_inliers
+)
 {
 
   const int Npts = data.cols(); // number of points in data
@@ -790,7 +794,8 @@ bool QuEst::ransac(
         // high_resolution_clock::time_point t1 = high_resolution_clock::now();
         (*QuEst_fit)(
             data, ind_degen_select,
-            test_model); // cout<<"test_model: "<<endl<<test_model<<endl<<endl;
+            test_model
+        ); // cout<<"test_model: "<<endl<<test_model<<endl<<endl;
         // high_resolution_clock::time_point t2 = high_resolution_clock::now();
         // auto duration = duration_cast<microseconds>(t2-t1).count();
         // cout<<"QuEst takes:  "<<duration<<" microseconds"<<endl<<endl;
@@ -1059,11 +1064,11 @@ void QuEst::QuEst_distance(const MatrixXd &data, const VectorXd &test_model,
 }
 
 // bool QuEst::QuEst_degenerate(const CMatrixDouble& allData, const
-// std::vector<size_t>& useIndices){ 	return false;
+// std::vector<std::size_t>& useIndices){ 	return false;
 // }
 
 // void QuEst::QuEst_fit(const CMatrixDouble& allData, const
-// std::vector<size_t>& useIndices, 	vector<CMatrixDouble>& fitModels){
+// std::vector<std::size_t>& useIndices, 	vector<CMatrixDouble>& fitModels){
 
 // // cout<<"fit function start
 // ---------------------------------------"<<endl<<endl;
@@ -1155,7 +1160,7 @@ void QuEst::QuEst_distance(const MatrixXd &data, const VectorXd &test_model,
 
 // void QuEst::QuEst_distance(const CMatrixDouble& allData, const
 // vector<CMatrixDouble>& testModels, 	const double distanceThreshold,unsigned
-// int& out_bestModelIndex,std::vector<size_t>& out_inlierIndices){
+// int& out_bestModelIndex,std::vector<std::size_t>& out_inlierIndices){
 
 // 	out_bestModelIndex = 0;
 // 	const CMatrixDouble& M = testModels[0];
@@ -1278,9 +1283,9 @@ void QuEst::FindTrans(Vector3d &T, const Matrix3Xd &m, const Matrix3Xd &n,
       C((i - 1) * 3 + 1, 1) = 1;
       C((i - 1) * 3 + 2, 2) = 1;
 
-      C((i - 1) * 3, (i - 1) * 2 + 3) = R(0, k) * m(0, i - 1)
-                                        + R(1, k) * m(1, i - 1)
-                                        + R(2, k) * m(2, i - 1);
+      C((i - 1) * 3, (i - 1) * 2 + 3)     = R(0, k) * m(0, i - 1)
+                                            + R(1, k) * m(1, i - 1)
+                                            + R(2, k) * m(2, i - 1);
       C((i - 1) * 3 + 1, (i - 1) * 2 + 3) = R(3, k) * m(0, i - 1)
                                             + R(4, k) * m(1, i - 1)
                                             + R(5, k) * m(2, i - 1);
@@ -2009,14 +2014,17 @@ void QuEst::coefsDen(MatrixXd &coefsD, const VectorXd &mx2, const VectorXd &my2,
   // cout<<coefsD<<endl<<endl;
 }
 
-void QuEst::coefsNumDen(
-    MatrixXd &coefsND, const VectorXd &a1, const VectorXd &a2,
-    const VectorXd &a3, const VectorXd &a4, const VectorXd &a5,
-    const VectorXd &a6, const VectorXd &a7, const VectorXd &a8,
-    const VectorXd &a9, const VectorXd &a10, const VectorXd &b1,
-    const VectorXd &b2, const VectorXd &b3, const VectorXd &b4,
-    const VectorXd &b5, const VectorXd &b6, const VectorXd &b7,
-    const VectorXd &b8, const VectorXd &b9, const VectorXd &b10)
+void QuEst::coefsNumDen(MatrixXd &coefsND, const VectorXd &a1,
+                        const VectorXd &a2, const VectorXd &a3,
+                        const VectorXd &a4, const VectorXd &a5,
+                        const VectorXd &a6, const VectorXd &a7,
+                        const VectorXd &a8, const VectorXd &a9,
+                        const VectorXd &a10, const VectorXd &b1,
+                        const VectorXd &b2, const VectorXd &b3,
+                        const VectorXd &b4, const VectorXd &b5,
+                        const VectorXd &b6, const VectorXd &b7,
+                        const VectorXd &b8, const VectorXd &b9,
+                        const VectorXd &b10)
 {
 
   int numPts = a1.rows();

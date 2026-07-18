@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <format>
@@ -15,12 +16,16 @@
 #include <rclcpp/rclcpp.hpp>
 
 #include "euroc_vio/AbstractLoader.hpp"
-#include "euroc_vio/main.h"
+
+static constexpr char DEFAULT_FRAME_ID[]{"map"};
+
+namespace FastVIO
+{
 
 /**
  * @brief CSV 位姿数据的物理结构映射。
  */
-struct Datum
+struct DatumTrajectory
 {
   std::int64_t timestamp;
   // px, py, pz, qw, qx, qy, qz
@@ -31,12 +36,13 @@ struct Datum
    * @param filename CSV 文件的绝对路径。
    * @param skip_header 是否跳过第一行头部注释。
    * @param delim 列分隔字符。
-   * @return std::vector<Datum> 读取出的数据集。
+   * @return std::vector<DatumTrajectory> 读取出的数据集。
    */
-  static std::vector<Datum> ReadCsv(const std::string &filename,
-                                    bool skip_header = true, char delim = ',')
+  static std::vector<DatumTrajectory> ReadCsv(const std::string &filename,
+                                              bool skip_header = true,
+                                              char delim       = ',')
   {
-    std::vector<Datum> data;
+    std::vector<DatumTrajectory> data;
     std::ifstream file{filename};
     if (!file.is_open())
     {
@@ -55,9 +61,9 @@ struct Datum
         continue;
       }
       std::stringstream ss(line);
-      Datum datum;
+      DatumTrajectory datum;
       datum.timestamp = AbstractLoader::get_item_as_int64(ss, delim);
-      for (size_t i = 0; i < datum.value.size(); ++i)
+      for (std::size_t i = 0; i < datum.value.size(); ++i)
       {
         datum.value[i] = AbstractLoader::get_item_as_double(ss, delim);
       }
@@ -126,7 +132,7 @@ private:
    */
   void LoadCsv()
   {
-    auto raw_data{Datum::ReadCsv(csv_file_, skip_header_, delim_)};
+    auto raw_data{DatumTrajectory::ReadCsv(csv_file_, skip_header_, delim_)};
     if (raw_data.empty())
     {
       throw std::runtime_error{"CSV 文件为空或无有效数据"};
@@ -164,7 +170,7 @@ private:
       return;
     }
 
-    static size_t index{0};
+    static std::size_t index{0};
     const auto &msg_pose{path_msg_.poses[index]};
     nav_msgs::msg::Path path_pose_msg;
     path_pose_msg.header.frame_id = DEFAULT_FRAME_ID;
@@ -185,12 +191,14 @@ private:
   rclcpp::TimerBase::SharedPtr timer_;
 };
 
+} // namespace FastVIO
+
 int main(int argc, char **argv)
 {
   rclcpp::init(argc, argv);
   try
   {
-    auto node = std::make_shared<TrajectoryPublisher>();
+    auto node = std::make_shared<FastVIO::TrajectoryPublisher>();
     rclcpp::spin(node);
   }
   catch (const std::exception &ex)

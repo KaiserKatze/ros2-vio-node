@@ -14,7 +14,7 @@
 
 #include "CornerDetection.hpp"
 
-namespace CornerDetection
+namespace FastVIO::CornerDetection
 {
 
 // https://docs.opencv.org/4.13.0/df/d74/classcv_1_1FastFeatureDetector.html
@@ -235,12 +235,17 @@ private:
     Points new_corners_prev_left_ext
         = zipped_view
           | std::views::transform([](const auto &tuple)
-                                  { return std::get<0>(tuple); })
+                                  { return std::get<1>(tuple); })
           | std::ranges::to<std::vector>();
     Points new_corners_prev_right_ext
         = zipped_view
           | std::views::transform([](const auto &tuple)
-                                  { return std::get<1>(tuple); })
+                                  { return std::get<2>(tuple); })
+          | std::ranges::to<std::vector>();
+    auto new_feature_ids
+        = zipped_view
+          | std::views::transform([](const auto &tuple)
+                                  { return std::get<3>(tuple); })
           | std::ranges::to<std::vector>();
 
     // 合并到主追踪序列
@@ -250,6 +255,7 @@ private:
                                + new_corners_prev_right_ext.size());
     corners_prev_left.append_range(std::move(new_corners_prev_left_ext));
     corners_prev_right.append_range(std::move(new_corners_prev_right_ext));
+    feature_ids = std::move(new_feature_ids);
 
     return HaveEnoughCorners(corners_prev_left)
            && corners_prev_left.size() == corners_prev_right.size();
@@ -319,28 +325,34 @@ private:
     Points new_corners_prev_left
         = zipped_view
           | std::views::transform([](const auto &tuple)
-                                  { return std::get<0>(tuple); })
+                                  { return std::get<1>(tuple); })
           | std::ranges::to<std::vector>();
     Points new_corners_prev_right
         = zipped_view
           | std::views::transform([](const auto &tuple)
-                                  { return std::get<1>(tuple); })
+                                  { return std::get<2>(tuple); })
           | std::ranges::to<std::vector>();
     Points new_corners_next_right
         = zipped_view
           | std::views::transform([](const auto &tuple)
-                                  { return std::get<2>(tuple); })
+                                  { return std::get<3>(tuple); })
           | std::ranges::to<std::vector>();
     Points new_corners_next_left
         = zipped_view
           | std::views::transform([](const auto &tuple)
-                                  { return std::get<3>(tuple); })
+                                  { return std::get<4>(tuple); })
+          | std::ranges::to<std::vector>();
+    auto new_feature_ids
+        = zipped_view
+          | std::views::transform([](const auto &tuple)
+                                  { return std::get<5>(tuple); })
           | std::ranges::to<std::vector>();
 
     corners_prev_left  = std::move(new_corners_prev_left);
     corners_prev_right = std::move(new_corners_prev_right);
     corners_next_right = std::move(new_corners_next_right);
     corners_next_left  = std::move(new_corners_next_left);
+    feature_ids        = std::move(new_feature_ids);
 
     return HaveEnoughCorners(corners_prev_left)
            && corners_prev_left.size() == corners_prev_right.size()
@@ -396,28 +408,34 @@ private:
     Points new_corners_prev_left
         = zipped_view
           | std::views::transform([](const auto &tuple)
-                                  { return std::get<0>(tuple); })
+                                  { return std::get<1>(tuple); })
           | std::ranges::to<std::vector>();
     Points new_corners_prev_right
         = zipped_view
           | std::views::transform([](const auto &tuple)
-                                  { return std::get<1>(tuple); })
+                                  { return std::get<2>(tuple); })
           | std::ranges::to<std::vector>();
     Points new_corners_next_left
         = zipped_view
           | std::views::transform([](const auto &tuple)
-                                  { return std::get<2>(tuple); })
+                                  { return std::get<3>(tuple); })
           | std::ranges::to<std::vector>();
     Points new_corners_next_right
         = zipped_view
           | std::views::transform([](const auto &tuple)
-                                  { return std::get<3>(tuple); })
+                                  { return std::get<4>(tuple); })
+          | std::ranges::to<std::vector>();
+    auto new_feature_ids
+        = zipped_view
+          | std::views::transform([](const auto &tuple)
+                                  { return std::get<5>(tuple); })
           | std::ranges::to<std::vector>();
 
     corners_prev_left  = std::move(new_corners_prev_left);
     corners_prev_right = std::move(new_corners_prev_right);
     corners_next_left  = std::move(new_corners_next_left);
     corners_next_right = std::move(new_corners_next_right);
+    feature_ids        = std::move(new_feature_ids);
 
     return HaveEnoughCorners(corners_prev_left)
            && corners_prev_left.size() == corners_prev_right.size()
@@ -465,28 +483,34 @@ private:
     Points new_corners_prev_left
         = zipped_view
           | std::views::transform([](const auto &tuple)
-                                  { return std::get<0>(tuple); })
+                                  { return std::get<1>(tuple); })
           | std::ranges::to<std::vector>();
     Points new_corners_prev_right
         = zipped_view
           | std::views::transform([](const auto &tuple)
-                                  { return std::get<1>(tuple); })
+                                  { return std::get<2>(tuple); })
           | std::ranges::to<std::vector>();
     Points new_corners_next_left
         = zipped_view
           | std::views::transform([](const auto &tuple)
-                                  { return std::get<2>(tuple); })
+                                  { return std::get<3>(tuple); })
           | std::ranges::to<std::vector>();
     Points new_corners_next_right
         = zipped_view
           | std::views::transform([](const auto &tuple)
-                                  { return std::get<3>(tuple); })
+                                  { return std::get<4>(tuple); })
+          | std::ranges::to<std::vector>();
+    auto new_feature_ids
+        = zipped_view
+          | std::views::transform([](const auto &tuple)
+                                  { return std::get<6>(tuple); })
           | std::ranges::to<std::vector>();
 
     corners_prev_left  = std::move(new_corners_prev_left);
     corners_prev_right = std::move(new_corners_prev_right);
     corners_next_left  = std::move(new_corners_next_left);
     corners_next_right = std::move(new_corners_next_right);
+    feature_ids        = std::move(new_feature_ids);
 
     return HaveEnoughCorners(corners_prev_left)
            && corners_prev_left.size() == corners_prev_right.size()
@@ -496,4 +520,4 @@ private:
   }
 };
 
-} // namespace CornerDetection
+} // namespace FastVIO::CornerDetection

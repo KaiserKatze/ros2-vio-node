@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -28,7 +29,7 @@
 
 #include <armadillo>
 
-using VecIndex = std::vector<size_t>;
+using VecIndex = std::vector<std::size_t>;
 
 struct ResultType
 {
@@ -254,7 +255,7 @@ void CoefsVer_3_1_1(Eigen::MatrixXd &Cf, const Eigen::Matrix3Xd &m1,
   auto numCols{numPts * (numPts - 1) / 2 - 1};
 
   Eigen::Matrix2Xi idxBin1(2, numCols);
-  size_t counter{0};
+  std::size_t counter{0};
   for (decltype(numPts) i{1}; i <= numPts - 2; ++i)
   {
     for (auto j{i + 1}; j <= numPts; ++j)
@@ -305,8 +306,8 @@ void CoefsVer_3_1_1(Eigen::MatrixXd &Cf, const Eigen::Matrix3Xd &m1,
   auto numEq{numPts * (numPts - 1) * (numPts - 2) / 6};
 
   Eigen::Matrix2Xi idxBin2(2, numEq);
-  size_t counter_bin2_1{0};
-  size_t counter_bin2_2{0};
+  std::size_t counter_bin2_1{0};
+  std::size_t counter_bin2_2{0};
   for (auto i{numPts - 1}; i >= 2; i--)
   {
     for (auto j{1 + counter_bin2_2}; j <= i - 1 + counter_bin2_2; ++j)
@@ -478,11 +479,12 @@ void QuEst_5Pt_Ver5_2(Eigen::Matrix4Xd &Q, const Eigen::Matrix3Xd &m,
   Eigen::MatrixXd Cf(numEq, 35); // coefficient matrix such that Cf * V = 0
   CoefsVer_3_1_1(Cf, m, n);
 
-  Eigen::MatrixXd A{Eigen::MatrixXd::Zero(
-      4 * numEq, 56)}; // coefficient matrix such that A * X = 0
+  Eigen::MatrixXd A{
+      Eigen::MatrixXd::Zero(4 * numEq, 56)
+  }; // coefficient matrix such that A * X = 0
   for (decltype(numEq) i{0}; i < numEq; ++i)
   {
-    for (size_t j{0}; j < 35; ++j)
+    for (std::size_t j{0}; j < 35; ++j)
     {
       int idx_0       = Idx(0, j);
       A(i, idx_0 - 1) = Cf(i, j);
@@ -500,18 +502,18 @@ void QuEst_5Pt_Ver5_2(Eigen::Matrix4Xd &Q, const Eigen::Matrix3Xd &m,
 
   Eigen::MatrixXd A1(4 * numEq,
                      35); // split A into A1 and A2, A1 contains term w
-  for (size_t i{0}; i < 40; ++i)
+  for (std::size_t i{0}; i < 40; ++i)
   {
-    for (size_t j{0}; j < 35; ++j)
+    for (std::size_t j{0}; j < 35; ++j)
     {
       A1(i, j) = A(i, j);
     }
   }
 
   Eigen::MatrixXd A2(4 * numEq, 21); // A2 doesn't contains term w
-  for (size_t i{0}; i < 40; ++i)
+  for (std::size_t i{0}; i < 40; ++i)
   {
-    for (size_t j{0}; j < 21; ++j)
+    for (std::size_t j{0}; j < 21; ++j)
     {
       A2(i, j) = A(i, j + 35);
     }
@@ -519,13 +521,13 @@ void QuEst_5Pt_Ver5_2(Eigen::Matrix4Xd &Q, const Eigen::Matrix3Xd &m,
 
   Eigen::MatrixXd Bbar = -A2.completeOrthogonalDecomposition().solve(A1);
 
-  for (size_t i{0}; i < 20; ++i)
+  for (std::size_t i{0}; i < 20; ++i)
   {
     Bx(Idx1(i, 0) - 1, Idx1(i, 1) - 1) = 1;
   }
-  for (size_t i{0}; i < 15; ++i)
+  for (std::size_t i{0}; i < 15; ++i)
   {
-    for (size_t j{0}; j < 35; ++j)
+    for (std::size_t j{0}; j < 35; ++j)
     {
       Bx(20 + i, j) = Bbar(i, j);
     }
@@ -534,9 +536,9 @@ void QuEst_5Pt_Ver5_2(Eigen::Matrix4Xd &Q, const Eigen::Matrix3Xd &m,
   // start armadillo
   // ------------------------------------------------------------
   arma::Mat<double> Bx_arma(35, 35);
-  for (size_t i{0}; i < 35; ++i)
+  for (std::size_t i{0}; i < 35; ++i)
   {
-    for (size_t j{0}; j < 35; ++j)
+    for (std::size_t j{0}; j < 35; ++j)
     {
       Bx_arma(i, j) = Bx(i, j);
     }
@@ -552,9 +554,9 @@ void QuEst_5Pt_Ver5_2(Eigen::Matrix4Xd &Q, const Eigen::Matrix3Xd &m,
   // end armadillo  ------------------------------------------------------------
 
   Eigen::MatrixXd V(35, 35);
-  for (size_t i{0}; i < 35; ++i)
+  for (std::size_t i{0}; i < 35; ++i)
   {
-    for (size_t j{0}; j < 35; ++j)
+    for (std::size_t j{0}; j < 35; ++j)
     {
       V(i, j) = V_arma(i, j);
     }
@@ -562,9 +564,9 @@ void QuEst_5Pt_Ver5_2(Eigen::Matrix4Xd &Q, const Eigen::Matrix3Xd &m,
 
   // correct sign of each column, the first element is always positive
   Eigen::MatrixXd V_1(35, 35);
-  for (size_t i{0}; i < 35; ++i)
+  for (std::size_t i{0}; i < 35; ++i)
   { // i represents column
-    for (size_t j{0}; j < 35; ++j)
+    for (std::size_t j{0}; j < 35; ++j)
     { // j represent row
 
       if (V(0, i) < 0)
@@ -580,19 +582,19 @@ void QuEst_5Pt_Ver5_2(Eigen::Matrix4Xd &Q, const Eigen::Matrix3Xd &m,
 
   // recover quaternion elements
   Eigen::RowVectorXd w(35);
-  for (size_t i{0}; i < 35; ++i)
+  for (std::size_t i{0}; i < 35; ++i)
   {
     w(0, i) = sqrt(sqrt(V_1(0, i)));
   }
 
   Eigen::RowVectorXd w3(35);
-  for (size_t i{0}; i < 35; ++i)
+  for (std::size_t i{0}; i < 35; ++i)
   {
     w3(0, i) = w(0, i) * w(0, i) * w(0, i);
   }
 
   Eigen::Matrix4Xd Q_0(4, 35);
-  for (size_t i{0}; i < 35; ++i)
+  for (std::size_t i{0}; i < 35; ++i)
   {
     Q_0(0, i) = w(0, i);
     Q_0(1, i) = V_1(1, i) / w3(0, i);
@@ -601,14 +603,14 @@ void QuEst_5Pt_Ver5_2(Eigen::Matrix4Xd &Q, const Eigen::Matrix3Xd &m,
   }
 
   Eigen::RowVectorXd QNrm(1, 35);
-  for (size_t i{0}; i < 35; ++i)
+  for (std::size_t i{0}; i < 35; ++i)
   {
     QNrm(0, i) = sqrt(Q_0(0, i) * Q_0(0, i) + Q_0(1, i) * Q_0(1, i)
                       + Q_0(2, i) * Q_0(2, i) + Q_0(3, i) * Q_0(3, i));
   }
 
   // normalize each column
-  for (size_t i{0}; i < 35; ++i)
+  for (std::size_t i{0}; i < 35; ++i)
   {
     Q(0, i) = Q_0(0, i) / QNrm(0, i);
     Q(1, i) = Q_0(1, i) / QNrm(0, i);
@@ -634,7 +636,7 @@ void QuatResidue(Eigen::RowVectorXd &residu, const Eigen::Matrix3Xd &m1,
   CoefsVer_3_1_1(C0, m1, m2); // coefficient matrix such that C * x = c
 
   Eigen::MatrixXd xVec(35, 35);
-  for (size_t i{0}; i < 35; ++i)
+  for (std::size_t i{0}; i < 35; ++i)
   {
     xVec(0, i)  = qSol(0, i) * qSol(0, i) * qSol(0, i) * qSol(0, i);
     xVec(1, i)  = qSol(0, i) * qSol(0, i) * qSol(0, i) * qSol(1, i);
@@ -676,7 +678,7 @@ void QuatResidue(Eigen::RowVectorXd &residu, const Eigen::Matrix3Xd &m1,
   Eigen::MatrixXd residuMat(numEq, 35);
   residuMat = C0 * xVec;
 
-  for (size_t i{0}; i < 35; ++i)
+  for (std::size_t i{0}; i < 35; ++i)
   {
     for (int j = 0; j < numEq; j++)
     {
@@ -745,9 +747,9 @@ void FindTrans(Eigen::Vector3d &T, const Eigen::Matrix3Xd &m,
       C((i - 1) * 3 + 1, 1) = 1;
       C((i - 1) * 3 + 2, 2) = 1;
 
-      C((i - 1) * 3, (i - 1) * 2 + 3) = R(0, k) * m(0, i - 1)
-                                        + R(1, k) * m(1, i - 1)
-                                        + R(2, k) * m(2, i - 1);
+      C((i - 1) * 3, (i - 1) * 2 + 3)     = R(0, k) * m(0, i - 1)
+                                            + R(1, k) * m(1, i - 1)
+                                            + R(2, k) * m(2, i - 1);
       C((i - 1) * 3 + 1, (i - 1) * 2 + 3) = R(3, k) * m(0, i - 1)
                                             + R(4, k) * m(1, i - 1)
                                             + R(5, k) * m(2, i - 1);
@@ -764,8 +766,8 @@ void FindTrans(Eigen::Vector3d &T, const Eigen::Matrix3Xd &m,
     Eigen::MatrixXd N = svd.matrixV();
 
     // adjust the sign
-    size_t numPos{0};
-    size_t numNeg{0};
+    std::size_t numPos{0};
+    std::size_t numNeg{0};
     for (decltype(numPts) i{0}; i < 2 * numPts; ++i)
     {
       if (N(i + 3, 2 * numPts + 2) > 0)
@@ -817,14 +819,14 @@ void QuEst_fit(const Eigen::MatrixXd &allData, const VecIndex &useIndices,
 
   // take first 5 points of x1 and x2, feeding into QuEst ----------
   Eigen::Matrix3Xd x1_5pts(3, 5);
-  for (size_t i{0}; i < 5; ++i)
+  for (std::size_t i{0}; i < 5; ++i)
   {
     x1_5pts(0, i) = x1(0, i);
     x1_5pts(1, i) = x1(1, i);
     x1_5pts(2, i) = x1(2, i);
   }
   Eigen::Matrix3Xd x2_5pts(3, 5);
-  for (size_t i{0}; i < 5; ++i)
+  for (std::size_t i{0}; i < 5; ++i)
   {
     x2_5pts(0, i) = x2(0, i);
     x2_5pts(1, i) = x2(1, i);
@@ -840,7 +842,7 @@ void QuEst_fit(const Eigen::MatrixXd &allData, const VecIndex &useIndices,
   QuatResidue(res, x1, x2, Q);
 
   int mIdx = 0;
-  for (size_t i{1}; i < 35; ++i)
+  for (std::size_t i{1}; i < 35; ++i)
   {
     if (res(0, i) < res(0, mIdx))
     {
@@ -873,10 +875,10 @@ bool QuEst_degenerate(const Eigen::MatrixXd &data, const VecIndex &ind)
   return false;
 }
 
-VecIndex RandomIndexes(size_t maxIndex)
+VecIndex RandomIndexes(std::size_t maxIndex)
 {
   VecIndex ind(maxIndex);
-  for (size_t i{0}; i < maxIndex; ++i)
+  for (std::size_t i{0}; i < maxIndex; ++i)
   {
     ind[i] = i;
   }
@@ -991,8 +993,9 @@ bool QuEst_RANSAC0(
     std::vector<int> &select_inliers,
     bool (*QuEst_degenerate)(const Eigen::MatrixXd &, const VecIndex &),
     const Eigen::MatrixXd &data_2, const VecIndex &ind_2,
-    const size_t minimumSizeSamplesToFit, Eigen::VectorXd &best_model,
-    std::vector<int> &best_inliers)
+    const std::size_t minimumSizeSamplesToFit, Eigen::VectorXd &best_model,
+    std::vector<int> &best_inliers
+)
 {
   (void) ind;
   (void) data_1;
@@ -1004,13 +1007,13 @@ bool QuEst_RANSAC0(
                         // free from outliers
 
   // max number to select non-degenerate data set
-  const size_t maxDataTrials{100};
+  const std::size_t maxDataTrials{100};
 
-  const size_t maxIter{1000}; // max number of iterations
+  const std::size_t maxIter{1000}; // max number of iterations
 
-  size_t trialcount{0};
+  std::size_t trialcount{0};
 
-  size_t bestscore{0};
+  std::size_t bestscore{0};
 
   double N{1.0}; // dummy initialisation for number of trials
 
@@ -1018,7 +1021,7 @@ bool QuEst_RANSAC0(
   {
 
     bool degenerate{true};
-    size_t count{1};
+    std::size_t count{1};
 
     while (degenerate)
     {
@@ -1029,9 +1032,9 @@ bool QuEst_RANSAC0(
       if (!degenerate)
       {
         // fit model to this random selection of data points
-        VecIndex ind_degen = RandomIndexes(static_cast<size_t>(Npts));
+        VecIndex ind_degen = RandomIndexes(static_cast<std::size_t>(Npts));
         VecIndex ind_degen_select(minimumSizeSamplesToFit);
-        for (size_t i{0}; i < minimumSizeSamplesToFit; ++i)
+        for (std::size_t i{0}; i < minimumSizeSamplesToFit; ++i)
         {
           ind_degen_select[i] = i;
         }
@@ -1053,7 +1056,7 @@ bool QuEst_RANSAC0(
                       select_inliers);
 
     // find the number of inliers to this model
-    size_t ninliers{select_inliers.size()};
+    std::size_t ninliers{select_inliers.size()};
 
     if (ninliers > bestscore)
     {
@@ -1065,7 +1068,8 @@ bool QuEst_RANSAC0(
       // to ensure we pick with probability p, a data set with no outliers
       double fracinliers{ninliers / static_cast<double>(Npts)};
       double pNoOutliers{
-          1 - pow(fracinliers, static_cast<double>(minimumSizeSamplesToFit))};
+          1 - pow(fracinliers, static_cast<double>(minimumSizeSamplesToFit))
+      };
 
       // avoid division by -Inf
       pNoOutliers
@@ -1121,7 +1125,7 @@ ResultType QuEst_RANSAC(Eigen::Matrix3Xd const &x1, Eigen::Matrix3Xd const &x2)
     data(5, i) = x2_normalized(2, i);
   }
   // minimum samples for fitting function
-  const size_t minimumSizeSamplesToFit{5};
+  const std::size_t minimumSizeSamplesToFit{5};
   // distance threshold between data and model
   const double distance_threshold{1e-6};
   // output model and inliers
@@ -1252,7 +1256,7 @@ ResultType QuEst_Solve(Eigen::Matrix3Xd const &M1, Eigen::Matrix3Xd const &M2,
 Eigen::Matrix3Xd CreateMatrix(std::vector<cv::Point2f> const &pts)
 {
   Eigen::Matrix3Xd M(3, pts.size());
-  for (size_t i{0}; i < pts.size(); ++i)
+  for (std::size_t i{0}; i < pts.size(); ++i)
   {
     M(0, i) = pts[i].x;
     M(1, i) = pts[i].y;

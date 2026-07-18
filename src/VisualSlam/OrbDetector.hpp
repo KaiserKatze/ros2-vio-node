@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <iostream>
 #include <ranges>
 #include <vector>
@@ -25,7 +26,9 @@ private:
   // FLANN 匹配器，配置 LSH 索引以适配 ORB 的二进制描述子 (CV_8U)
   cv::Ptr<cv::DescriptorMatcher> flann_matcher_{
       cv::makePtr<cv::FlannBasedMatcher>(
-          cv::makePtr<cv::flann::LshIndexParams>(12, 20, 2))};
+          cv::makePtr<cv::flann::LshIndexParams>(12, 20, 2)
+      )
+  };
 
   // ORB 匹配时的最大汉明距离阈值
   static constexpr float max_hamming_distance_{50.0f};
@@ -84,7 +87,7 @@ public:
           // 按响应值降序排序，保留最显著的角点
           std::ranges::sort(new_kp, std::greater<>{}, &cv::KeyPoint::response);
 
-          if (new_kp.size() > static_cast<size_t>(num_needed))
+          if (new_kp.size() > static_cast<std::size_t>(num_needed))
           {
             new_kp.resize(num_needed);
           }
@@ -138,7 +141,8 @@ public:
                   const auto &p_r = keypoints_prev_right[m.trainIdx].pt;
                   return (m.distance < max_hamming_distance_) && (p_l.x > p_r.x)
                          && (std::abs(p_l.y - p_r.y) < atol_parallax);
-                })
+                }
+            )
             | std::ranges::to<std::vector>();
 
       if (valid_matches.size() < minCorners)
@@ -242,7 +246,8 @@ public:
                   return (m.distance < max_hamming_distance_)
                          && (p_nl.x > p_nr.x)
                          && (std::abs(p_nl.y - p_nr.y) < atol_parallax);
-                })
+                }
+            )
             | std::ranges::to<std::vector>();
 
       if (valid_matches.size() < minCorners)
@@ -294,7 +299,8 @@ public:
                              < atol_coincidence)
                          && (std::abs(p_tracked.y - p_loop_back.y)
                              < atol_coincidence);
-                })
+                }
+            )
             | std::ranges::to<std::vector>();
 
       if (valid_matches.size() < minCorners)

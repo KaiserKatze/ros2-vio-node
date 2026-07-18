@@ -1,9 +1,10 @@
 #pragma once
 
 #include <concepts>
+#include <cstddef>
 #include <meta>
-#include <type_traits>
 #include <string_view>
+#include <type_traits>
 
 #include <Eigen/Dense>
 
@@ -282,11 +283,7 @@ public:
           }
           out = std::format_to(out, "{}", s);
         }
-                out = std::format_to(out,
-                    i == 0        ? " ⎤
-" :
-                    i == rows - 1 ? " ⎦"   : " ⎥
-");
+        out = std::format_to(out, i == 0 ? "⎤" : i == rows - 1 ? "⎦" : "⎥");
       }
       break;
     }

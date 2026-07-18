@@ -9,6 +9,8 @@
 #include <print>
 #include <stdexcept>
 
+#include <Eigen/Dense>
+
 // 辅助工具：判断一个反射类型是否是特定的 Eigen 类型
 template <typename T>
 consteval bool is_type_of(std::meta::info member_reflect)
@@ -16,10 +18,13 @@ consteval bool is_type_of(std::meta::info member_reflect)
   return std::meta::type_of(member_reflect) == ^^T;
 }
 
+namespace FastVIO
+{
+
 // 插值查找时间戳最近的数据（C++26 反射全自动化版）
 template <typename DataType>
-static DataType Interpolate(const std::vector<DataType> &data,
-                            const std::int64_t timestamp)
+DataType Interpolate(const std::vector<DataType> &data,
+                     const std::int64_t timestamp)
 {
   if (data.empty())
   {
@@ -35,10 +40,10 @@ static DataType Interpolate(const std::vector<DataType> &data,
   }
 
   // 标准二分查找定位左右区间
-  size_t left{0}, right{data.size() - 1};
+  std::size_t left{0}, right{data.size() - 1};
   while (left + 1 < right)
   {
-    size_t mid{(left + right) / 2};
+    std::size_t mid{(left + right) / 2};
     if (data[mid].timestamp_ < timestamp)
     {
       left = mid;
@@ -96,3 +101,5 @@ static DataType Interpolate(const std::vector<DataType> &data,
 
   return interp;
 }
+
+} // namespace FastVIO

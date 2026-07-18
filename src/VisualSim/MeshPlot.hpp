@@ -1,8 +1,11 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <map>
 #include <vector>
+
+#include <Eigen/Dense>
 
 #include <opencv2/core/types.hpp>
 #include <opencv2/highgui.hpp>
@@ -10,7 +13,11 @@
 
 #include "Room.hpp"
 
-template <typename value_type> struct MeshPlot
+namespace FastVIO::VisualSim
+{
+
+template <typename value_type>
+struct MeshPlot
 {
   using Point2 = Eigen::Vector<value_type, 2>;
   using Point3 = Eigen::Vector<value_type, 3>;
@@ -44,9 +51,9 @@ template <typename value_type> struct MeshPlot
   }
 
   // 使用索引表示三角形
-  struct Triangle : public std::array<size_t, 3>
+  struct Triangle : public std::array<std::size_t, 3>
   {
-    Triangle(size_t a, size_t b, size_t c)
+    Triangle(std::size_t a, std::size_t b, std::size_t c)
     {
       (*this)[0] = a;
       (*this)[1] = b;
@@ -55,8 +62,8 @@ template <typename value_type> struct MeshPlot
     }
   };
 
-  using Edge = std::pair<size_t, size_t>;
-  static Edge make_edge(size_t a, size_t b)
+  using Edge = std::pair<std::size_t, std::size_t>;
+  static Edge make_edge(std::size_t a, std::size_t b)
   {
     return {std::min(a, b), std::max(a, b)};
   }
@@ -296,22 +303,22 @@ template <typename value_type> struct MeshPlot
   template <typename FrameType>
   void Draw(cv::Mat &img_left, cv::Mat &img_right, const FrameType &frame) const
   {
-    const std::vector<size_t> &visible_indices{std::get<0>(frame)};
+    const std::vector<std::size_t> &visible_indices{std::get<0>(frame)};
     const std::vector<Point2> &img_pts_left{std::get<1>(frame)};
     const std::vector<Point2> &img_pts_right{std::get<2>(frame)};
 
     // 利用序号作为 key，轻量级映射
-    std::map<size_t, std::pair<cv::Point2f, cv::Point2f>> visible_map;
-    for (size_t i = 0; i < visible_indices.size(); ++i)
+    std::map<std::size_t, std::pair<cv::Point2f, cv::Point2f>> visible_map;
+    for (std::size_t i = 0; i < visible_indices.size(); ++i)
     {
       visible_map[visible_indices[i]]
           = {cv::Point2f(img_pts_left[i].x(), img_pts_left[i].y()),
              cv::Point2f(img_pts_right[i].x(), img_pts_right[i].y())};
     }
 
-    for (size_t i = 0; i < mesh_.size(); ++i)
+    for (std::size_t i = 0; i < mesh_.size(); ++i)
     {
-      size_t v0{mesh_[i][0]}, v1{mesh_[i][1]}, v2{mesh_[i][2]};
+      std::size_t v0{mesh_[i][0]}, v1{mesh_[i][1]}, v2{mesh_[i][2]};
 
       if (visible_map.count(v0) && visible_map.count(v1)
           && visible_map.count(v2))
@@ -345,3 +352,5 @@ template <typename value_type> struct MeshPlot
     }
   }
 };
+
+} // namespace FastVIO::VisualSim

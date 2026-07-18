@@ -1,26 +1,31 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <concepts>
+#include <cstddef>
 #include <initializer_list>
+
+#include <Eigen/Dense>
 
 template <typename T, typename Idx = std::size_t>
 concept VectorLike = requires(T t, Idx i) {
   { t[i] } -> std::convertible_to<double>;
 };
 
-#include <Eigen/Dense>
+inline constexpr std::size_t index_px{0};
+inline constexpr std::size_t index_py{1};
+inline constexpr std::size_t index_pz{2};
+inline constexpr std::size_t index_vx{3};
+inline constexpr std::size_t index_vy{4};
+inline constexpr std::size_t index_vz{5};
+inline constexpr std::size_t index_qw{6};
+inline constexpr std::size_t index_qx{7};
+inline constexpr std::size_t index_qy{8};
+inline constexpr std::size_t index_qz{9};
 
-static constexpr size_t index_px{0};
-static constexpr size_t index_py{1};
-static constexpr size_t index_pz{2};
-static constexpr size_t index_vx{3};
-static constexpr size_t index_vy{4};
-static constexpr size_t index_vz{5};
-static constexpr size_t index_qw{6};
-static constexpr size_t index_qx{7};
-static constexpr size_t index_qy{8};
-static constexpr size_t index_qz{9};
+namespace FastVIO
+{
 
 // 状态量定义: [px, py, pz, vx, vy, vz, qw, qx, qy, qz] (大小为 10)
 template <typename value_type>
@@ -271,3 +276,5 @@ struct ImuDerivative : public std::array<value_type, 10>
                                 quat_derivative.y(), quat_derivative.z());
   }
 };
+
+} // namespace FastVIO

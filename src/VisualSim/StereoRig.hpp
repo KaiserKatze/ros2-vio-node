@@ -1,22 +1,29 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdio>
 #include <print>
 #include <tuple>
 #include <vector>
 
+#include <Eigen/Dense>
+
 #include "Camera.hpp"
+
+namespace FastVIO::VisualSim
+{
 
 /**
  * @brief 双目相机
  */
-template <typename value_type> struct StereoRig
+template <typename value_type>
+struct StereoRig
 {
   Camera<value_type> camera_left_;
   Camera<value_type> camera_right_;
 
   using Point2 = Eigen::Vector<value_type, 2>;
-  using Frame  = std::tuple<std::vector<size_t>, std::vector<Point2>,
+  using Frame  = std::tuple<std::vector<std::size_t>, std::vector<Point2>,
                             std::vector<Point2>>;
 
   Frame
@@ -26,10 +33,12 @@ template <typename value_type> struct StereoRig
           const Eigen::Vector<value_type, 3> &parent_translation
           = Eigen::Vector<value_type, 3>::Zero()) const
   {
-    auto &&[indices_left, pixels_left] = camera_left_.Project(
-        object_matrix, parent_rotation, parent_translation);
-    auto &&[indices_right, pixels_right] = camera_right_.Project(
-        object_matrix, parent_rotation, parent_translation);
+    auto &&[indices_left, pixels_left]
+        = camera_left_.Project(object_matrix, parent_rotation,
+                               parent_translation);
+    auto &&[indices_right, pixels_right]
+        = camera_right_.Project(object_matrix, parent_rotation,
+                                parent_translation);
 
     // std::print(
     //     stderr,
@@ -37,12 +46,12 @@ template <typename value_type> struct StereoRig
     //     indices_left.size(), indices_right.size());
 
     // 左目、右目视图中可见三维点可能不一样，需要取交集
-    std::vector<size_t> common_indices;
+    std::vector<std::size_t> common_indices;
     std::vector<Point2> common_image_left;
     std::vector<Point2> common_image_right;
 
     // 因为 Camera 推入的索引天然是升序的，所以采用 O(N) 的双指针法取交集即可
-    size_t i{0}, j{0};
+    std::size_t i{0}, j{0};
     while (i < indices_left.size() && j < indices_right.size())
     {
       if (indices_left[i] == indices_right[j])
@@ -68,15 +77,15 @@ template <typename value_type> struct StereoRig
 
   static void AlignFrames(Frame &frame1, Frame &frame2)
   {
-    const std::vector<size_t> &indices1{std::get<0>(frame1)};
-    const std::vector<size_t> &indices2{std::get<0>(frame2)};
-    std::vector<size_t> common_indices;
+    const std::vector<std::size_t> &indices1{std::get<0>(frame1)};
+    const std::vector<std::size_t> &indices2{std::get<0>(frame2)};
+    std::vector<std::size_t> common_indices;
     std::vector<Point2> common_frame1_image_left;
     std::vector<Point2> common_frame1_image_right;
     std::vector<Point2> common_frame2_image_left;
     std::vector<Point2> common_frame2_image_right;
 
-    size_t i{0}, j{0};
+    std::size_t i{0}, j{0};
     while (i < indices1.size() && j < indices2.size())
     {
       if (indices1[i] == indices2[j])
@@ -107,3 +116,5 @@ template <typename value_type> struct StereoRig
     std::get<2>(frame2) = std::move(common_frame2_image_right);
   }
 };
+
+} // namespace FastVIO::VisualSim

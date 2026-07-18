@@ -41,6 +41,9 @@ using namespace std::chrono_literals;
 #define START_VISUALIZATION 0
 #define OUTPUT_AS_EUROC 1
 
+namespace FastVIO
+{
+
 template <typename value_type>
 struct VisualSim
 {
@@ -266,16 +269,16 @@ struct VisualSim
                   .cross(path_circle->GetPositionStart()
                          - path_circle->GetPositionCenter())
                   .norm(),
-        path_circle->GetPositionCenter().x(),             //
-        path_circle->GetPositionCenter().y(),             //
-        path_circle->GetPositionCenter().z(),             //
-        path_circle->GetPositionStart().x(),              //
-        path_circle->GetPositionStart().y(),              //
-        path_circle->GetPositionStart().z(),              //
-        path_circle->GetNorm().x(),                       //
-        path_circle->GetNorm().y(),                       //
-        path_circle->GetNorm().z(),                       //
-        enum_to_string(path_circle->GetOrientationMode()) //
+        path_circle->GetPositionCenter().x(),                        //
+        path_circle->GetPositionCenter().y(),                        //
+        path_circle->GetPositionCenter().z(),                        //
+        path_circle->GetPositionStart().x(),                         //
+        path_circle->GetPositionStart().y(),                         //
+        path_circle->GetPositionStart().z(),                         //
+        path_circle->GetNorm().x(),                                  //
+        path_circle->GetNorm().y(),                                  //
+        path_circle->GetNorm().z(),                                  //
+        std::meta::enum_to_string(path_circle->GetOrientationMode()) //
     );
 
 #endif
@@ -668,11 +671,13 @@ struct VisualSim
   }
 };
 
+} // namespace FastVIO
+
 int main()
 {
   try
   {
-    VisualSim<double>{}.Start();
+    FastVIO::VisualSim<double>{}.Start();
   }
   catch (const std::exception &ex)
   {
