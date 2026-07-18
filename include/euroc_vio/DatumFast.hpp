@@ -11,6 +11,8 @@
 
 #include <sophus/so3.hpp>
 
+#include "euroc_vio/AbstractLoader.hpp"
+
 namespace FastVIO
 {
 

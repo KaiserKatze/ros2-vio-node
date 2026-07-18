@@ -177,8 +177,8 @@ struct VisualIntegrator : public AbstractIntegrator
     // 更新位置
     pose_.translation() += pose_.so3() * delta_position;
     // 更新朝向
-    previous_attitude = pose_.so3();
-    pose_.so3()       = estimated_new_attitude;
+    previous_attitude_ = pose_.so3();
+    pose_.so3()        = estimated_new_attitude;
   }
 };
 

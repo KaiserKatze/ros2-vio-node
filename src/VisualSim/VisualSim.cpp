@@ -19,6 +19,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -41,7 +42,7 @@ using namespace std::chrono_literals;
 #define START_VISUALIZATION 0
 #define OUTPUT_AS_EUROC 1
 
-namespace FastVIO
+namespace FastVIO::VisualSim
 {
 
 template <typename value_type>
@@ -677,7 +678,7 @@ int main()
 {
   try
   {
-    FastVIO::VisualSim<double>{}.Start();
+    FastVIO::VisualSim::VisualSim<double>{}.Start();
   }
   catch (const std::exception &ex)
   {

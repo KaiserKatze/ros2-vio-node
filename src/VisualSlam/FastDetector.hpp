@@ -5,6 +5,7 @@
 #include <cmath>
 #include <numeric>
 #include <ranges>
+#include <utility>
 #include <vector>
 
 #include <opencv2/core/mat.hpp>

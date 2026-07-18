@@ -10,6 +10,7 @@
 #include <meta>
 #include <print>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include <boost/circular_buffer.hpp>
@@ -289,6 +290,12 @@ private:
         return std::prev(it);
       }
       return it;
+    }
+
+    [[nodiscard]]
+    const_iterator cend() const noexcept
+    {
+      return buffer_.cend();
     }
   };
 
@@ -727,7 +734,7 @@ public:
       // 序列化更新误差状态
       Vector4 effective_residual{residual - H * error_state_};
       // 计算卡尔曼增益
-      KalmanGainStereo K{GetKalmanGainStereo(error_state_covariance_, H, V)};
+      KalmanGainStereo K{GetKalmanGain(error_state_covariance_, H, V)};
       // 累加状态误差
       error_state_ += K * effective_residual;
       UpdateErrorStateCovariance(error_state_covariance_, K, H, V);

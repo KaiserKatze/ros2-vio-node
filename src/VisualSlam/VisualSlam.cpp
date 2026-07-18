@@ -41,6 +41,7 @@
 #include "euroc_vio/ErrorStateKalmanFilter.hpp"
 #include "euroc_vio/EuRoC.hpp"
 #include "euroc_vio/Integrator.hpp"
+#include "euroc_vio/SensorYaml.hpp"
 #include "euroc_vio/StereoObservation.hpp"
 #include "euroc_vio/TrackingConfig.hpp"
 
@@ -113,23 +114,25 @@ protected:
   /**
    * @brief 打印表头和初始位姿
    */
-  void WriteDataHeader()
+  template <typename SophusSE3>
+  void WriteDataHeader(const SophusSE3 &pose)
   {
     // 打印表头
     std::print(file_traj_, "#timestamp [ns],"
                            "p_x [m],p_y [m],p_z [m],"
                            "q_w [],q_x [],q_y [],q_z []\n");
     // 打印初始位姿
-    WriteDataContent(0);
+    WriteDataContent(0, pose);
   }
 
   /**
    * @brief 打印位姿
    */
-  void WriteDataContent(std::int64_t timestamp)
+  template <typename SophusSE3>
+  void WriteDataContent(std::int64_t timestamp, const SophusSE3 &pose)
   {
-    auto pos{this->VisualIntegrator::pose_.translation()};
-    auto att{this->VisualIntegrator::pose_.so3().unit_quaternion()};
+    auto pos{pose.translation()};
+    auto att{pose.so3().unit_quaternion()};
     std::print(file_traj_,
                // 时间戳
                "{:020d},"
@@ -189,6 +192,46 @@ public:
     {
       cv::namedWindow(window_name_, cv::WINDOW_NORMAL);
     }
+
+    typename ESKF::Config eskf_config;
+
+    auto path_cam0_yaml{path_mav0 / "cam0" / "sensor.yaml"};
+    auto opt_sensor_config_cam0{SensorYaml::ReadSensorYaml(path_cam0_yaml)};
+    if (opt_sensor_config_cam0.has_value())
+    {
+      auto sensor_config_cam0_ = opt_sensor_config_cam0.value();
+    }
+    else
+    {
+      throw std::runtime_error{std::format(
+          "Failed to parse camera config yaml '{}'.", path_cam0_yaml.c_str()
+      )};
+    }
+
+    auto path_imu0_yaml{path_mav0 / "imu0" / "sensor.yaml"};
+    auto opt_sensor_config_imu0{SensorYaml::ReadSensorYaml(path_imu0_yaml)};
+    if (opt_sensor_config_imu0.has_value())
+    {
+      auto sensor_config_imu0_ = opt_sensor_config_imu0.value();
+      eskf_config.imu_rate_    = sensor_config_imu0_.rate_hz_;
+    }
+    else
+    {
+      throw std::runtime_error{std::format(
+          "Failed to parse IMU config yaml '{}'.", path_imu0_yaml.c_str()
+      )};
+    }
+
+    using ProjectionMatrix = Eigen::Matrix<double, 3, 4>;
+    // 经过立体矫正后，左目相机的 3x4 投影矩阵
+    ProjectionMatrix proj_left{};
+    // 经过立体矫正后，右目相机的 3x4 投影矩阵
+    ProjectionMatrix proj_right{};
+    // TODO 从 EuRoC 实例中获取投影矩阵
+    eskf_config.proj_left_  = proj_left;
+    eskf_config.proj_right_ = proj_right;
+
+    eskf_ = ESKF{eskf_config};
   }
 
 #pragma endregion
@@ -214,11 +257,27 @@ private:
   {
     // 第一行：前4张
     cv::Mat row1;
-    cv::hconcat(std::vector<cv::Mat>{img1, img2, img3, img4}, row1);
+    cv::hconcat(
+        std::vector<cv::Mat>{
+            image_prev_left_rectified,
+            image_prev_right_rectified,
+            image_prev_left_grayscale,
+            image_prev_right_grayscale,
+        },
+        row1
+    );
 
     // 第二行：后4张
     cv::Mat row2;
-    cv::hconcat(std::vector<cv::Mat>{img5, img6, img7, img8}, row2);
+    cv::hconcat(
+        std::vector<cv::Mat>{
+            image_next_left_rectified,
+            image_next_right_rectified,
+            image_next_left_grayscale,
+            image_next_right_grayscale,
+        },
+        row2
+    );
 
     // 垂直拼接两行
     cv::Mat result;
@@ -245,7 +304,7 @@ private:
 public:
   void StartOdometer()
   {
-    WriteDataHeader();
+    WriteDataHeader(this->VisualIntegrator::pose_);
 
     bool init_frame{false};
     bool init_landmarks{false};
@@ -386,7 +445,7 @@ public:
           this->VisualIntegrator::Update(delta_rotation, delta_position);
 
           // 打印位姿
-          WriteDataContent(timestamp);
+          WriteDataContent(timestamp, this->VisualIntegrator::pose_);
         }
 
         // 只有在追踪成功时，才将本帧的有效特征点保存为下一帧的“上一帧点”
@@ -433,7 +492,10 @@ int main(int argc, char *argv[])
     std::print(stderr, "Visualization enabled.\n");
   }
 
-  FastVIO::StereoSlam inst{path_mav0, do_visualization};
+  SlamConfig config;
+  config.do_visualization_ = do_visualization;
+
+  FastVIO::StereoSlam inst{path_mav0, config};
   inst.StartOdometer();
 
   return 0;

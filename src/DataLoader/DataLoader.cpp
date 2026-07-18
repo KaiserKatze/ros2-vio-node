@@ -1,11 +1,13 @@
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 #include <Eigen/Dense>

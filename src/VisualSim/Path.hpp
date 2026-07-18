@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 
 #include <Eigen/Dense>
 
