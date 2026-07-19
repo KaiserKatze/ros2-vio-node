@@ -51,44 +51,30 @@ function(add_ros2_executable node_name source_path)
   )
 
   target_link_libraries(${node_name}
-    PRIVATE common_pch
+    PRIVATE
+    Eigen3::Eigen
+    Sophus::Sophus
+    Boost::boost
+    ${OpenCV_LIBRARIES}
+    yaml-cpp::yaml-cpp
+    rclcpp::rclcpp
+    cv_bridge::cv_bridge
+    message_filters::message_filters
+    image_transport::image_transport
+    nav_msgs::nav_msgs__rosidl_typesupport_cpp
+    nav_msgs::nav_msgs__rosidl_generator_cpp
+    geometry_msgs::geometry_msgs__rosidl_typesupport_cpp
+    geometry_msgs::geometry_msgs__rosidl_generator_cpp
+    sensor_msgs::sensor_msgs__rosidl_typesupport_cpp
+    sensor_msgs::sensor_msgs__rosidl_generator_cpp
+    std_msgs::std_msgs__rosidl_typesupport_cpp
+    std_msgs::std_msgs__rosidl_generator_cpp
   )
 
   install(TARGETS ${node_name}
     DESTINATION lib/${PROJECT_NAME}
   )
 endfunction()
-
-# ===== 共享预编译头接口库 =====
-add_library(common_pch INTERFACE)
-target_precompile_headers(common_pch
-  INTERFACE
-  ${CMAKE_CURRENT_SOURCE_DIR}/include/euroc_vio/pch.hpp
-)
-target_include_directories(common_pch
-  INTERFACE
-  ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-target_link_libraries(common_pch
-  INTERFACE
-  Eigen3::Eigen
-  Sophus::Sophus
-  Boost::boost
-  ${OpenCV_LIBRARIES}
-  yaml-cpp::yaml-cpp
-  rclcpp::rclcpp
-  cv_bridge::cv_bridge
-  message_filters::message_filters
-  image_transport::image_transport
-  nav_msgs::nav_msgs__rosidl_typesupport_cpp
-  nav_msgs::nav_msgs__rosidl_generator_cpp
-  geometry_msgs::geometry_msgs__rosidl_typesupport_cpp
-  geometry_msgs::geometry_msgs__rosidl_generator_cpp
-  sensor_msgs::sensor_msgs__rosidl_typesupport_cpp
-  sensor_msgs::sensor_msgs__rosidl_generator_cpp
-  std_msgs::std_msgs__rosidl_typesupport_cpp
-  std_msgs::std_msgs__rosidl_generator_cpp
-)
 
 # ===== 目标： SLAM 仿真数据集生成器 =====
 add_ros2_executable(VisualSim src/VisualSim/VisualSim.cpp)
