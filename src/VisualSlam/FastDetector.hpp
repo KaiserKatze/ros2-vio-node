@@ -125,11 +125,6 @@ private:
     cv::calcOpticalFlowPyrLK(prevImg, nextImg, prevPts, nextPts, status,
                              cv::noArray(), winSize, maxLevel, criteria_,
                              flags);
-    if (nextPts.empty())
-    {
-      return;
-    }
-    nextPts = nextPts | CreateSubPixAdaptor(nextImg);
   }
 
   //===================================

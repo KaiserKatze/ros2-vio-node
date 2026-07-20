@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <type_traits>
@@ -20,17 +21,8 @@
 #include <opencv2/viz/vizcore.hpp>
 
 template <typename T>
-struct is_vector : std::false_type
-{
-};
-
-template <typename T, typename Alloc>
-struct is_vector<std::vector<T, Alloc>> : std::true_type
-{
-};
-
-template <typename T>
-concept StdVectorType = is_vector<std::remove_cvref_t<T>>::value;
+concept OpenCV_Points
+    = std::is_same_v<std::remove_cvref_t<T>, std::vector<cv::Point2f>>;
 
 namespace FastVIO::CornerDetection
 {
@@ -69,52 +61,51 @@ struct SubPixAdaptor
   cv::TermCriteria criteria_;
 
   // 重载 | 运算符
-  friend auto operator|(StdVectorType auto &&vec, const SubPixAdaptor &adaptor)
+  friend decltype(auto) operator|(OpenCV_Points auto &&vec,
+                                  const SubPixAdaptor &adaptor)
   {
-    if (!vec.empty())
+    if (!vec.empty() && !adaptor.image_.empty())
     {
-      using VecType = std::remove_cvref_t<decltype(vec)>;
-      using PointT  = typename VecType::value_type;
-      if constexpr (std::is_same_v<PointT, cv::Point2f>)
-      {
-        cv::cornerSubPix(adaptor.image_, vec, adaptor.win_size_,
-                         adaptor.zero_zone_, adaptor.criteria_);
-      }
-      else
-      {
-        std::vector<cv::Point2f> vec_f
-            = vec
-              | std::views::transform(
-                  [](const auto &pt)
-                  {
-                    return cv::Point2f(static_cast<float>(pt.x),
-                                       static_cast<float>(pt.y));
-                  }
-              )
-              | std::ranges::to<std::vector>();
+      // 计算安全边距（必须保证窗口能在图像内部完整展开）
+      const float x_min{static_cast<float>(adaptor.win_size_.width + 1)};
+      const float y_min{static_cast<float>(adaptor.win_size_.height + 1)};
+      const float x_max{static_cast<float>(adaptor.image_.cols) - x_min};
+      const float y_max{static_cast<float>(adaptor.image_.rows) - y_min};
 
-        cv::cornerSubPix(adaptor.image_, vec_f, adaptor.win_size_,
-                         adaptor.zero_zone_, adaptor.criteria_);
+      std::vector<cv::Point2f> valid_pts;
+      std::vector<std::size_t> valid_indices;
+      std::size_t len{vec.size()};
+      valid_pts.reserve(len);
+      valid_indices.reserve(len);
 
-        for (std::size_t i = 0; i < vec.size(); ++i)
+      // 仅对位于合法区域内的点做亚像素精化
+      for (std::size_t i = 0; i < len; ++i)
+      {
+        const cv::Point2f &pt{vec[i]};
+        const float x{static_cast<float>(pt.x)};
+        const float y{static_cast<float>(pt.y)};
+        if (x >= x_min && x <= x_max && y >= y_min && y <= y_max)
         {
-          vec[i].x = vec_f[i].x;
-          vec[i].y = vec_f[i].y;
+          valid_pts.emplace_back(x, y);
+          valid_indices.push_back(i);
+        }
+      }
+
+      if (!valid_pts.empty())
+      {
+        cv::cornerSubPix(adaptor.image_, valid_pts, adaptor.win_size_,
+                         adaptor.zero_zone_, adaptor.criteria_);
+
+        for (std::size_t i = 0; i < valid_pts.size(); ++i)
+        {
+          const std::size_t orig_idx = valid_indices[i];
+          vec[orig_idx]              = valid_pts[i];
         }
       }
     }
-    return vec;
+
+    return std::forward<decltype(vec)>(vec);
   }
 };
-
-// 辅助工厂函数，类似于 std::views::transform
-inline auto RefineSubPix(const cv::Mat &image, cv::Size win_size = {5, 5},
-                         cv::Size zero_zone = {-1, -1},
-                         cv::TermCriteria criteria
-                         = {cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 40,
-                            0.01})
-{
-  return SubPixAdaptor{image, win_size, zero_zone, criteria};
-}
 
 } // namespace FastVIO::CornerDetection
