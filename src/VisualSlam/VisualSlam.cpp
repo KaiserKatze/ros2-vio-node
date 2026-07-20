@@ -219,6 +219,14 @@ public:
 
 #pragma endregion
 
+  ~StereoSlam()
+  {
+    if (config_.do_visualization_)
+    {
+      cv::destroyAllWindows();
+    }
+  }
+
 private:
   // 辅助函数：将灰度图转为彩色（BGR）
   static cv::Mat ConvertGrayToBGR(const cv::Mat &img) noexcept
