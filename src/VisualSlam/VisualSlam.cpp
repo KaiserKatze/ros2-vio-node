@@ -226,16 +226,20 @@ private:
     return color;
   }
 
-  static cv::Mat
-  stitchImages(const cv::Mat &image_prev_left_rectified,
-               const cv::Mat &image_prev_right_rectified,
-               const cv::Mat &image_prev_left_grayscale,
-               const cv::Mat &image_prev_right_grayscale,
-               const cv::Mat &image_next_left_rectified,
-               const cv::Mat &image_next_right_rectified,
-               const cv::Mat &image_next_left_grayscale,
-               const cv::Mat &image_next_right_grayscale) noexcept
+  static cv::Mat stitchImages(const cv::Mat &image_prev_left_rectified,
+                              const cv::Mat &image_prev_right_rectified,
+                              cv::Mat image_prev_left_grayscale,
+                              cv::Mat image_prev_right_grayscale,
+                              const cv::Mat &image_next_left_rectified,
+                              const cv::Mat &image_next_right_rectified,
+                              cv::Mat image_next_left_grayscale,
+                              cv::Mat image_next_right_grayscale) noexcept
   {
+    image_prev_left_grayscale  = ConvertGrayToBGR(image_prev_left_grayscale);
+    image_prev_right_grayscale = ConvertGrayToBGR(image_prev_right_grayscale);
+    image_next_left_grayscale  = ConvertGrayToBGR(image_next_left_grayscale);
+    image_next_right_grayscale = ConvertGrayToBGR(image_next_right_grayscale);
+
     // 第一行：前4张
     cv::Mat row1;
     cv::hconcat(
@@ -278,8 +282,6 @@ private:
 
     clahe_->apply(left_grayscale, left_grayscale);
     clahe_->apply(right_grayscale, right_grayscale);
-    left_grayscale  = ConvertGrayToBGR(left_grayscale);
-    right_grayscale = ConvertGrayToBGR(right_grayscale);
   }
 
 public:
