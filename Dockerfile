@@ -210,7 +210,13 @@ RUN rm -rf sophus
 # @note: 固定选用 OpenCV 4.x 版本，因为 ROS2 cv_bridge 尚不支持 OpenCV 5
 #==================================================================================================================
 
-RUN apt-get install -y libgtk2.0-dev pkg-config
+RUN apt-get install -y \
+      libgtk-3-dev \
+      libunwind-dev libunwind-20 libunwind-20-dev \
+      libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+      libavif-dev \
+      libopenjp2-7-dev \
+      tesseract-ocr libtesseract-dev
 
 WORKDIR /app
 RUN mkdir opencv_contrib && cd opencv_contrib && git init && git remote add origin https://github.com/opencv/opencv_contrib.git && \
