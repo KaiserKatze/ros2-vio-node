@@ -364,6 +364,9 @@ private:
                           std::vector<std::uint32_t> &feature_ids,
                           bool use_hint) const
   {
+    assert(corners_prev_left.size() == corners_prev_right.size()
+           && corners_prev_left.size() == feature_ids.size());
+
     // 由于 corners_prev_right 的长度可能比 corners_next_right 的长度大
     // 函数 TrackStereoPrevLeftToPrevRight 新增的角点是追加在 corners_prev_right 的末尾
     // 所以可以把 corners_prev_right 末尾元素添加到 corners_next_right 的末尾
@@ -384,12 +387,10 @@ private:
                                       + corners_next_right.size(),
                                   corners_prev_right.end());
       }
-    }
 
-    assert(corners_prev_left.size() == corners_prev_right.size()
-           && corners_prev_left.size() == corners_next_left.size()
-           && corners_prev_right.size() == corners_next_right.size()
-           && corners_prev_left.size() == feature_ids.size());
+      assert(corners_prev_left.size() == corners_next_left.size()
+             && corners_prev_left.size() == corners_next_right.size());
+    }
 
     std::vector<unsigned char> features_found_pr_nr;
     const int lk_flags_prev_right_to_next_right{
@@ -414,43 +415,48 @@ private:
         lk_flags_prev_right_to_next_right != 0
     );
 
-    auto zipped_view = std::views::zip(features_found_pr_nr, corners_prev_left,
-                                       corners_prev_right, corners_next_right,
-                                       corners_next_left, feature_ids)
-                       | std::views::filter(
-                           [](const auto &tuple)
-                           {
-                             // 1. 必须是追踪成功的点
-                             return std::get<0>(tuple);
-                           }
-                       );
+    const auto TrackFilter = [](const auto &tuple)
+    {
+      // 1. 必须是追踪成功的点
+      return std::get<0>(tuple);
+    };
+    auto zipped_view
+        = std::views::zip(features_found_pr_nr, feature_ids, corners_prev_left,
+                          corners_prev_right, corners_next_right)
+          | std::views::filter(TrackFilter);
 
     // 因为 view 是延迟计算的，所以必须先创建副本
-    Points new_corners_prev_left
+    auto new_feature_ids
         = zipped_view
           | std::views::transform([](const auto &tuple)
                                   { return std::get<1>(tuple); })
           | std::ranges::to<std::vector>();
-    Points new_corners_prev_right
+    Points new_corners_prev_left
         = zipped_view
           | std::views::transform([](const auto &tuple)
                                   { return std::get<2>(tuple); })
           | std::ranges::to<std::vector>();
-    Points new_corners_next_right
+    Points new_corners_prev_right
         = zipped_view
           | std::views::transform([](const auto &tuple)
                                   { return std::get<3>(tuple); })
           | std::ranges::to<std::vector>();
-    Points new_corners_next_left
+    Points new_corners_next_right
         = zipped_view
           | std::views::transform([](const auto &tuple)
                                   { return std::get<4>(tuple); })
           | std::ranges::to<std::vector>();
-    auto new_feature_ids
-        = zipped_view
-          | std::views::transform([](const auto &tuple)
-                                  { return std::get<5>(tuple); })
-          | std::ranges::to<std::vector>();
+
+    Points new_corners_next_left;
+    if (use_hint && corners_next_left.size() == features_found_pr_nr.size())
+    {
+      new_corners_next_left
+          = std::views::zip(features_found_pr_nr, corners_next_left)
+            | std::views::filter(TrackFilter)
+            | std::views::transform([](const auto &tuple)
+                                    { return std::get<1>(tuple); })
+            | std::ranges::to<std::vector>();
+    }
 
     corners_prev_left  = std::move(new_corners_prev_left);
     corners_prev_right = std::move(new_corners_prev_right);
@@ -463,7 +469,8 @@ private:
     return HaveEnoughCorners(corners_prev_left)
            && corners_prev_left.size() == corners_prev_right.size()
            && corners_prev_left.size() == corners_next_right.size()
-           && corners_prev_left.size() == corners_next_left.size();
+           && (corners_next_left.empty()
+               || corners_prev_left.size() == corners_next_left.size());
   }
 
   //===================================
