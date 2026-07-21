@@ -168,7 +168,6 @@ private:
     bool operator()(const auto &tuple) const noexcept
     {
       auto found{std::get<0>(tuple)};
-      auto feature_id{std::get<1>(tuple)};
       // 左目视图角点坐标
       const PointType &pt1{std::get<2>(tuple)};
       // 右目视图角点坐标
@@ -191,7 +190,6 @@ private:
     bool operator()(const auto &tuple) const noexcept
     {
       auto found{std::get<0>(tuple)};
-      auto feature_id{std::get<1>(tuple)};
       const PointType &pt1{std::get<2>(tuple)};
       const PointType &pt2{std::get<3>(tuple)};
       // 1. 必须是追踪成功的点
@@ -253,8 +251,8 @@ private:
     // 新提取的角点需要赋予 feature_id
     ExtendFeatureIdList(feature_ids, keypoints_prev_left_ext);
 
-    std::println(stderr, "[阶段1] FAST 新检出={} (新 id 从 {} 起)，检测方式={}",
-                 keypoints_prev_left_ext.size(), feature_last + 1,
+    std::println(stderr, "[阶段1] FAST 新检出={} ，检测方式={}",
+                 keypoints_prev_left_ext.size(),
                  (corners_prev_left.empty() || corners_prev_right.empty())
                      ? "全图"
                      : "掩膜(排除已跟踪点)");
