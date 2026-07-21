@@ -180,6 +180,27 @@ private:
     }
   };
 
+  class CoincidenceFilter
+  {
+  private:
+    double atol_;
+
+  public:
+    CoincidenceFilter(double atol) noexcept : atol_{atol} {}
+
+    bool operator()(const auto &tuple) const noexcept
+    {
+      auto found{std::get<0>(tuple)};
+      auto feature_id{std::get<1>(tuple)};
+      const PointType &pt1{std::get<2>(tuple)};
+      const PointType &pt2{std::get<3>(tuple)};
+      // 1. 必须是追踪成功的点
+      // 2. 重合过滤：横、纵坐标之差必须小于阈值
+      return found && (std::abs(pt1.x - pt2.x) < atol_)
+             && (std::abs(pt1.y - pt2.y) < atol_);
+    }
+  };
+
   //===================================
   // 从上一帧左目到上一帧右目
   bool
@@ -548,43 +569,32 @@ private:
                  corners_next_left.size() - lk_found_nl_pl);
 
     auto zipped_view
-        = std::views::zip(features_found_nl_pl, corners_prev_left,
-                          corners_prev_right, corners_next_left,
-                          corners_next_right, corners_prev_left_loopback,
-                          feature_ids)
-          | std::views::filter(
-              [atol = atol_coincidence](const auto &tuple)
-              {
-                const auto &[found, p_prev_left, p_prev_right, p_next_left,
-                             p_next_right, p_loop_back, feature_id] = tuple;
-                // 1. 必须是追踪成功的点
-                // 2. 重合过滤：横、纵坐标之差必须小于阈值
-                return found && (std::abs(p_prev_left.x - p_loop_back.x) < atol)
-                       && (std::abs(p_prev_left.y - p_loop_back.y) < atol);
-              }
-          );
+        = std::views::zip(features_found_nl_pl, feature_ids, corners_prev_left,
+                          corners_prev_left_loopback, corners_prev_right,
+                          corners_next_left, corners_next_right)
+          | std::views::filter(CoincidenceFilter{atol_coincidence});
 
-    Points new_corners_prev_left
+    auto new_feature_ids
         = zipped_view
           | std::views::transform([](const auto &tuple)
                                   { return std::get<1>(tuple); })
           | std::ranges::to<std::vector>();
-    Points new_corners_prev_right
+    Points new_corners_prev_left
         = zipped_view
           | std::views::transform([](const auto &tuple)
                                   { return std::get<2>(tuple); })
           | std::ranges::to<std::vector>();
-    Points new_corners_next_left
-        = zipped_view
-          | std::views::transform([](const auto &tuple)
-                                  { return std::get<3>(tuple); })
-          | std::ranges::to<std::vector>();
-    Points new_corners_next_right
+    Points new_corners_prev_right
         = zipped_view
           | std::views::transform([](const auto &tuple)
                                   { return std::get<4>(tuple); })
           | std::ranges::to<std::vector>();
-    auto new_feature_ids
+    Points new_corners_next_left
+        = zipped_view
+          | std::views::transform([](const auto &tuple)
+                                  { return std::get<5>(tuple); })
+          | std::ranges::to<std::vector>();
+    Points new_corners_next_right
         = zipped_view
           | std::views::transform([](const auto &tuple)
                                   { return std::get<6>(tuple); })
