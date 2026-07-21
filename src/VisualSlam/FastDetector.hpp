@@ -486,9 +486,10 @@ private:
                                  bool use_hint) const
   {
     assert(corners_prev_left.size() == corners_prev_right.size()
-           && corners_prev_left.size() == corners_next_left.size()
            && corners_prev_left.size() == corners_next_right.size()
            && corners_prev_left.size() == feature_ids.size());
+    assert(corners_next_left.empty()
+           || corners_prev_left.size() == corners_next_left.size());
 
     std::vector<unsigned char> features_found_nr_nl;
     const int lk_flags_next_right_to_next_left{
