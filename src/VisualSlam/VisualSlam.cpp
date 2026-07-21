@@ -1,5 +1,6 @@
 #include <atomic>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -7,6 +8,7 @@
 #include <format>
 #include <fstream>
 #include <ios>
+#include <limits>
 #include <numeric>
 #include <print>
 #include <ranges>
@@ -289,8 +291,15 @@ public:
   {
     WriteDataHeader(this->VisualIntegrator::pose_);
 
+    using Clock = std::chrono::steady_clock;
+
     bool init_frame{false};
     bool init_landmarks{false};
+
+    std::size_t visual_task_count{0};
+    double visual_task_total_ms{0.0};
+    double visual_task_min_ms{std::numeric_limits<double>::max()};
+    double visual_task_max_ms{0.0};
 
     std::int64_t timestamp;
     cv::Mat image_prev_left_rectified;
@@ -320,6 +329,7 @@ public:
     while (loader_)
     {
       StereoFrame<cv::Mat> frame{loader_()};
+      const auto visual_task_begin{Clock::now()};
       if (!init_frame)
       {
         init_frame = true;
@@ -374,6 +384,7 @@ public:
              && corners_prev_left.size() == corners_next_left.size()
              && corners_prev_left.size() == corners_next_right.size()
              && corners_prev_left.size() == feature_ids.size());
+
       if (found_corners)
       {
         // 当视图之间的旋转、平移未知（例如从上一帧右目到下一帧右目，从上一帧左目到下一帧左目）时：
@@ -442,6 +453,26 @@ public:
         corners_prev_right.clear();
       }
 
+      const auto visual_task_end{Clock::now()};
+      const auto visual_task_elapsed_ms{
+          std::chrono::duration<double, std::milli>{visual_task_end
+                                                    - visual_task_begin}
+              .count(),
+      };
+      ++visual_task_count;
+      visual_task_total_ms += visual_task_elapsed_ms;
+      visual_task_min_ms = std::min(visual_task_min_ms, visual_task_elapsed_ms);
+      visual_task_max_ms = std::max(visual_task_max_ms, visual_task_elapsed_ms);
+      std::print(
+          stderr,
+          "[VisualTask] timestamp={} found_corners={} tracked_features={} "
+          "elapsed_ms={:.3f} avg_ms={:.3f} min_ms={:.3f} max_ms={:.3f}\n",
+          frame.timestamp_, found_corners, feature_ids.size(),
+          visual_task_elapsed_ms,
+          visual_task_total_ms / static_cast<double>(visual_task_count),
+          visual_task_min_ms, visual_task_max_ms
+      );
+
       timestamp                  = frame.timestamp_;
       image_prev_left_rectified  = std::move(image_next_left_rectified);
       image_prev_right_rectified = std::move(image_next_right_rectified);
@@ -449,6 +480,18 @@ public:
       image_prev_right_grayscale = std::move(image_next_right_grayscale);
 
       ++loader_;
+    }
+
+    if (visual_task_count > 0)
+    {
+      std::print(
+          stderr,
+          "[VisualTask] summary frames={} avg_ms={:.3f} min_ms={:.3f} "
+          "max_ms={:.3f} total_ms={:.3f}\n",
+          visual_task_count,
+          visual_task_total_ms / static_cast<double>(visual_task_count),
+          visual_task_min_ms, visual_task_max_ms, visual_task_total_ms
+      );
     }
   }
 };
