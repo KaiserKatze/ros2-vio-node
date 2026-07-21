@@ -128,6 +128,29 @@ private:
                              flags);
   }
 
+  class ParallaxFilter
+  {
+  private:
+    double atol_;
+
+  public:
+    ParallaxFilter(double atol) noexcept : atol_{atol} {}
+
+    bool operator()(const auto &tuple) const noexcept
+    {
+      auto found{std::get<0>(tuple)};
+      auto feature_id{std::get<1>(tuple)};
+      // 左目视图角点坐标
+      const PointType &pt1{std::get<2>(tuple)};
+      // 右目视图角点坐标
+      const PointType &pt2{std::get<3>(tuple)};
+      // 1. 必须是追踪成功的点
+      // 2. 视差过滤：保证正视差 (即左目图像中的点的横坐标必须大于右目图像中的点的横坐标)
+      // 3. 极线过滤：纵坐标之差必须小于阈值
+      return found && (pt1.x > pt2.x) && (std::abs(pt1.y - pt2.y) < atol_);
+    }
+  };
+
   //===================================
   // 从上一帧左目到上一帧右目
   bool
@@ -213,20 +236,9 @@ private:
                          features_found_pl_pr, 0);
 
     auto zipped_view
-        = std::views::zip(features_found_pl_pr, corners_prev_left_ext,
-                          corners_prev_right_ext, feature_ids)
-          | std::views::filter(
-              [atol = atol_parallax](const auto &tuple)
-              {
-                const auto &[found, p_prev_left, p_prev_right, feature_id]
-                    = tuple;
-                // 1. 必须是追踪成功的点
-                // 2. 视差过滤：保证正视差 (即左目图像中的点的横坐标必须大于右目图像中的点的横坐标)
-                // 3. 极线过滤：纵坐标之差必须小于阈值
-                return found && (p_prev_left.x > p_prev_right.x)
-                       && (std::abs(p_prev_left.y - p_prev_right.y) < atol);
-              }
-          );
+        = std::views::zip(features_found_pl_pr, feature_ids,
+                          corners_prev_left_ext, corners_prev_right_ext)
+          | std::views::filter(ParallaxFilter{atol_parallax});
 
     // 因为 view 是延迟计算的，所以必须先创建副本
     Points new_corners_prev_left_ext
@@ -385,22 +397,10 @@ private:
                          corners_next_left, features_found_nr_nl,
                          lk_flags_next_right_to_next_left);
 
-    auto zipped_view
-        = std::views::zip(features_found_nr_nl, corners_prev_left,
-                          corners_prev_right, corners_next_left,
-                          corners_next_right, feature_ids)
-          | std::views::filter(
-              [atol = atol_parallax](const auto &tuple)
-              {
-                const auto &[found, p_prev_left, p_prev_right, p_next_left,
-                             p_next_right, feature_id] = tuple;
-                // 1. 必须是追踪成功的点
-                // 2. 视差过滤：保证正视差 (即左目图像中的点的横坐标必须大于右目图像中的点的横坐标)
-                // 3. 极线过滤：纵坐标之差必须小于阈值
-                return found && (p_next_left.x > p_next_right.x)
-                       && (std::abs(p_next_left.y - p_next_right.y) < atol);
-              }
-          );
+    auto zipped_view = std::views::zip(features_found_nr_nl, feature_ids,
+                                       corners_next_left, corners_next_right,
+                                       corners_prev_left, corners_prev_right)
+                       | std::views::filter(ParallaxFilter{atol_parallax});
 
     Points new_corners_prev_left
         = zipped_view
