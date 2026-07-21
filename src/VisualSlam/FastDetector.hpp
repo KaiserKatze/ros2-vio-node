@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstdint>
 #include <numeric>
 #include <ranges>
 #include <utility>
@@ -173,11 +174,7 @@ private:
     }
 
     // 新提取的角点需要赋予 feature_id
-    std::uint32_t feature_last{feature_ids.empty() ? 0 : feature_ids.back()};
-    feature_ids.resize(feature_ids.size() + keypoints_prev_left_ext.size());
-    std::iota(feature_ids.end() - keypoints_prev_left_ext.size(),
-              feature_ids.end(), //
-              feature_last + 1);
+    ExtendFeatureIdList(feature_ids, keypoints_prev_left_ext);
 
     if (!HaveEnoughCorners(corners_prev_left, keypoints_prev_left_ext))
     {

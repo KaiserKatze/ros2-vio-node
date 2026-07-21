@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <numeric>
 #include <type_traits>
 #include <vector>
 
@@ -52,6 +54,17 @@ struct AbstractDetector
   {
     // 各个角点集合的大小之和
     return (corners.size() + ...) >= minCorners;
+  }
+
+  template <typename PointType>
+  void ExtendFeatureIdList(std::vector<std::uint32_t> &feature_ids,
+                           const std::vector<PointType> &new_feature_pts)
+  {
+    std::uint32_t feature_last{feature_ids.empty() ? 0 : feature_ids.back()};
+    feature_ids.resize(feature_ids.size() + new_feature_pts.size());
+    std::iota(feature_ids.end() - new_feature_pts.size(),
+              feature_ids.end(), //
+              feature_last + 1);
   }
 };
 
