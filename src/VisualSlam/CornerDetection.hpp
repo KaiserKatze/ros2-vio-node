@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <type_traits>
 #include <vector>
 
@@ -31,8 +32,9 @@ struct AbstractDetector
 {
   static constexpr std::size_t minCorners{10};
   static constexpr std::size_t maxCorners{200};
-  static_assert(minCorners <= maxCorners,
-                "minCorners must be less than or equal to maxCorners");
+  static_assert(minCorners <= maxCorners);
+  static_assert(maxCorners
+                < static_cast<std::size_t>(std::numeric_limits<int>::max()));
   static constexpr double atol_parallax{1.5};
   static constexpr double atol_coincidence{1.0};
   const cv::Size winSize{15, 15};
@@ -45,7 +47,8 @@ struct AbstractDetector
   }
 
   template <typename... PointTypes>
-  static bool HaveEnoughCorners(const std::vector<PointTypes> &...corners)
+  static bool
+  HaveEnoughCorners(const std::vector<PointTypes> &...corners) noexcept
   {
     // 各个角点集合的大小之和
     return (corners.size() + ...) >= minCorners;
