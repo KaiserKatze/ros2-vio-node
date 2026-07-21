@@ -1,24 +1,11 @@
 #pragma once
 
-#include <concepts>
-#include <type_traits>
-
 #include <Eigen/Dense>
 
 #include <sophus/se3.hpp>
 #include <sophus/so3.hpp>
 
-template <typename T>
-concept ImuDatumLike = requires {
-  requires std::is_same_v<std::decay_t<decltype(std::declval<T>().timestamp_)>,
-                          std::int64_t>;
-  requires std::
-      is_same_v<std::decay_t<decltype(std::declval<T>().angular_velocity_)>,
-                Eigen::Vector3d>;
-  requires std::
-      is_same_v<std::decay_t<decltype(std::declval<T>().linear_acceleration_)>,
-                Eigen::Vector3d>;
-};
+#include "euroc_vio/DatumImu.hpp"
 
 namespace FastVIO
 {
@@ -43,8 +30,7 @@ struct AbstractIntegrator
  */
 struct ZerothOrderAttitudeIntegrator : public AbstractIntegrator
 {
-  void Update(const ImuDatumLike auto &datum_prev,
-              const ImuDatumLike auto &datum)
+  void Update(const DatumImu &datum_prev, const DatumImu &datum)
   {
     const double dt{
         1e-9f * static_cast<double>(datum.timestamp_ - datum_prev.timestamp_),
@@ -85,8 +71,7 @@ struct ZerothOrderAttitudeIntegrator : public AbstractIntegrator
  */
 struct FirstOrderAttitudeIntegrator : public AbstractIntegrator
 {
-  void Update(const ImuDatumLike auto &datum_prev,
-              const ImuDatumLike auto &datum)
+  void Update(const DatumImu &datum_prev, const DatumImu &datum)
   {
     const double dt{
         1e-9f * static_cast<double>(datum.timestamp_ - datum_prev.timestamp_),
@@ -131,8 +116,7 @@ struct FirstOrderAttitudeIntegrator : public AbstractIntegrator
  */
 struct MidpointPositionIntegrator : public AbstractIntegrator
 {
-  void Update(const ImuDatumLike auto &datum_prev,
-              const ImuDatumLike auto &datum)
+  void Update(const DatumImu &datum_prev, const DatumImu &datum)
   {
     const double dt{
         1e-9f * static_cast<double>(datum.timestamp_ - datum_prev.timestamp_),
