@@ -4,7 +4,9 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <numeric>
+#include <print>
 #include <ranges>
 #include <utility>
 #include <vector>
@@ -80,10 +82,19 @@ public:
            && gray_prev_left.rows == gray_next_right.rows
            && gray_prev_left.cols == gray_next_right.cols);
 
+    std::println(stderr,
+                 "\n[FindCorners] ===== 开始特征跟踪 ===== "
+                 "use_hint={} | 入口角点数={} | minCorners={} maxCorners={}",
+                 use_hint, corners_prev_left.size(), minCorners, maxCorners);
+
     if (!TrackStereoPrevLeftToPrevRight(gray_prev_left, gray_prev_right,
                                         corners_prev_left, corners_prev_right,
                                         feature_ids))
     {
+      std::println(stderr,
+                   "[FindCorners] ✗ 失败于 阶段1 双目提取/匹配 "
+                   "(prev_left → prev_right)，剩余角点={}",
+                   corners_prev_left.size());
       return false;
     }
 
@@ -91,6 +102,10 @@ public:
                             corners_prev_right, corners_next_left,
                             corners_next_right, feature_ids, use_hint))
     {
+      std::println(stderr,
+                   "[FindCorners] ✗ 失败于 阶段2 时序跟踪 "
+                   "(prev_right → next_right)，剩余角点={}",
+                   corners_prev_left.size());
       return false;
     }
 
@@ -99,6 +114,10 @@ public:
                                         corners_next_left, corners_next_right,
                                         feature_ids, use_hint))
     {
+      std::println(stderr,
+                   "[FindCorners] ✗ 失败于 阶段3 双目匹配 "
+                   "(next_right → next_left)，剩余角点={}",
+                   corners_prev_left.size());
       return false;
     }
 
@@ -106,9 +125,19 @@ public:
                           corners_prev_right, corners_next_left,
                           corners_next_right, feature_ids))
     {
+      std::println(stderr,
+                   "[FindCorners] ✗ 失败于 阶段4 闭环校验 "
+                   "(next_left → prev_left)，剩余角点={}",
+                   corners_prev_left.size());
       return false;
     }
 
+    std::println(stderr,
+                 "[FindCorners] ✓ 跟踪成功 ===== 存活路标点={} | "
+                 "id 范围=[{}, {}] =====",
+                 corners_prev_left.size(),
+                 feature_ids.empty() ? 0u : feature_ids.front(),
+                 feature_ids.empty() ? 0u : feature_ids.back());
     return true;
   }
 
@@ -167,10 +196,14 @@ private:
     const int num_needed{static_cast<int>(maxCorners)
                          - static_cast<int>(corners_prev_left.size())};
 
+    std::println(stderr, "[阶段1 双目 prev_L→prev_R] 已跟踪={} 需补充={}",
+                 corners_prev_left.size(), num_needed);
+
     // 不仅数量要够，还必须确保左右目特征点数组不为空且大小一致
     if (num_needed <= 0 && !corners_prev_right.empty()
         && corners_prev_left.size() == corners_prev_right.size())
     {
+      std::println(stderr, "[阶段1] 角点充足，跳过补充提取");
       return HaveEnoughCorners(corners_prev_left);
     }
 
@@ -199,13 +232,26 @@ private:
     // 新提取的角点需要赋予 feature_id
     ExtendFeatureIdList(feature_ids, keypoints_prev_left_ext);
 
+    std::println(stderr, "[阶段1] FAST 新检出={} (新 id 从 {} 起)，检测方式={}",
+                 keypoints_prev_left_ext.size(), feature_last + 1,
+                 (corners_prev_left.empty() || corners_prev_right.empty())
+                     ? "全图"
+                     : "掩膜(排除已跟踪点)");
+
     if (!HaveEnoughCorners(corners_prev_left, keypoints_prev_left_ext))
     {
+      std::println(
+          stderr,
+          "[阶段1] ✗ 已跟踪({}) + 新检出({}) < minCorners({})，角点不足",
+          corners_prev_left.size(), keypoints_prev_left_ext.size(), minCorners
+      );
       return false;
     }
 
     if (keypoints_prev_left_ext.empty())
     {
+      std::println(stderr, "[阶段1] 无新检出角点，维持已跟踪={}",
+                   corners_prev_left.size());
       return HaveEnoughCorners(corners_prev_left)
              && corners_prev_left.size() == corners_prev_right.size();
     }
@@ -235,6 +281,14 @@ private:
                          corners_prev_right_ext, //
                          features_found_pl_pr, 0);
 
+    const auto lk_found_pl_pr{std::ranges::count_if(features_found_pl_pr,
+                                                    [](unsigned char s)
+                                                    { return s != 0; })};
+    std::println(stderr,
+                 "[阶段1] LK 光流 prev_L→prev_R: 输入={} 成功={} 失败={}",
+                 corners_prev_left_ext.size(), lk_found_pl_pr,
+                 corners_prev_left_ext.size() - lk_found_pl_pr);
+
     auto zipped_view
         = std::views::zip(features_found_pl_pr, feature_ids,
                           corners_prev_left_ext, corners_prev_right_ext)
@@ -262,6 +316,14 @@ private:
                               + new_corners_prev_left_ext.size());
     corners_prev_right.reserve(corners_prev_right.size()
                                + new_corners_prev_right_ext.size());
+    std::println(stderr,
+                 "[阶段1] 视差/极线过滤后新增={} (剔除={}) | "
+                 "合并后总数: {} + {} = {}",
+                 new_corners_prev_left_ext.size(),
+                 corners_prev_left_ext.size()
+                     - new_corners_prev_left_ext.size(),
+                 corners_prev_left.size(), new_corners_prev_left_ext.size(),
+                 corners_prev_left.size() + new_corners_prev_left_ext.size());
     corners_prev_left.append_range(std::move(new_corners_prev_left_ext));
     corners_prev_right.append_range(std::move(new_corners_prev_right_ext));
     feature_ids = std::move(new_feature_ids);
@@ -319,6 +381,18 @@ private:
                          corners_next_right, features_found_pr_nr,
                          lk_flags_prev_right_to_next_right);
 
+    const auto lk_found_pr_nr{std::ranges::count_if(features_found_pr_nr,
+                                                    [](unsigned char s)
+                                                    { return s != 0; })};
+    std::println(
+        stderr,
+        "[阶段2 时序 prev_R→next_R] LK 光流: 输入={} 成功={} 失败={} | "
+        "初始流提示={}",
+        corners_prev_right.size(), lk_found_pr_nr,
+        corners_prev_right.size() - lk_found_pr_nr,
+        lk_flags_prev_right_to_next_right != 0
+    );
+
     auto zipped_view = std::views::zip(features_found_pr_nr, corners_prev_left,
                                        corners_prev_right, corners_next_right,
                                        corners_next_left, feature_ids)
@@ -362,6 +436,8 @@ private:
     corners_next_right = std::move(new_corners_next_right);
     corners_next_left  = std::move(new_corners_next_left);
     feature_ids        = std::move(new_feature_ids);
+
+    std::println(stderr, "[阶段2] 过滤后存活={}", corners_prev_left.size());
 
     return HaveEnoughCorners(corners_prev_left)
            && corners_prev_left.size() == corners_prev_right.size()
@@ -434,6 +510,9 @@ private:
     corners_next_right = std::move(new_corners_next_right);
     feature_ids        = std::move(new_feature_ids);
 
+    std::println(stderr, "[阶段3] 视差/极线过滤后存活={}",
+                 corners_prev_left.size());
+
     return HaveEnoughCorners(corners_prev_left)
            && corners_prev_left.size() == corners_prev_right.size()
            && corners_prev_left.size() == corners_next_left.size()
@@ -459,6 +538,14 @@ private:
     std::vector<unsigned char> features_found_nl_pl;
     CalcOpticalFlowPyrLK(gray_next_left, gray_prev_left, corners_next_left,
                          corners_prev_left_loopback, features_found_nl_pl, 0);
+
+    const auto lk_found_nl_pl{std::ranges::count_if(features_found_nl_pl,
+                                                    [](unsigned char s)
+                                                    { return s != 0; })};
+    std::println(stderr,
+                 "[阶段4 闭环 next_L→prev_L] LK 光流: 输入={} 成功={} 失败={}",
+                 corners_next_left.size(), lk_found_nl_pl,
+                 corners_next_left.size() - lk_found_nl_pl);
 
     auto zipped_view
         = std::views::zip(features_found_nl_pl, corners_prev_left,
@@ -508,6 +595,10 @@ private:
     corners_next_left  = std::move(new_corners_next_left);
     corners_next_right = std::move(new_corners_next_right);
     feature_ids        = std::move(new_feature_ids);
+
+    std::println(stderr, "[阶段4] 重合过滤(atol={})后存活={} (剔除={})",
+                 atol_coincidence, corners_prev_left.size(),
+                 corners_prev_left_loopback.size() - corners_prev_left.size());
 
     return HaveEnoughCorners(corners_prev_left)
            && corners_prev_left.size() == corners_prev_right.size()
