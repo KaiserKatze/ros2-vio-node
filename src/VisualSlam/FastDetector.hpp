@@ -190,6 +190,10 @@ private:
     // 按照响应值（response）降序排列，保留最显著的前 maxCorners 个角点，提取最优角点
     std::ranges::sort(keypoints_prev_left_ext, std::greater<>{},
                       &cv::KeyPoint::response);
+    if (keypoints_prev_left_ext.size() > maxCorners)
+    {
+      keypoints_prev_left_ext.resize(maxCorners);
+    }
 
     // 将 KeyPoint 映射回 PointType
     Points corners_prev_left_ext
