@@ -241,17 +241,17 @@ private:
           | std::views::filter(ParallaxFilter{atol_parallax});
 
     // 因为 view 是延迟计算的，所以必须先创建副本
-    Points new_corners_prev_left_ext
+    auto new_feature_ids
         = zipped_view
           | std::views::transform([](const auto &tuple)
                                   { return std::get<1>(tuple); })
           | std::ranges::to<std::vector>();
-    Points new_corners_prev_right_ext
+    Points new_corners_prev_left_ext
         = zipped_view
           | std::views::transform([](const auto &tuple)
                                   { return std::get<2>(tuple); })
           | std::ranges::to<std::vector>();
-    auto new_feature_ids
+    Points new_corners_prev_right_ext
         = zipped_view
           | std::views::transform([](const auto &tuple)
                                   { return std::get<3>(tuple); })
@@ -402,27 +402,27 @@ private:
                                        corners_prev_left, corners_prev_right)
                        | std::views::filter(ParallaxFilter{atol_parallax});
 
-    Points new_corners_prev_left
+    auto new_feature_ids
         = zipped_view
           | std::views::transform([](const auto &tuple)
                                   { return std::get<1>(tuple); })
           | std::ranges::to<std::vector>();
-    Points new_corners_prev_right
+    Points new_corners_next_left
         = zipped_view
           | std::views::transform([](const auto &tuple)
                                   { return std::get<2>(tuple); })
           | std::ranges::to<std::vector>();
-    Points new_corners_next_left
+    Points new_corners_next_right
         = zipped_view
           | std::views::transform([](const auto &tuple)
                                   { return std::get<3>(tuple); })
           | std::ranges::to<std::vector>();
-    Points new_corners_next_right
+    Points new_corners_prev_left
         = zipped_view
           | std::views::transform([](const auto &tuple)
                                   { return std::get<4>(tuple); })
           | std::ranges::to<std::vector>();
-    auto new_feature_ids
+    Points new_corners_prev_right
         = zipped_view
           | std::views::transform([](const auto &tuple)
                                   { return std::get<5>(tuple); })
