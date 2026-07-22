@@ -51,15 +51,34 @@ using PointType = cv::Point2f;
 template <typename T>
 static T GetMatValue(const cv::Mat &mat, int row, int col)
 {
-  if (mat.type() == CV_32F)
+  if (row < 0 || row >= mat.rows)
   {
-    return static_cast<T>(mat.at<float>(row, col));
+    throw std::out_of_range(
+        std::format("Row index out of range: row={} rows={} {}", row, mat.rows,
+                    Util::FormatCvMatInfo("mat", mat))
+    );
   }
-  else if (mat.type() == CV_64F)
+
+  const int scalar_cols_per_row{mat.cols * mat.channels()};
+  if (col < 0 || col >= scalar_cols_per_row)
   {
-    return static_cast<T>(mat.at<double>(row, col));
+    throw std::out_of_range(std::format(
+        "Column/channel index out of range: col={} scalar_cols_per_row={} {}",
+        col, scalar_cols_per_row, Util::FormatCvMatInfo("mat", mat)
+    ));
   }
-  throw std::runtime_error(std::format("Unsupported OpenCV matrix type: {}", Util::FormatCvMatInfo("mat", mat)));
+
+  if (mat.depth() == CV_32F)
+  {
+    return static_cast<T>(mat.ptr<float>(row)[col]);
+  }
+  else if (mat.depth() == CV_64F)
+  {
+    return static_cast<T>(mat.ptr<double>(row)[col]);
+  }
+
+  throw std::runtime_error(std::format("Unsupported OpenCV matrix depth: {}",
+                                       Util::FormatCvMatInfo("mat", mat)));
 }
 
 namespace FastVIO
@@ -74,11 +93,12 @@ CreateStereoObservationSet(const std::vector<PointType> &pts_left,
 {
   assert(pts_left.size() == pts_right.size()
          && pts_left.size() == feature_ids.size());
-  assert(landmarks_nonhomo.type() == CV_32F
-         || landmarks_nonhomo.type() == CV_64F);
+  assert(landmarks_nonhomo.depth() == CV_32F
+         || landmarks_nonhomo.depth() == CV_64F);
   auto len{pts_left.size()};
   using len_t = decltype(len);
   assert(static_cast<len_t>(landmarks_nonhomo.rows) == len);
+  assert(landmarks_nonhomo.cols * landmarks_nonhomo.channels() == 3);
   std::vector<StereoObservation<value_type>> result;
   result.reserve(len);
   for (len_t i = 0; i < len; ++i)
@@ -490,14 +510,12 @@ public:
 
     if (visual_task_count > 0)
     {
-      std::print(
-          stderr,
-          "[VisualTask] summary frames={} avg_ms={:.3f} min_ms={:.3f} "
-          "max_ms={:.3f} total_ms={:.3f}\n",
-          visual_task_count,
-          visual_task_total_ms / static_cast<double>(visual_task_count),
-          visual_task_min_ms, visual_task_max_ms, visual_task_total_ms
-      );
+      std::print(stderr,
+                 "[VisualTask] summary frames={} avg_ms={:.3f} min_ms={:.3f} "
+                 "max_ms={:.3f} total_ms={:.3f}\n",
+                 visual_task_count,
+                 visual_task_total_ms / static_cast<double>(visual_task_count),
+                 visual_task_min_ms, visual_task_max_ms, visual_task_total_ms);
     }
   }
 };
