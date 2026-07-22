@@ -714,7 +714,7 @@ public:
 
       // 预测测量向量
       Vector2 pt_left_pred{ProjectLeftNonhomo(landmark_pos)};
-      Vector2 pt_right_pred{ProjectLeftNonhomo(landmark_pos)};
+      Vector2 pt_right_pred{ProjectRightNonhomo(landmark_pos)};
       Vector4 z_pred;
       z_pred << pt_left_pred, pt_right_pred;
       // 实际测量向量
