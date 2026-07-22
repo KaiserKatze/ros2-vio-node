@@ -1249,6 +1249,9 @@ private:
   static auto GetKalmanGain(const TransitionMatrix &P,
                             const JacobiMeasurement &H,
                             const CovarianceMeasurement &V) noexcept
+      -> Eigen::Matrix<value_type,
+                       JacobiMeasurement::ColsAtCompileTime,
+                       JacobiMeasurement::RowsAtCompileTime>
   {
     auto hphv{H * P * H.transpose() + V};
     return hphv.ldlt().solve(H * P.transpose()).transpose();
