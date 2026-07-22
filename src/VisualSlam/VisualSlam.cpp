@@ -43,6 +43,7 @@
 #include "euroc_vio/SensorYaml.hpp"
 #include "euroc_vio/StereoObservation.hpp"
 #include "euroc_vio/TrackingConfig.hpp"
+#include "euroc_vio/util.hpp"
 
 // OpenCV 提取角点时只提供 cv::Point2f 类型
 using PointType = cv::Point2f;
@@ -58,7 +59,7 @@ static T GetMatValue(const cv::Mat &mat, int row, int col)
   {
     return static_cast<T>(mat.at<double>(row, col));
   }
-  throw std::runtime_error("Unsupported OpenCV matrix type");
+  throw std::runtime_error(std::format("Unsupported OpenCV matrix type: {}", Util::FormatCvMatInfo("mat", mat)));
 }
 
 namespace FastVIO

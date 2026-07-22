@@ -1,10 +1,13 @@
 #pragma once
 
+#include <format>
+#include <string>
 #include <string_view>
 #include <vector>
 
 #include <Eigen/Dense>
 
+#include <opencv2/core/mat.hpp>
 #include <opencv2/core/types.hpp>
 
 struct Util
@@ -12,29 +15,30 @@ struct Util
   /**
    * @brief 打印 cv::Mat 对象的数据量、通道数、形状等信息
    */
-  static void PrintCvMatInfo(std::string_view mat_name, const cv::Mat &mat)
+  static std::string FormatCvMatInfo(std::string_view mat_name,
+                                     const cv::Mat &mat)
   {
     const auto mat_type{mat.type()};
     const auto mat_depth{mat.depth()};
-    std::print("\t{} = {{ "
-               "data = {}, "
-               "total = {}, "
-               "dim = {}, "
-               "shape = ({}, {}), "
-               "continuous = {}, "
-               "channel = {}, "
-               "depth = {} ({}), "
-               "type = {} ({}) }}\n",
-               mat_name,                    //
-               static_cast<bool>(mat.data), //
-               mat.total(),                 //
-               mat.dims,                    //
-               mat.rows,
-               mat.cols,                               //
-               mat.isContinuous(),                     //
-               mat.channels(),                         //
-               cv::typeToString(mat_depth), mat_depth, //
-               cv::typeToString(mat_type), mat_type);
+    return std::format("\t{} = {{ "
+                       "data = {}, "
+                       "total = {}, "
+                       "dim = {}, "
+                       "shape = ({}, {}), "
+                       "continuous = {}, "
+                       "channel = {}, "
+                       "depth = {} ({}), "
+                       "type = {} ({}) }}\n",
+                       mat_name,                    //
+                       static_cast<bool>(mat.data), //
+                       mat.total(),                 //
+                       mat.dims,                    //
+                       mat.rows,
+                       mat.cols,                               //
+                       mat.isContinuous(),                     //
+                       mat.channels(),                         //
+                       cv::typeToString(mat_depth), mat_depth, //
+                       cv::typeToString(mat_type), mat_type);
   }
 
   /**
