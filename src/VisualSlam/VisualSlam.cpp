@@ -511,7 +511,8 @@ public:
     if (visual_task_count > 0)
     {
       std::print(stderr,
-                 "[VisualTask] summary frames={} avg_ms={:.3f} min_ms={:.3f} "
+                 "[VisualTask] ===== 小结 =====\n"
+                 "frames={} avg_ms={:.3f} min_ms={:.3f} "
                  "max_ms={:.3f} total_ms={:.3f}\n",
                  visual_task_count,
                  visual_task_total_ms / static_cast<double>(visual_task_count),

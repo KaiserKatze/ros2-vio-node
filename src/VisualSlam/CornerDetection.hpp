@@ -33,7 +33,7 @@ namespace FastVIO::CornerDetection
 struct AbstractDetector
 {
   static constexpr std::size_t minCorners{10};
-  static constexpr std::size_t maxCorners{5000};
+  static constexpr std::size_t maxCorners{200};
   static_assert(minCorners <= maxCorners);
   static_assert(maxCorners
                 < static_cast<std::size_t>(std::numeric_limits<int>::max()));
