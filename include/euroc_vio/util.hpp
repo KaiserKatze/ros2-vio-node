@@ -14,6 +14,9 @@ struct Util
 {
   /**
    * @brief 打印 cv::Mat 对象的数据量、通道数、形状等信息
+   * @note data : 张量的数据指针
+   * @note total : 张量的元素总数
+   * @note dim : 张量的维数
    */
   static std::string FormatCvMatInfo(std::string_view mat_name,
                                      const cv::Mat &mat)
