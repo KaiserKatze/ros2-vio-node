@@ -1251,14 +1251,16 @@ private:
                             const CovarianceMeasurement &V) noexcept
       -> Eigen::Matrix<value_type, JacobiMeasurement::ColsAtCompileTime,
                        JacobiMeasurement::RowsAtCompileTime>
-    requires(TransitionMatrix::RowsAtCompileTime
-                 == TransitionMatrix::ColsAtCompileTime
-             && JacobiMeasurement::RowsAtCompileTime
-                    == CovarianceMeasurement::RowsAtCompileTime
-             && JacobiMeasurement::ColsAtCompileTime
-                    == TransitionMatrix::RowsAtCompileTime
-             && CovarianceMeasurement::RowsAtCompileTime
-                    == CovarianceMeasurement::ColsAtCompileTime)
+    requires(
+        static_cast<int>(TransitionMatrix::RowsAtCompileTime)
+            == static_cast<int>(TransitionMatrix::ColsAtCompileTime)
+        && static_cast<int>(JacobiMeasurement::RowsAtCompileTime)
+               == static_cast<int>(CovarianceMeasurement::RowsAtCompileTime)
+        && static_cast<int>(JacobiMeasurement::ColsAtCompileTime)
+               == static_cast<int>(TransitionMatrix::RowsAtCompileTime)
+        && static_cast<int>(CovarianceMeasurement::RowsAtCompileTime)
+               == static_cast<int>(CovarianceMeasurement::ColsAtCompileTime)
+    )
   {
     auto hphv{H * P * H.transpose() + V};
     return hphv.ldlt().solve(H * P.transpose()).transpose();
