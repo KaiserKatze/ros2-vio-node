@@ -150,7 +150,8 @@ private:
   public:
     ParallaxFilter(double atol) noexcept : atol_{atol} {}
 
-    bool operator()(const auto &tuple) const noexcept
+    template <class T>
+    bool operator()(const T &tuple) const noexcept
     {
       auto found{std::get<0>(tuple)};
       // 左目视图角点坐标
@@ -172,7 +173,8 @@ private:
   public:
     CoincidenceFilter(double atol) noexcept : atol_{atol} {}
 
-    bool operator()(const auto &tuple) const noexcept
+    template <class T>
+    bool operator()(const T &tuple) const noexcept
     {
       auto found{std::get<0>(tuple)};
       const PointType &pt1{std::get<2>(tuple)};
