@@ -128,6 +128,70 @@ struct SlamConfig
   bool do_visualization_;
 };
 
+struct CornerTrackingStats
+{
+  std::size_t total_frame_count_{0};
+  std::size_t success_frame_count_{0};
+  std::size_t failed_frame_count_{0};
+
+  [[nodiscard]]
+  double GetSuccessRate() const noexcept
+  {
+    if (total_frame_count_ == 0)
+    {
+      return 0.0;
+    }
+    return 100.0 * static_cast<double>(success_frame_count_)
+           / static_cast<double>(total_frame_count_);
+  }
+
+  void NextFrame() noexcept
+  {
+    ++total_frame_count_;
+  }
+
+  void PrintFrameBegin(bool use_hint, std::size_t input_corner_count) const
+  {
+    std::println(stderr,
+                 "\n[FindCorners] ===== 开始特征跟踪 =====\n"
+                 "frame={} | use_hint={} | 入口角点数={}",
+                 total_frame_count_, use_hint, input_corner_count);
+  }
+
+  void
+  RecordFrameResult(bool success,
+                    const std::vector<PointType> &corners_prev_left,
+                    const std::vector<PointType> &corners_prev_right,
+                    const std::vector<PointType> &corners_next_left,
+                    const std::vector<PointType> &corners_next_right) noexcept
+  {
+    if (success)
+    {
+      ++success_frame_count_;
+    }
+    else
+    {
+      ++failed_frame_count_;
+    }
+
+    std::println(stderr, "[FindCorners] 当前帧跟踪结果={}",
+                 (success ? "成功" : "失败"));
+    CornerDetection::AbstractDetector::PrintCornerSetSizes(
+        "[FindCorners] 角点个数: ", corners_prev_left, corners_prev_right,
+        corners_next_left, corners_next_right
+    );
+  }
+
+  void PrintSummary() const noexcept
+  {
+    std::println(stderr,
+                 "\n[FindCorners] ===== 总统计 =====\n"
+                 "成功帧数={} 失败帧数={} 总帧数={} 成功率={:.2f}%",
+                 success_frame_count_, failed_frame_count_, total_frame_count_,
+                 GetSuccessRate());
+  }
+};
+
 class TrajectoryWriter
 {
 protected:
@@ -326,6 +390,7 @@ public:
     double visual_task_total_ms{0.0};
     double visual_task_min_ms{std::numeric_limits<double>::max()};
     double visual_task_max_ms{0.0};
+    CornerTrackingStats corner_tracking_stats{};
 
     std::int64_t timestamp;
     cv::Mat image_prev_left_rectified;
@@ -394,6 +459,9 @@ public:
         cv::waitKey(5);
       }
 
+      const bool use_hint{false}; // landmarks_homo.cols > 0
+      corner_tracking_stats.NextFrame();
+      corner_tracking_stats.PrintFrameBegin(use_hint, corners_prev_left.size());
       const bool found_corners{
           detector_.FindCorners(image_prev_left_grayscale,  //
                                 image_prev_right_grayscale, //
@@ -404,8 +472,12 @@ public:
                                 corners_next_left,          //
                                 corners_next_right,         //
                                 feature_ids,                //
-                                landmarks_homo.cols > 0),
+                                use_hint),
       };
+      corner_tracking_stats.RecordFrameResult(found_corners, corners_prev_left,
+                                              corners_prev_right,
+                                              corners_next_left,
+                                              corners_next_right);
       assert(corners_prev_left.size() == corners_prev_right.size()
              && corners_prev_left.size() == corners_next_left.size()
              && corners_prev_left.size() == corners_next_right.size()
@@ -518,6 +590,7 @@ public:
                  visual_task_total_ms / static_cast<double>(visual_task_count),
                  visual_task_min_ms, visual_task_max_ms, visual_task_total_ms);
     }
+    corner_tracking_stats.PrintSummary();
   }
 };
 

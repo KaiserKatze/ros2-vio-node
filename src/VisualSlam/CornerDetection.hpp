@@ -6,6 +6,8 @@
 #include <cstdlib>
 #include <limits>
 #include <numeric>
+#include <print>
+#include <string_view>
 #include <type_traits>
 #include <vector>
 
@@ -65,6 +67,33 @@ struct AbstractDetector
     std::iota(feature_ids.end() - new_feature_pts.size(),
               feature_ids.end(), //
               feature_last + 1);
+  }
+
+  template <typename Points>
+  static void PrintCornerSetSizes(std::string_view prefix,
+                                  const Points &corners_prev_left,
+                                  const Points &corners_prev_right,
+                                  const Points &corners_next_left,
+                                  const Points &corners_next_right)
+  {
+    std::println(stderr,
+                 "{}[prev_left={} prev_right={} next_left={} next_right={}]",
+                 prefix, corners_prev_left.size(), corners_prev_right.size(),
+                 corners_next_left.size(), corners_next_right.size());
+  }
+
+  template <typename Points>
+  static void PrintTrackingFailure(std::string_view stage,
+                                   const Points &corners_prev_left,
+                                   const Points &corners_prev_right,
+                                   const Points &corners_next_left,
+                                   const Points &corners_next_right)
+  {
+    std::println(stderr, "[FindCorners] ✗ 失败于 {}，剩余角点={}", stage,
+                 corners_prev_left.size());
+    PrintCornerSetSizes("[FindCorners] sizes: ", corners_prev_left,
+                        corners_prev_right, corners_next_left,
+                        corners_next_right);
   }
 };
 

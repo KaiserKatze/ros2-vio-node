@@ -27,10 +27,6 @@ struct FastDetector : public AbstractDetector
   using PointType = cv::Point2f;
 
 private:
-  mutable std::size_t total_frame_count_{0};
-  mutable std::size_t success_frame_count_{0};
-  mutable std::size_t failed_frame_count_{0};
-
   const cv::TermCriteria criteria_{
       (cv::TermCriteria::COUNT) | (cv::TermCriteria::EPS),
       // Maximum number of iterations
@@ -63,11 +59,6 @@ public:
 
   using Points = std::vector<PointType>;
 
-  ~FastDetector()
-  {
-    PrintSummary();
-  }
-
   bool FindCorners(const cv::Mat &gray_prev_left,
                    const cv::Mat &gray_prev_right,
                    const cv::Mat &gray_next_left,
@@ -78,8 +69,6 @@ public:
                    std::vector<PointType> &corners_next_right,
                    std::vector<std::uint32_t> &feature_ids, bool use_hint) const
   {
-    const std::size_t frame_index{++total_frame_count_};
-
     // 断言：确保 feature_ids 严格递增（随索引增大而增大）
     assert(std::is_sorted(feature_ids.begin(), feature_ids.end(),
                           std::less<std::uint32_t>()));
@@ -93,26 +82,13 @@ public:
            && gray_prev_left.rows == gray_next_right.rows
            && gray_prev_left.cols == gray_next_right.cols);
 
-    std::println(stderr,
-                 "\n[FindCorners] ===== 开始特征跟踪 =====\n"
-                 "frame={} | use_hint={} | 入口角点数={} | "
-                 "minCorners={} maxCorners={}",
-                 frame_index, use_hint, corners_prev_left.size(), minCorners,
-                 maxCorners);
-
     if (!TrackStereoPrevLeftToPrevRight(gray_prev_left, gray_prev_right,
                                         corners_prev_left, corners_prev_right,
                                         feature_ids))
     {
-      RecordFrameResult(frame_index, false);
-      std::println(stderr,
-                   "[FindCorners] ✗ 失败于 阶段1 双目提取/匹配 "
-                   "(prev_left → prev_right)，剩余角点={} | "
-                   "sizes: prev_left={} prev_right={} next_left={} "
-                   "next_right={}",
-                   corners_prev_left.size(), corners_prev_left.size(),
-                   corners_prev_right.size(), corners_next_left.size(),
-                   corners_next_right.size());
+      PrintTrackingFailure("阶段1 双目提取/匹配 (prev_left → prev_right)",
+                           corners_prev_left, corners_prev_right,
+                           corners_next_left, corners_next_right);
       return false;
     }
 
@@ -120,15 +96,9 @@ public:
                             corners_prev_right, corners_next_left,
                             corners_next_right, feature_ids, use_hint))
     {
-      RecordFrameResult(frame_index, false);
-      std::println(stderr,
-                   "[FindCorners] ✗ 失败于 阶段2 时序跟踪 "
-                   "(prev_right → next_right)，剩余角点={} | "
-                   "sizes: prev_left={} prev_right={} next_left={} "
-                   "next_right={}",
-                   corners_prev_left.size(), corners_prev_left.size(),
-                   corners_prev_right.size(), corners_next_left.size(),
-                   corners_next_right.size());
+      PrintTrackingFailure("阶段2 时序跟踪 (prev_right → next_right)",
+                           corners_prev_left, corners_prev_right,
+                           corners_next_left, corners_next_right);
       return false;
     }
 
@@ -137,15 +107,9 @@ public:
                                         corners_next_left, corners_next_right,
                                         feature_ids, use_hint))
     {
-      RecordFrameResult(frame_index, false);
-      std::println(stderr,
-                   "[FindCorners] ✗ 失败于 阶段3 双目匹配 "
-                   "(next_right → next_left)，剩余角点={} | "
-                   "sizes: prev_left={} prev_right={} next_left={} "
-                   "next_right={}",
-                   corners_prev_left.size(), corners_prev_left.size(),
-                   corners_prev_right.size(), corners_next_left.size(),
-                   corners_next_right.size());
+      PrintTrackingFailure("阶段3 双目匹配 (next_right → next_left)",
+                           corners_prev_left, corners_prev_right,
+                           corners_next_left, corners_next_right);
       return false;
     }
 
@@ -153,69 +117,16 @@ public:
                           corners_prev_right, corners_next_left,
                           corners_next_right, feature_ids))
     {
-      RecordFrameResult(frame_index, false);
-      std::println(stderr,
-                   "[FindCorners] ✗ 失败于 阶段4 闭环校验 "
-                   "(next_left → prev_left)，剩余角点={} | "
-                   "sizes: prev_left={} prev_right={} next_left={} "
-                   "next_right={}",
-                   corners_prev_left.size(), corners_prev_left.size(),
-                   corners_prev_right.size(), corners_next_left.size(),
-                   corners_next_right.size());
+      PrintTrackingFailure("阶段4 闭环校验 (next_left → prev_left)",
+                           corners_prev_left, corners_prev_right,
+                           corners_next_left, corners_next_right);
       return false;
     }
 
-    RecordFrameResult(frame_index, true);
-    std::println(stderr,
-                 "[FindCorners] ✓ 跟踪成功 ===== frame={} | 存活路标点={} | "
-                 "id 范围=[{}, {}] =====",
-                 frame_index, corners_prev_left.size(),
-                 feature_ids.empty() ? 0u : feature_ids.front(),
-                 feature_ids.empty() ? 0u : feature_ids.back());
     return true;
   }
 
 private:
-  [[nodiscard]]
-  double GetSuccessRate() const noexcept
-  {
-    if (total_frame_count_ == 0)
-    {
-      return 0.0;
-    }
-    return 100.0 * static_cast<double>(success_frame_count_)
-           / static_cast<double>(total_frame_count_);
-  }
-
-  void RecordFrameResult(std::size_t frame_index, bool success) const noexcept
-  {
-    if (success)
-    {
-      ++success_frame_count_;
-    }
-    else
-    {
-      ++failed_frame_count_;
-    }
-
-    std::println(stderr,
-                 "[FindCorners] frame={} 结果={} | success={} fail={} total={} "
-                 "success_rate={:.2f}%",
-                 frame_index, success ? "SUCCESS" : "FAIL",
-                 success_frame_count_, failed_frame_count_, total_frame_count_,
-                 GetSuccessRate());
-  }
-
-  void PrintSummary() const noexcept
-  {
-    std::println(stderr,
-                 "\n[FindCorners] ===== 总统计 =====\n"
-                 "success={} fail={} "
-                 "total={} success_rate={:.2f}%",
-                 success_frame_count_, failed_frame_count_, total_frame_count_,
-                 GetSuccessRate());
-  }
-
   SubPixAdaptor CreateSubPixAdaptor(const cv::Mat &image) const noexcept
   {
     return {image, subpix_win_size, subpix_zero_zone, subpix_criteria};
