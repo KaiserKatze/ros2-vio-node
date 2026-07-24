@@ -48,7 +48,9 @@ struct AbstractDetector
   template <typename PointType>
   static bool HaveEnoughCorners(const std::vector<PointType> &corners) noexcept
   {
-    return corners.size() >= minCorners;
+    std::size_t len{corners.size()};
+    std::print(stderr, "\tAbstractDetector::HaveEnoughCorners 计得角点总数={}个\n", len);
+    return len >= minCorners;
   }
 
   template <typename... PointTypes>
@@ -56,7 +58,9 @@ struct AbstractDetector
   HaveEnoughCorners(const std::vector<PointTypes> &...corners) noexcept
   {
     // 各个角点集合的大小之和
-    return (corners.size() + ...) >= minCorners;
+    std::size_t len{(corners.size() + ...)};
+    std::print(stderr, "\tAbstractDetector::HaveEnoughCorners 计得角点总数={}个\n", len);
+    return len >= minCorners;
   }
 
   template <typename PointType>
@@ -83,18 +87,9 @@ struct AbstractDetector
                  corners_next_left.size(), corners_next_right.size());
   }
 
-  template <typename Points>
-  static void PrintTrackingFailure(std::string_view stage,
-                                   const Points &corners_prev_left,
-                                   const Points &corners_prev_right,
-                                   const Points &corners_next_left,
-                                   const Points &corners_next_right)
+  static void PrintTrackingFailure(std::string_view stage)
   {
-    std::println(stderr, "[FindCorners] ✗ 失败于 {}，剩余角点={}", stage,
-                 corners_prev_left.size());
-    PrintCornerSetSizes("[FindCorners] sizes: ", corners_prev_left,
-                        corners_prev_right, corners_next_left,
-                        corners_next_right);
+    std::println(stderr, "[FindCorners] ✗ 失败于 {}", stage);
   }
 };
 

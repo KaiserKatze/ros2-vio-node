@@ -86,9 +86,7 @@ public:
                                         corners_prev_left, corners_prev_right,
                                         feature_ids))
     {
-      PrintTrackingFailure("阶段1 双目提取/匹配 (prev_left → prev_right)",
-                           corners_prev_left, corners_prev_right,
-                           corners_next_left, corners_next_right);
+      PrintTrackingFailure("阶段1 双目提取/匹配 (prev_left → prev_right)");
       return false;
     }
 
@@ -96,9 +94,7 @@ public:
                             corners_prev_right, corners_next_left,
                             corners_next_right, feature_ids, use_hint))
     {
-      PrintTrackingFailure("阶段2 时序跟踪 (prev_right → next_right)",
-                           corners_prev_left, corners_prev_right,
-                           corners_next_left, corners_next_right);
+      PrintTrackingFailure("阶段2 右目时序跟踪 (prev_right → next_right)");
       return false;
     }
 
@@ -107,9 +103,7 @@ public:
                                         corners_next_left, corners_next_right,
                                         feature_ids, use_hint))
     {
-      PrintTrackingFailure("阶段3 双目匹配 (next_right → next_left)",
-                           corners_prev_left, corners_prev_right,
-                           corners_next_left, corners_next_right);
+      PrintTrackingFailure("阶段3 双目匹配 (next_right → next_left)");
       return false;
     }
 
@@ -117,9 +111,7 @@ public:
                           corners_prev_right, corners_next_left,
                           corners_next_right, feature_ids))
     {
-      PrintTrackingFailure("阶段4 闭环校验 (next_left → prev_left)",
-                           corners_prev_left, corners_prev_right,
-                           corners_next_left, corners_next_right);
+      PrintTrackingFailure("阶段4 闭环校验 (next_left → prev_left)");
       return false;
     }
 
@@ -202,14 +194,16 @@ private:
     const int num_needed{static_cast<int>(maxCorners)
                          - static_cast<int>(corners_prev_left.size())};
 
-    std::println(stderr, "[阶段1 双目 prev_L→prev_R] 已跟踪={} 需补充={}",
+    std::println(stderr,
+                 "[阶段1] 任务内容: 双目 prev_L → prev_R\n"
+                 "\t上一帧已跟踪角点数={}个 当前帧需补充角点数={}个",
                  corners_prev_left.size(), num_needed);
 
     // 不仅数量要够，还必须确保左右目特征点数组不为空且大小一致
     if (num_needed <= 0 && !corners_prev_right.empty()
         && corners_prev_left.size() == corners_prev_right.size())
     {
-      std::println(stderr, "[阶段1] 角点充足，跳过补充提取");
+      std::println(stderr, "\t角点充足，跳过补充提取");
       return HaveEnoughCorners(corners_prev_left);
     }
 
@@ -238,7 +232,7 @@ private:
     // 新提取的角点需要赋予 feature_id
     ExtendFeatureIdList(feature_ids, keypoints_prev_left_ext);
 
-    std::println(stderr, "[阶段1] FAST 新检出={} ，检测方式={}",
+    std::println(stderr, "\t新检出FAST角点={}个，检测方式={}",
                  keypoints_prev_left_ext.size(),
                  (corners_prev_left.empty() || corners_prev_right.empty())
                      ? "全图"
@@ -246,28 +240,31 @@ private:
 
     if (!HaveEnoughCorners(corners_prev_left, keypoints_prev_left_ext))
     {
-      std::println(
-          stderr,
-          "[阶段1] ✗ 已跟踪({}) + 新检出({}) < minCorners({})，角点不足",
-          corners_prev_left.size(), keypoints_prev_left_ext.size(), minCorners
-      );
+      std::println(stderr,
+                   "\t✗ 已跟踪({}) + 新检出({}) < minCorners({})，角点不足",
+                   corners_prev_left.size(), keypoints_prev_left_ext.size(),
+                   minCorners);
       return false;
     }
 
     if (keypoints_prev_left_ext.empty())
     {
-      std::println(stderr, "[阶段1] 无新检出角点，维持已跟踪={}",
+      std::println(stderr, "\t无新检出角点，尝试维持已跟踪角点({})",
                    corners_prev_left.size());
       return HaveEnoughCorners(corners_prev_left)
              && corners_prev_left.size() == corners_prev_right.size();
     }
 
-    // 按照响应值（response）降序排列，保留最显著的前 maxCorners 个角点，提取最优角点
+    // 按照响应值（response）降序排列，保留最显著最靠前若干个角点，提取最优角点
     std::ranges::sort(keypoints_prev_left_ext, std::greater<>{},
                       &cv::KeyPoint::response);
-    if (keypoints_prev_left_ext.size() > maxCorners)
+    if (keypoints_prev_left_ext.size() > maxCornersScalar * maxCorners)
     {
-      keypoints_prev_left_ext.resize(maxCorners);
+      keypoints_prev_left_ext.resize(maxCornersScalar * maxCorners);
+      std::println(stderr,
+                   "\t按照响应值（response）降序排列，"
+                   "保留最显著的前 {} 个角点，提取最优角点",
+                   maxCornersScalar * maxCorners);
     }
 
     // 将 KeyPoint 映射回 PointType
@@ -286,14 +283,6 @@ private:
                          corners_prev_left_ext,
                          corners_prev_right_ext, //
                          features_found_pl_pr, 0);
-
-    const auto lk_found_pl_pr{std::ranges::count_if(features_found_pl_pr,
-                                                    [](unsigned char s)
-                                                    { return s != 0; })};
-    std::println(stderr,
-                 "[阶段1] LK 光流 prev_L→prev_R: 输入={} 成功={} 失败={}",
-                 corners_prev_left_ext.size(), lk_found_pl_pr,
-                 corners_prev_left_ext.size() - lk_found_pl_pr);
 
     auto zipped_view
         = std::views::zip(features_found_pl_pr, feature_ids,
@@ -317,17 +306,19 @@ private:
                                   { return std::get<3>(tuple); })
           | std::ranges::to<std::vector>();
 
+    std::println(stderr,
+                 "\t光流匹配筛选前: 输入角点数={}个"
+                 " | 是否启用先验信息={}"
+                 " | 光流匹配筛选后: 成功={}个 失败={}个",
+                 corners_prev_left_ext.size(), false, new_feature_ids.size(),
+                 corners_prev_left_ext.size() - new_feature_ids.size());
+
     // 合并到主追踪序列
     corners_prev_left.reserve(corners_prev_left.size()
                               + new_corners_prev_left_ext.size());
     corners_prev_right.reserve(corners_prev_right.size()
                                + new_corners_prev_right_ext.size());
-    std::println(stderr,
-                 "[阶段1] 视差/极线过滤后新增={} (剔除={}) | "
-                 "合并后总数: {} + {} = {}",
-                 new_corners_prev_left_ext.size(),
-                 corners_prev_left_ext.size()
-                     - new_corners_prev_left_ext.size(),
+    std::println(stderr, "\t合并后，正在跟踪的路标点总数为 {}+{}={}个",
                  corners_prev_left.size(), new_corners_prev_left_ext.size(),
                  corners_prev_left.size() + new_corners_prev_left_ext.size());
     corners_prev_left.append_range(std::move(new_corners_prev_left_ext));
@@ -378,37 +369,25 @@ private:
     }
 
     std::vector<unsigned char> features_found_pr_nr;
+    use_hint = use_hint && !corners_next_right.empty()
+               && corners_prev_right.size() == corners_next_right.size();
     const int lk_flags_prev_right_to_next_right{
-        (use_hint && !corners_next_right.empty()
-         && corners_prev_right.size() == corners_next_right.size())
-            ? cv::OPTFLOW_USE_INITIAL_FLOW
-            : 0
+        use_hint ? cv::OPTFLOW_USE_INITIAL_FLOW : 0
     };
     CalcOpticalFlowPyrLK(gray_prev_right, gray_next_right, corners_prev_right,
                          corners_next_right, features_found_pr_nr,
                          lk_flags_prev_right_to_next_right);
 
-    const auto lk_found_pr_nr{std::ranges::count_if(features_found_pr_nr,
-                                                    [](unsigned char s)
-                                                    { return s != 0; })};
-    std::println(
-        stderr,
-        "[阶段2 时序 prev_R→next_R] LK 光流: 输入={} 成功={} 失败={} | "
-        "初始流提示={}",
-        corners_prev_right.size(), lk_found_pr_nr,
-        corners_prev_right.size() - lk_found_pr_nr,
-        lk_flags_prev_right_to_next_right != 0
-    );
-
-    const auto TrackFilter = [](const auto &tuple)
+    const auto track_filter = [](const auto &tuple)
     {
       // 1. 必须是追踪成功的点
       return std::get<0>(tuple);
     };
+
     auto zipped_view
         = std::views::zip(features_found_pr_nr, feature_ids, corners_prev_left,
                           corners_prev_right, corners_next_right)
-          | std::views::filter(TrackFilter);
+          | std::views::filter(track_filter);
 
     // 因为 view 是延迟计算的，所以必须先创建副本
     auto new_feature_ids
@@ -432,12 +411,13 @@ private:
                                   { return std::get<4>(tuple); })
           | std::ranges::to<std::vector>();
 
+    // 在启用先验信息时，必须单独处理 corners_next_left
     Points new_corners_next_left;
     if (use_hint && corners_next_left.size() == features_found_pr_nr.size())
     {
       new_corners_next_left
           = std::views::zip(features_found_pr_nr, corners_next_left)
-            | std::views::filter(TrackFilter)
+            | std::views::filter(track_filter)
             | std::views::transform([](const auto &tuple)
                                     { return std::get<1>(tuple); })
             | std::ranges::to<std::vector>();
@@ -449,7 +429,13 @@ private:
     corners_next_left  = std::move(new_corners_next_left);
     feature_ids        = std::move(new_feature_ids);
 
-    std::println(stderr, "[阶段2] 过滤后存活={}", corners_prev_left.size());
+    std::println(stderr,
+                 "[阶段2] 任务内容: 右目时序跟踪\n"
+                 "\t光流匹配筛选前: 输入角点数={}个"
+                 " | 是否启用先验信息={}"
+                 " | 光流匹配筛选后: 成功={}个 失败={}个",
+                 corners_prev_right.size(), use_hint, feature_ids.size(),
+                 corners_prev_right.size() - feature_ids.size());
 
     return HaveEnoughCorners(corners_prev_left)
            && corners_prev_left.size() == corners_prev_right.size()
@@ -476,12 +462,13 @@ private:
     assert(corners_next_left.empty()
            || corners_prev_left.size() == corners_next_left.size());
 
+    std::println(stderr, "[阶段3] 任务内容: 双目 next_R → next_L");
+
     std::vector<unsigned char> features_found_nr_nl;
+    use_hint = use_hint && !corners_next_left.empty()
+               && corners_next_right.size() == corners_next_left.size();
     const int lk_flags_next_right_to_next_left{
-        (use_hint && !corners_next_left.empty()
-         && corners_next_right.size() == corners_next_left.size())
-            ? cv::OPTFLOW_USE_INITIAL_FLOW
-            : 0
+        use_hint ? cv::OPTFLOW_USE_INITIAL_FLOW : 0
     };
     CalcOpticalFlowPyrLK(gray_next_right, gray_next_left, corners_next_right,
                          corners_next_left, features_found_nr_nl,
@@ -524,8 +511,12 @@ private:
     corners_next_right = std::move(new_corners_next_right);
     feature_ids        = std::move(new_feature_ids);
 
-    std::println(stderr, "[阶段3] 视差/极线过滤后存活={}",
-                 corners_prev_left.size());
+    std::println(stderr,
+                 "\t光流匹配筛选前: 输入角点数={}个"
+                 " | 是否启用先验信息={}"
+                 " | 光流匹配筛选后: 成功={}个 失败={}个",
+                 corners_next_left.size(), use_hint, feature_ids.size(),
+                 corners_next_left.size() - feature_ids.size());
 
     return HaveEnoughCorners(corners_prev_left)
            && corners_prev_left.size() == corners_prev_right.size()
@@ -552,14 +543,6 @@ private:
     std::vector<unsigned char> features_found_nl_pl;
     CalcOpticalFlowPyrLK(gray_next_left, gray_prev_left, corners_next_left,
                          corners_prev_left_loopback, features_found_nl_pl, 0);
-
-    const auto lk_found_nl_pl{std::ranges::count_if(features_found_nl_pl,
-                                                    [](unsigned char s)
-                                                    { return s != 0; })};
-    std::println(stderr,
-                 "[阶段4 闭环 next_L→prev_L] LK 光流: 输入={} 成功={} 失败={}",
-                 corners_next_left.size(), lk_found_nl_pl,
-                 corners_next_left.size() - lk_found_nl_pl);
 
     auto zipped_view
         = std::views::zip(features_found_nl_pl, feature_ids, corners_prev_left,
@@ -593,21 +576,36 @@ private:
                                   { return std::get<6>(tuple); })
           | std::ranges::to<std::vector>();
 
+    if (new_feature_ids.size() > maxCorners)
+    {
+      new_feature_ids.resize(maxCorners);
+      new_corners_prev_left.resize(maxCorners);
+      new_corners_prev_right.resize(maxCorners);
+      new_corners_next_left.resize(maxCorners);
+      new_corners_next_right.resize(maxCorners);
+      std::println(stderr,
+                   "\t按照响应值（response）降序排列，"
+                   "保留最显著的前 {} 个角点，提取最优角点",
+                   maxCorners);
+    }
+
     corners_prev_left  = std::move(new_corners_prev_left);
     corners_prev_right = std::move(new_corners_prev_right);
     corners_next_left  = std::move(new_corners_next_left);
     corners_next_right = std::move(new_corners_next_right);
     feature_ids        = std::move(new_feature_ids);
 
-    std::println(stderr, "[阶段4] 重合过滤(atol={})后存活={} (剔除={})",
-                 atol_coincidence, corners_prev_left.size(),
-                 corners_prev_left_loopback.size() - corners_prev_left.size());
+    std::println(stderr,
+                 "[阶段4] 任务内容: 闭环 next_L → prev_L\n"
+                 "\t光流匹配筛选前: 输入角点数={}个"
+                 " | 光流匹配筛选后: 成功={}个 失败={}个",
+                 corners_next_left.size(), feature_ids.size(),
+                 corners_next_left.size() - feature_ids.size());
 
     return HaveEnoughCorners(corners_prev_left)
            && corners_prev_left.size() == corners_prev_right.size()
            && corners_prev_left.size() == corners_next_left.size()
-           && corners_prev_left.size() == corners_next_right.size()
-           && corners_prev_left.size() == corners_prev_left_loopback.size();
+           && corners_prev_left.size() == corners_next_right.size();
   }
 };
 

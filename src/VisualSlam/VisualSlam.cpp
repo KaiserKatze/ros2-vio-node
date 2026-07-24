@@ -130,9 +130,16 @@ struct SlamConfig
 
 struct CornerTrackingStats
 {
+  using Clock = std::chrono::steady_clock;
+
   std::size_t total_frame_count_{0};
   std::size_t success_frame_count_{0};
   std::size_t failed_frame_count_{0};
+  std::size_t visual_task_count_{0};
+  double visual_task_total_ms_{0.0};
+  double visual_task_min_ms_{std::numeric_limits<double>::max()};
+  double visual_task_max_ms_{0.0};
+  decltype(Clock::now()) visual_task_begin_;
 
   [[nodiscard]]
   double GetSuccessRate() const noexcept
@@ -150,12 +157,20 @@ struct CornerTrackingStats
     ++total_frame_count_;
   }
 
+  auto GetFrameId() const noexcept
+  {
+    return total_frame_count_;
+  }
+
   void PrintFrameBegin(bool use_hint, std::size_t input_corner_count) const
   {
     std::println(stderr,
                  "\n[FindCorners] ===== 开始特征跟踪 =====\n"
-                 "frame={} | use_hint={} | 入口角点数={}",
-                 total_frame_count_, use_hint, input_corner_count);
+                 "\t当前帧编号={} | 是否启用先验信息={} | 输入角点数={} | "
+                 "最少所需角点数={} | 最多所需角点数={}",
+                 total_frame_count_, use_hint, input_corner_count,
+                 CornerDetection::AbstractDetector::minCorners,
+                 CornerDetection::AbstractDetector::maxCorners);
   }
 
   void
@@ -174,10 +189,8 @@ struct CornerTrackingStats
       ++failed_frame_count_;
     }
 
-    std::println(stderr, "[FindCorners] 当前帧跟踪结果={}",
-                 (success ? "成功" : "失败"));
     CornerDetection::AbstractDetector::PrintCornerSetSizes(
-        "[FindCorners] 角点个数: ", corners_prev_left, corners_prev_right,
+        "\t角点个数: ", corners_prev_left, corners_prev_right,
         corners_next_left, corners_next_right
     );
   }
@@ -186,9 +199,55 @@ struct CornerTrackingStats
   {
     std::println(stderr,
                  "\n[FindCorners] ===== 总统计 =====\n"
-                 "成功帧数={} 失败帧数={} 总帧数={} 成功率={:.2f}%",
+                 "成功帧数={} 失败帧数={} 总帧数={} 成功率={:.2f}%\n"
+                 "平均耗时={}ms 最小耗时={}ms 最大耗时={}ms",
                  success_frame_count_, failed_frame_count_, total_frame_count_,
-                 GetSuccessRate());
+                 GetSuccessRate(), GetAverageElapsedTime(),
+                 GetMinimalElapsedTime(), GetMaximalElapsedTime());
+  }
+
+  void StartTimer() noexcept
+  {
+    visual_task_begin_ = Clock::now();
+  }
+
+  [[nodiscard]]
+  auto EndTimer() noexcept
+  {
+    ++visual_task_count_;
+    const auto visual_task_end{Clock::now()};
+    const auto visual_task_elapsed_ms{
+        std::chrono::duration<double, std::milli>{visual_task_end
+                                                  - visual_task_begin_}
+            .count(),
+    };
+
+    visual_task_total_ms_ += visual_task_elapsed_ms;
+    visual_task_min_ms_ = std::min(visual_task_min_ms_, visual_task_elapsed_ms);
+    visual_task_max_ms_ = std::max(visual_task_max_ms_, visual_task_elapsed_ms);
+    return visual_task_elapsed_ms;
+  }
+
+  [[nodiscard]]
+  double GetAverageElapsedTime() const noexcept
+  {
+    if (visual_task_count_ == 0)
+    {
+      return 0.0;
+    }
+    return visual_task_total_ms_ / static_cast<double>(visual_task_count_);
+  }
+
+  [[nodiscard]]
+  double GetMinimalElapsedTime() const noexcept
+  {
+    return visual_task_min_ms_;
+  }
+
+  [[nodiscard]]
+  double GetMaximalElapsedTime() const noexcept
+  {
+    return visual_task_max_ms_;
   }
 };
 
@@ -381,15 +440,9 @@ public:
   {
     WriteDataHeader(this->VisualIntegrator::pose_);
 
-    using Clock = std::chrono::steady_clock;
-
     bool init_frame{false};
     bool init_landmarks{false};
 
-    std::size_t visual_task_count{0};
-    double visual_task_total_ms{0.0};
-    double visual_task_min_ms{std::numeric_limits<double>::max()};
-    double visual_task_max_ms{0.0};
     CornerTrackingStats corner_tracking_stats{};
 
     std::int64_t timestamp;
@@ -420,7 +473,7 @@ public:
     while (loader_)
     {
       StereoFrame<cv::Mat> frame{loader_()};
-      const auto visual_task_begin{Clock::now()};
+      corner_tracking_stats.StartTimer();
       if (!init_frame)
       {
         init_frame = true;
@@ -551,25 +604,15 @@ public:
         corners_prev_right.clear();
       }
 
-      const auto visual_task_end{Clock::now()};
-      const auto visual_task_elapsed_ms{
-          std::chrono::duration<double, std::milli>{visual_task_end
-                                                    - visual_task_begin}
-              .count(),
-      };
-      ++visual_task_count;
-      visual_task_total_ms += visual_task_elapsed_ms;
-      visual_task_min_ms = std::min(visual_task_min_ms, visual_task_elapsed_ms);
-      visual_task_max_ms = std::max(visual_task_max_ms, visual_task_elapsed_ms);
-      std::print(
-          stderr,
-          "[VisualTask] timestamp={} found_corners={} tracked_features={} "
-          "elapsed_ms={:.3f} avg_ms={:.3f} min_ms={:.3f} max_ms={:.3f}\n",
-          frame.timestamp_, found_corners, feature_ids.size(),
-          visual_task_elapsed_ms,
-          visual_task_total_ms / static_cast<double>(visual_task_count),
-          visual_task_min_ms, visual_task_max_ms
-      );
+      const auto visual_task_elapsed_ms{corner_tracking_stats.EndTimer()};
+      std::print(stderr,
+                 "[VisualTask] 时间戳={} 帧编号={}\n"
+                 "\t当前帧是否成功跟踪路标点={}\n"
+                 "\t所有路标点个数 (包括新建、活跃的)={}\n"
+                 "\t当前帧耗时={:.3f}\n",
+                 frame.timestamp_, corner_tracking_stats.GetFrameId(),
+                 (found_corners ? "成功" : "失败"), feature_ids.size(),
+                 visual_task_elapsed_ms);
 
       timestamp                  = frame.timestamp_;
       image_prev_left_rectified  = std::move(image_next_left_rectified);
@@ -580,16 +623,6 @@ public:
       ++loader_;
     }
 
-    if (visual_task_count > 0)
-    {
-      std::print(stderr,
-                 "[VisualTask] ===== 小结 =====\n"
-                 "frames={} avg_ms={:.3f} min_ms={:.3f} "
-                 "max_ms={:.3f} total_ms={:.3f}\n",
-                 visual_task_count,
-                 visual_task_total_ms / static_cast<double>(visual_task_count),
-                 visual_task_min_ms, visual_task_max_ms, visual_task_total_ms);
-    }
     corner_tracking_stats.PrintSummary();
   }
 };
