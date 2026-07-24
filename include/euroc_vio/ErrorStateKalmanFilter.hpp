@@ -758,12 +758,14 @@ public:
     return nominal_state_;
   }
 
+  [[nodiscard]]
   const auto &GetLandmarks() const noexcept
   {
     return landmark_database_.landmarks_;
   }
 
   template <class PointType, class LengthType>
+  [[nodiscard]]
   auto PredictNextCorners(LengthType image_width,
                           LengthType image_height) const noexcept
   {
@@ -1002,6 +1004,7 @@ private:
    * @param landmark 世界坐标系中的 Landmark。
    * @return 对应像素点的齐次坐标
    */
+  [[nodiscard]]
   Vector3 ProjectHomo(const ProjectionMatrix &P,
                       const Vector3 &landmark) const noexcept
   {
@@ -1022,11 +1025,13 @@ private:
     return P * X;
   }
 
+  [[nodiscard]]
   Vector3 ProjectLeftHomo(const Vector3 &landmark) const noexcept
   {
     return ProjectHomo(config_.stereo_camera_model_.proj_left_, landmark);
   }
 
+  [[nodiscard]]
   Vector3 ProjectRightHomo(const Vector3 &landmark) const noexcept
   {
     return ProjectHomo(config_.stereo_camera_model_.proj_right_, landmark);
@@ -1039,6 +1044,7 @@ private:
    * @param landmark 世界坐标系中的 Landmark。
    * @return 对应像素点的非齐次坐标
    */
+  [[nodiscard]]
   Vector2 ProjectNonhomo(const ProjectionMatrix &P,
                          const Vector3 &landmark) const noexcept
   {
@@ -1046,11 +1052,13 @@ private:
     return p.template head<2>() / p.z();
   }
 
+  [[nodiscard]]
   Vector2 ProjectLeftNonhomo(const Vector3 &landmark) const noexcept
   {
     return ProjectNonhomo(config_.stereo_camera_model_.proj_left_, landmark);
   }
 
+  [[nodiscard]]
   Vector2 ProjectRightNonhomo(const Vector3 &landmark) const noexcept
   {
     return ProjectNonhomo(config_.stereo_camera_model_.proj_right_, landmark);
@@ -1059,6 +1067,7 @@ private:
   /**
    * @brief 根据视差估计像素方差。
    */
+  [[nodiscard]]
   value_type GetPixelVariance(value_type disparity) const noexcept
   {
     constexpr value_type sigma0{0.5};
@@ -1070,6 +1079,7 @@ private:
   /**
    * @brief 构造双目测量噪声协方差矩阵。
    */
+  [[nodiscard]]
   CovarianceMeasurementStereo GetMeasurementCovarianceStereo(
       const StereoObservation<value_type> &ob
   ) const noexcept
@@ -1132,6 +1142,7 @@ private:
    * @param gyro 角速度
    * @param acc 线加速度
    */
+  [[nodiscard]]
   TransitionMatrix prediction_create_transition(value_type dt, const Matrix3 &R,
                                                 const Vector3 &gyro,
                                                 const Vector3 &acc) noexcept
@@ -1159,6 +1170,7 @@ private:
    * @return 系统过程噪声协方差矩阵
    * @note 等于 (状态转移函数对扰动的雅可比矩阵) * (扰动脉冲协方差矩阵) * (状态转移函数对扰动的雅可比矩阵).转置
    */
+  [[nodiscard]]
   TransitionMatrix prediction_create_covariance(value_type dt) noexcept
   {
     TransitionMatrix Q{TransitionMatrix::Zero()};
@@ -1192,6 +1204,7 @@ private:
    * @brief 计算测量函数的雅可比矩阵
    * @param angular_displacement 利用 IMU 数据估计得到的相邻两个图像帧间的角位移
    */
+  [[nodiscard]]
   JacobiMeasurementFast
   GetMeasurementJacobiFast(const Vector3 &angular_displacement) const noexcept
   {
@@ -1220,6 +1233,7 @@ private:
    * @brief 获取测量协方差矩阵。
    * @note 置信度数值越小，可以相信的程度越高
    */
+  [[nodiscard]]
   CovarianceMeasurementFast GetMeasurementCovarianceFast() const noexcept
   {
     CovarianceMeasurementFast V{CovarianceMeasurementFast::Identity()};
@@ -1246,6 +1260,7 @@ private:
    * @param V 测量噪声的协方差矩阵
    */
   template <class JacobiMeasurement, class CovarianceMeasurement>
+  [[nodiscard]]
   static auto GetKalmanGain(const TransitionMatrix &P,
                             const JacobiMeasurement &H,
                             const CovarianceMeasurement &V) noexcept
@@ -1291,6 +1306,7 @@ private:
    * @param a 被旋转的三维向量
    * @return 3x4 的雅可比矩阵
    */
+  [[nodiscard]]
   static auto Jacobian_Rotation_wrt_Quaternion(const Quaternion &q,
                                                const Vector3 &a) noexcept
   {
@@ -1316,6 +1332,7 @@ private:
    * @param q 旋转四元数
    * @return 4x3 的雅可比矩阵
    */
+  [[nodiscard]]
   static auto Jacobian_Quaternion_wrt_dtheta(const Quaternion &q) noexcept
   {
     using RetType = Eigen::Matrix<value_type, 4, 3>;
@@ -1334,6 +1351,7 @@ private:
    * @param landmark_cam 路标点在相机坐标系下的坐标
    * @return 2x3 的雅可比矩阵
    */
+  [[nodiscard]]
   static JacobiProjection
   GetProjectionJacobian(const ProjectionMatrix &proj_mat,
                         const Vector3 &landmark_cam) noexcept
@@ -1355,6 +1373,7 @@ private:
    * @param landmark 世界坐标系中的 Landmark
    * @return 双目观测雅可比矩阵（4×18）
    */
+  [[nodiscard]]
   JacobiMeasurementStereo
   GetMeasurementJacobiStereo(const Vector3 &landmark) const noexcept
   {
