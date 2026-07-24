@@ -216,7 +216,7 @@ struct CornerTrackingStats
   {
     ++visual_task_count_;
     const auto visual_task_end{Clock::now()};
-    const auto visual_task_elapsed_ms{
+    const double visual_task_elapsed_ms{
         std::chrono::duration<double, std::milli>{visual_task_end
                                                   - visual_task_begin_}
             .count(),
@@ -226,6 +226,18 @@ struct CornerTrackingStats
     visual_task_min_ms_ = std::min(visual_task_min_ms_, visual_task_elapsed_ms);
     visual_task_max_ms_ = std::max(visual_task_max_ms_, visual_task_elapsed_ms);
     return visual_task_elapsed_ms;
+  }
+
+  void RecordElapsedTime(std::int64_t timestamp, double elapsed_ms) const
+  {
+    const auto frame_id{GetFrameId()};
+    static std::ofstream file_{"CornerTrackingStats.csv"};
+    if (frame_id <= 1)
+    {
+      std::print(file_, "#timestamp [ns],"
+                        "elapsed time [ms]\n");
+    }
+    std::print(file_, "{},{}\n", timestamp, elapsed_ms);
   }
 
   [[nodiscard]]
@@ -613,6 +625,8 @@ public:
                  frame.timestamp_, corner_tracking_stats.GetFrameId(),
                  (found_corners ? "成功" : "失败"), feature_ids.size(),
                  visual_task_elapsed_ms);
+      corner_tracking_stats.RecordElapsedTime(timestamp,
+                                              visual_task_elapsed_ms);
 
       timestamp                  = frame.timestamp_;
       image_prev_left_rectified  = std::move(image_next_left_rectified);
