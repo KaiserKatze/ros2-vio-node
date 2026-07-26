@@ -17,9 +17,9 @@ def generate_launch_description():
 
     path_home = pathlib.PosixPath(os.path.expanduser("~"))
     path_workdir = path_home / "vio_ws"
-    path_workdir = pathlib.PosixPath("/mnt", "e", "Documents")
 
-    mav0_path = path_workdir / "mav0"
+    # mav0_path = pathlib.PosixPath("/mnt", "e", "Documents", "mav0")
+    mav0_path = path_home / "EuRoC_MAV_Datasets" / "V2_01_easy" / "mav0"
     truth_path = mav0_path / "state_groundtruth_estimate0"
     path_truth_csv = str(truth_path / "data.csv")
     path_stereo_csv = str(path_workdir / "estimated_trajectory.csv")
