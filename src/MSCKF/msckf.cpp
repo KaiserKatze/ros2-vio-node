@@ -6,7 +6,8 @@
 //   g++ -std=c++2c -O3 -march=native msckf.cpp -o msckf \
 //       $(pkg-config --cflags --libs opencv4 eigen3 yaml-cpp) -lceres -lglog -pthread
 // 运行:
-//   ./msckf EuRoC_MAV_Datasets/V2_01_easy/mav0
+//   ./msckf EuRoC_MAV_Datasets/V2_01_easy/mav0                      # 静止 IMU 初始化 (默认)
+//   ./msckf EuRoC_MAV_Datasets/V2_01_easy/mav0 --init groundtruth   # 真值姿态初始化
 // 输出:
 //   trajectory_tum.txt (TUM 格式: time px py pz qx qy qz qw)
 
@@ -24,6 +25,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <optional>
 #include <ostream>
@@ -34,11 +36,66 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 namespace fs = std::filesystem;
+
+// ============================ 命令行参数 ============================
+enum class InitializationMode
+{
+  kStaticImu,
+  kGroundTruth
+};
+
+InitializationMode ParseInitializationValue(std::string_view value)
+{
+  if (value == "imu")
+  {
+    return InitializationMode::kStaticImu;
+  }
+  if (value == "groundtruth" || value == "gt")
+  {
+    return InitializationMode::kGroundTruth;
+  }
+  throw std::runtime_error("未知的初始化方式 (可选: imu | groundtruth): "
+                           + std::string(value));
+}
+
+struct CommandLineOptions
+{
+  fs::path dataset_root                  = "EuRoC_MAV_Datasets/V2_01_easy/mav0";
+  InitializationMode initialization_mode = InitializationMode::kStaticImu;
+};
+
+CommandLineOptions ParseCommandLine(int argc, char **argv)
+{
+  CommandLineOptions options;
+  for (int i = 1; i < argc; ++i)
+  {
+    const std::string_view argument = argv[i];
+    if (argument.starts_with("--init="))
+    {
+      options.initialization_mode
+          = ParseInitializationValue(argument.substr(7));
+    }
+    else if (argument == "--init")
+    {
+      if (++i >= argc)
+      {
+        throw std::runtime_error("--init 缺少取值 (imu | groundtruth)");
+      }
+      options.initialization_mode = ParseInitializationValue(argv[i]);
+    }
+    else
+    {
+      options.dataset_root = fs::path(argument);
+    }
+  }
+  return options;
+}
 
 // ================ 标定参数读取 (yaml-cpp 解析 EuRoC sensor.yaml) ================
 constexpr double kGravity = 9.81; // sensor.yaml 中无重力项, 保留为常量
@@ -209,6 +266,73 @@ std::vector<StereoFrame> LoadStereoFrames(const fs::path &dataset_root)
     }
   }
   return frames;
+}
+
+struct GroundTruthState
+{
+  double time              = 0;
+  Eigen::Vector3d position = Eigen::Vector3d::Zero();
+  Eigen::Quaterniond world_from_body_orientation
+      = Eigen::Quaterniond::Identity();
+  Eigen::Vector3d velocity   = Eigen::Vector3d::Zero();
+  Eigen::Vector3d gyro_bias  = Eigen::Vector3d::Zero();
+  Eigen::Vector3d accel_bias = Eigen::Vector3d::Zero();
+};
+
+GroundTruthState LoadClosestGroundTruthState(const fs::path &dataset_root,
+                                             double target_time)
+{
+  const fs::path csv_path
+      = dataset_root / "state_groundtruth_estimate0" / "data.csv";
+  std::ifstream file(csv_path);
+  if (!file)
+  {
+    throw std::runtime_error("无法打开 " + csv_path.string());
+  }
+  GroundTruthState closest_state;
+  double closest_time_gap = std::numeric_limits<double>::max();
+  std::string line;
+  while (std::getline(file, line))
+  {
+    if (!line.empty() && line.back() == '\r')
+    {
+      line.pop_back();
+    }
+    if (line.empty() || line.front() == '#')
+    {
+      continue;
+    }
+    std::ranges::replace(line, ',', ' ');
+    std::istringstream stream(line);
+    long long timestamp_ns = 0;
+    GroundTruthState state;
+    Eigen::Quaterniond &orientation = state.world_from_body_orientation;
+    if (!(stream >> timestamp_ns >> state.position.x() >> state.position.y()
+          >> state.position.z() >> orientation.w() >> orientation.x()
+          >> orientation.y() >> orientation.z() >> state.velocity.x()
+          >> state.velocity.y() >> state.velocity.z() >> state.gyro_bias.x()
+          >> state.gyro_bias.y() >> state.gyro_bias.z() >> state.accel_bias.x()
+          >> state.accel_bias.y() >> state.accel_bias.z()))
+    {
+      continue;
+    }
+    state.time            = static_cast<double>(timestamp_ns) * 1e-9;
+    const double time_gap = std::abs(state.time - target_time);
+    if (time_gap < closest_time_gap)
+    {
+      closest_time_gap = time_gap;
+      closest_state    = state;
+    }
+    if (state.time > target_time + 1.0)
+    {
+      break; // csv 按时间递增, 已越过目标时刻
+    }
+  }
+  if (closest_time_gap > 0.1)
+  {
+    throw std::runtime_error("groundtruth 中没有接近首帧时刻 (0.1s 内) 的记录");
+  }
+  return closest_state;
 }
 
 // ============================ 立体矫正 ============================
@@ -598,6 +722,22 @@ public:
     covariance_ = Eigen::MatrixXd::Zero(kImuErrorDim, kImuErrorDim);
     covariance_.diagonal() << 1e-4, 1e-4, 1e-3, 1e-8, 1e-8, 1e-8, 1e-2, 1e-2,
         1e-2, 1e-6, 1e-6, 1e-6, 1e-3, 1e-3, 1e-3;
+  }
+
+  void InitializeFromGroundTruth(const GroundTruthState &state)
+  {
+    world_from_imu_rotation_
+        = Sophus::SO3d(state.world_from_body_orientation.normalized());
+    imu_position_ = state.position;
+    imu_velocity_ = state.velocity;
+    gyro_bias_    = state.gyro_bias;
+    accel_bias_   = state.accel_bias;
+    imu_time_     = state.time;
+    has_last_imu_ = false; // 之后遇到的第一个 IMU 样本仅记录为积分起点
+
+    covariance_ = Eigen::MatrixXd::Zero(kImuErrorDim, kImuErrorDim);
+    covariance_.diagonal() << 1e-5, 1e-5, 1e-5, 1e-6, 1e-6, 1e-6, 1e-4, 1e-4,
+        1e-4, 1e-6, 1e-6, 1e-6, 1e-5, 1e-5, 1e-5;
   }
 
   void PropagateWithImu(const ImuSample &sample)
@@ -1121,10 +1261,14 @@ private:
 int main(int argc, char **argv)
 {
   google::InitGoogleLogging(argv[0]);
-  const fs::path dataset_root
-      = argc > 1 ? fs::path(argv[1]) : fs::path("V2_01_easy/mav0");
   try
   {
+    const CommandLineOptions options = ParseCommandLine(argc, argv);
+    const fs::path &dataset_root     = options.dataset_root;
+    std::println("初始化方式: {}",
+                 options.initialization_mode == InitializationMode::kGroundTruth
+                     ? "groundtruth 姿态"
+                     : "静止 IMU");
     const std::vector<ImuSample> imu_samples = LoadImuSamples(dataset_root);
     const std::vector<StereoFrame> stereo_frames
         = LoadStereoFrames(dataset_root);
@@ -1160,17 +1304,36 @@ int main(int argc, char **argv)
 
     const double first_frame_time = stereo_frames.front().time;
     size_t imu_index              = 0;
-    std::vector<ImuSample> initial_samples;
-    while (imu_index < imu_samples.size()
-           && imu_samples[imu_index].time < first_frame_time)
+    if (options.initialization_mode == InitializationMode::kGroundTruth)
     {
-      initial_samples.push_back(imu_samples[imu_index++]);
+      const GroundTruthState initial_state
+          = LoadClosestGroundTruthState(dataset_root, first_frame_time);
+      filter.InitializeFromGroundTruth(initial_state);
+      while (imu_index < imu_samples.size()
+             && imu_samples[imu_index].time < first_frame_time)
+      {
+        ++imu_index; // 首帧之前的 IMU 不参与积分
+      }
+      std::println(
+          "groundtruth 初始状态: t={:.3f}s 位置 [{:.3f} {:.3f} {:.3f}]",
+          initial_state.time, initial_state.position.x(),
+          initial_state.position.y(), initial_state.position.z()
+      );
     }
-    while (initial_samples.size() < 200 && imu_index < imu_samples.size())
+    else
     {
-      initial_samples.push_back(imu_samples[imu_index++]);
+      std::vector<ImuSample> initial_samples;
+      while (imu_index < imu_samples.size()
+             && imu_samples[imu_index].time < first_frame_time)
+      {
+        initial_samples.push_back(imu_samples[imu_index++]);
+      }
+      while (initial_samples.size() < 200 && imu_index < imu_samples.size())
+      {
+        initial_samples.push_back(imu_samples[imu_index++]);
+      }
+      filter.InitializeFromStaticImu(initial_samples);
     }
-    filter.InitializeFromStaticImu(initial_samples);
 
     std::ofstream trajectory_file("trajectory_tum.txt");
     long frame_id = 0;
@@ -1222,6 +1385,8 @@ int main(int argc, char **argv)
   catch (const std::exception &error)
   {
     std::println(stderr, "错误: {}", error.what());
+    std::println(stderr, "用法: {} <数据集mav0路径> [--init imu|groundtruth]",
+                 argv[0]);
     return 1;
   }
   return 0;
