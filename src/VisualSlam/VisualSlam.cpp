@@ -524,7 +524,7 @@ public:
         cv::waitKey(5);
       }
 
-      const bool use_hint{false}; // landmarks_homo.cols > 0
+      const bool use_hint{landmarks_homo.cols > 0};
       corner_tracking_stats.NextFrame();
       corner_tracking_stats.PrintFrameBegin(use_hint, corners_prev_left.size());
       const bool found_corners{
