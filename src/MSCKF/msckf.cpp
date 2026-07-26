@@ -1,6 +1,8 @@
 // msckf.cpp —— 基于 MSCKF 的双目视觉 + IMU 紧耦合里程计 (EuRoC MAV V2_01_easy)
 // 依赖: OpenCV 4 / Eigen 3.4 / Sophus / Ceres Solver / yaml-cpp, 标准: C++26
 // 标定与噪声参数在运行时用 yaml-cpp 从数据集各 sensor.yaml 读取, 不做硬编码
+// 延迟补偿: IMU 插值精确传播到成像时刻, 相机-IMU 时间偏移 t_d 作为状态在线估计
+// 重力向量 (gx, gy, gz) 加入误差状态在线估计, 初始化时由静止比力或先验给出
 //
 // 编译:
 //   g++ -std=c++2c -O3 -march=native msckf.cpp -o msckf \
@@ -8,6 +10,7 @@
 // 运行:
 //   ./msckf EuRoC_MAV_Datasets/V2_01_easy/mav0                      # 静止 IMU 初始化 (默认)
 //   ./msckf EuRoC_MAV_Datasets/V2_01_easy/mav0 --init groundtruth   # 真值姿态初始化
+//   ./msckf EuRoC_MAV_Datasets/V2_01_easy/mav0 --time-offset 0.005  # t_d 初值(秒), 在线精化
 // 输出:
 //   trajectory_tum.txt (TUM 格式: time px py pz qx qy qz qw)
 
@@ -68,6 +71,7 @@ struct CommandLineOptions
 {
   fs::path dataset_root                  = "EuRoC_MAV_Datasets/V2_01_easy/mav0";
   InitializationMode initialization_mode = InitializationMode::kStaticImu;
+  double initial_time_offset = 0; // 图像时刻 + t_d = 对应的 IMU 时刻 (秒)
 };
 
 CommandLineOptions ParseCommandLine(int argc, char **argv)
@@ -89,6 +93,18 @@ CommandLineOptions ParseCommandLine(int argc, char **argv)
       }
       options.initialization_mode = ParseInitializationValue(argv[i]);
     }
+    else if (argument.starts_with("--time-offset="))
+    {
+      options.initial_time_offset = std::stod(std::string(argument.substr(14)));
+    }
+    else if (argument == "--time-offset")
+    {
+      if (++i >= argc)
+      {
+        throw std::runtime_error("--time-offset 缺少取值 (秒)");
+      }
+      options.initial_time_offset = std::stod(argv[i]);
+    }
     else
     {
       options.dataset_root = fs::path(argument);
@@ -98,7 +114,8 @@ CommandLineOptions ParseCommandLine(int argc, char **argv)
 }
 
 // ================ 标定参数读取 (yaml-cpp 解析 EuRoC sensor.yaml) ================
-constexpr double kGravity = 9.81; // sensor.yaml 中无重力项, 保留为常量
+constexpr double kGravity
+    = 9.81; // 重力先验值, 实际重力向量在误差状态中在线估计
 
 struct CameraCalibration
 {
@@ -183,6 +200,22 @@ struct ImuSample
   Eigen::Vector3d angular_velocity    = Eigen::Vector3d::Zero();
   Eigen::Vector3d linear_acceleration = Eigen::Vector3d::Zero();
 };
+
+ImuSample InterpolateImuSample(const ImuSample &before, const ImuSample &after,
+                               double time)
+{
+  const double interval = after.time - before.time;
+  const double ratio
+      = interval > 1e-9 ? std::clamp((time - before.time) / interval, 0.0, 1.0)
+                        : 0.0;
+  return {.time = time,
+          .angular_velocity
+          = before.angular_velocity
+            + ratio * (after.angular_velocity - before.angular_velocity),
+          .linear_acceleration
+          = before.linear_acceleration
+            + ratio * (after.linear_acceleration - before.linear_acceleration)};
+}
 
 struct StereoFrame
 {
@@ -682,16 +715,21 @@ class Msckf
 {
 public:
   static constexpr int kImuErrorDim
-      = 15; // [姿态3 位置3 速度3 陀螺零偏3 加计零偏3]
-  static constexpr int kCloneErrorDim     = 6; // [姿态3 位置3]
-  static constexpr size_t kMaxCloneCount  = 11;
-  static constexpr size_t kMinTrackLength = 3;
-  static constexpr int kMaxUpdateRows     = 600;
+      = 19; // [姿态3 位置3 速度3 陀螺零偏3 加计零偏3 时间偏移1 重力3]
+  static constexpr int kTimeOffsetIndex              = 15;
+  static constexpr int kGravityIndex                 = 16;
+  static constexpr int kCloneErrorDim                = 6; // [姿态3 位置3]
+  static constexpr size_t kMaxCloneCount             = 11;
+  static constexpr size_t kMinTrackLength            = 3;
+  static constexpr int kMaxUpdateRows                = 600;
+  static constexpr double kInitialTimeOffsetVariance = 2.5e-5; // (5 ms)^2
 
   Msckf(const Sophus::SE3d &body_from_camera, double baseline,
-        double focal_length, const ImuNoiseParameters &imu_noise) :
+        double focal_length, const ImuNoiseParameters &imu_noise,
+        double initial_time_offset) :
     body_from_camera_(body_from_camera), baseline_(baseline),
-    pixel_noise_normalized_(1.5 / focal_length), imu_noise_(imu_noise)
+    pixel_noise_normalized_(1.5 / focal_length), imu_noise_(imu_noise),
+    time_offset_(initial_time_offset)
   {
   }
 
@@ -714,30 +752,35 @@ public:
     world_from_imu_rotation_ = Sophus::SO3d(
         Eigen::Quaterniond::FromTwoVectors(accel_mean, Eigen::Vector3d::UnitZ())
     );
-    gyro_bias_    = gyro_mean;
+    gyro_bias_ = gyro_mean;
+    gravity_in_world_
+        = -(world_from_imu_rotation_ * accel_mean); // 静止时比力 = -g
     imu_time_     = samples.back().time;
     last_imu_     = samples.back();
     has_last_imu_ = true;
 
     covariance_ = Eigen::MatrixXd::Zero(kImuErrorDim, kImuErrorDim);
     covariance_.diagonal() << 1e-4, 1e-4, 1e-3, 1e-8, 1e-8, 1e-8, 1e-2, 1e-2,
-        1e-2, 1e-6, 1e-6, 1e-6, 1e-3, 1e-3, 1e-3;
+        1e-2, 1e-6, 1e-6, 1e-6, 1e-3, 1e-3, 1e-3, kInitialTimeOffsetVariance,
+        1e-2, 1e-2, 1e-2;
   }
 
   void InitializeFromGroundTruth(const GroundTruthState &state)
   {
     world_from_imu_rotation_
         = Sophus::SO3d(state.world_from_body_orientation.normalized());
-    imu_position_ = state.position;
-    imu_velocity_ = state.velocity;
-    gyro_bias_    = state.gyro_bias;
-    accel_bias_   = state.accel_bias;
-    imu_time_     = state.time;
-    has_last_imu_ = false; // 之后遇到的第一个 IMU 样本仅记录为积分起点
+    imu_position_     = state.position;
+    imu_velocity_     = state.velocity;
+    gyro_bias_        = state.gyro_bias;
+    accel_bias_       = state.accel_bias;
+    gravity_in_world_ = Eigen::Vector3d(0, 0, -kGravity); // 真值世界系重力沿 -z
+    imu_time_         = state.time;
+    has_last_imu_     = false; // 之后遇到的第一个 IMU 样本仅记录为积分起点
 
     covariance_ = Eigen::MatrixXd::Zero(kImuErrorDim, kImuErrorDim);
     covariance_.diagonal() << 1e-5, 1e-5, 1e-5, 1e-6, 1e-6, 1e-6, 1e-4, 1e-4,
-        1e-4, 1e-6, 1e-6, 1e-6, 1e-5, 1e-5, 1e-5;
+        1e-4, 1e-6, 1e-6, 1e-6, 1e-5, 1e-5, 1e-5, kInitialTimeOffsetVariance,
+        1e-4, 1e-4, 1e-4;
   }
 
   void PropagateWithImu(const ImuSample &sample)
@@ -763,9 +806,9 @@ public:
     const Eigen::Vector3d accel
         = 0.5 * (last_imu_.linear_acceleration + sample.linear_acceleration)
           - accel_bias_;
-    const Eigen::Vector3d gravity(0, 0, -kGravity);
     const Eigen::Matrix3d rotation_matrix = world_from_imu_rotation_.matrix();
-    const Eigen::Vector3d accel_in_world  = rotation_matrix * accel + gravity;
+    const Eigen::Vector3d accel_in_world
+        = rotation_matrix * accel + gravity_in_world_;
 
     world_from_imu_rotation_
         = world_from_imu_rotation_ * Sophus::SO3d::exp(gyro * dt);
@@ -774,20 +817,23 @@ public:
     imu_time_ = sample.time;
     last_imu_ = sample;
 
-    Eigen::Matrix<double, 15, 15> transition
-        = Eigen::Matrix<double, 15, 15>::Identity();
+    Eigen::Matrix<double, kImuErrorDim, kImuErrorDim> transition
+        = Eigen::Matrix<double, kImuErrorDim, kImuErrorDim>::Identity();
     transition.block<3, 3>(0, 0) = Sophus::SO3d::exp(-gyro * dt).matrix();
     transition.block<3, 3>(0, 9) = -Eigen::Matrix3d::Identity() * dt;
     transition.block<3, 3>(3, 0)
         = -0.5 * rotation_matrix * Sophus::SO3d::hat(accel) * dt * dt;
     transition.block<3, 3>(3, 6)  = Eigen::Matrix3d::Identity() * dt;
     transition.block<3, 3>(3, 12) = -0.5 * rotation_matrix * dt * dt;
+    transition.block<3, 3>(3, kGravityIndex)
+        = 0.5 * Eigen::Matrix3d::Identity() * dt * dt;
     transition.block<3, 3>(6, 0)
         = -rotation_matrix * Sophus::SO3d::hat(accel) * dt;
-    transition.block<3, 3>(6, 12) = -rotation_matrix * dt;
+    transition.block<3, 3>(6, 12)            = -rotation_matrix * dt;
+    transition.block<3, 3>(6, kGravityIndex) = Eigen::Matrix3d::Identity() * dt;
 
-    Eigen::Matrix<double, 15, 12> noise_jacobian
-        = Eigen::Matrix<double, 15, 12>::Zero();
+    Eigen::Matrix<double, kImuErrorDim, 12> noise_jacobian
+        = Eigen::Matrix<double, kImuErrorDim, 12>::Zero();
     noise_jacobian.block<3, 3>(0, 0)  = -Eigen::Matrix3d::Identity();
     noise_jacobian.block<3, 3>(6, 3)  = rotation_matrix;
     noise_jacobian.block<3, 3>(9, 6)  = Eigen::Matrix3d::Identity();
@@ -808,11 +854,11 @@ public:
         imu_noise_.accel_random_walk * imu_noise_.accel_random_walk
     );
 
-    const Eigen::Matrix<double, 15, 15> discrete_noise
+    const Eigen::Matrix<double, kImuErrorDim, kImuErrorDim> discrete_noise
         = noise_jacobian * continuous_noise * noise_jacobian.transpose() * dt;
 
-    covariance_.topLeftCorner<15, 15>()
-        = transition * covariance_.topLeftCorner<15, 15>()
+    covariance_.topLeftCorner<kImuErrorDim, kImuErrorDim>()
+        = transition * covariance_.topLeftCorner<kImuErrorDim, kImuErrorDim>()
               * transition.transpose()
           + discrete_noise;
     const int clone_dim = static_cast<int>(covariance_.rows()) - kImuErrorDim;
@@ -891,6 +937,14 @@ public:
   {
     return imu_velocity_;
   }
+  double time_offset_camera_to_imu() const
+  {
+    return time_offset_;
+  }
+  const Eigen::Vector3d &gravity_in_world() const
+  {
+    return gravity_in_world_;
+  }
   size_t clone_count() const
   {
     return clones_.size();
@@ -936,6 +990,15 @@ private:
         = -world_from_imu_rotation_.matrix()
           * Sophus::SO3d::hat(body_from_camera_.translation());
     clone_jacobian.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity();
+    // t_d 偏差使克隆位姿沿当前运动方向平移: dθ_c/dt_d = R_ci·ω, dp_c/dt_d = 相机质心的世界系速度
+    const Eigen::Vector3d angular_velocity
+        = last_imu_.angular_velocity - gyro_bias_;
+    clone_jacobian.block<3, 1>(0, kTimeOffsetIndex)
+        = body_from_camera_.so3().inverse().matrix() * angular_velocity;
+    clone_jacobian.block<3, 1>(3, kTimeOffsetIndex)
+        = imu_velocity_
+          + world_from_imu_rotation_.matrix()
+                * angular_velocity.cross(body_from_camera_.translation());
 
     Eigen::MatrixXd augmented(old_dim + kCloneErrorDim,
                               old_dim + kCloneErrorDim);
@@ -1203,6 +1266,8 @@ private:
     imu_velocity_ += correction.segment<3>(6);
     gyro_bias_ += correction.segment<3>(9);
     accel_bias_ += correction.segment<3>(12);
+    time_offset_ += correction(kTimeOffsetIndex);
+    gravity_in_world_ += correction.segment<3>(kGravityIndex);
     for (size_t i = 0; i < clones_.size(); ++i)
     {
       const int base = kImuErrorDim + kCloneErrorDim * static_cast<int>(i);
@@ -1243,11 +1308,13 @@ private:
   ImuNoiseParameters imu_noise_;
 
   Sophus::SO3d world_from_imu_rotation_;
-  Eigen::Vector3d imu_position_ = Eigen::Vector3d::Zero();
-  Eigen::Vector3d imu_velocity_ = Eigen::Vector3d::Zero();
-  Eigen::Vector3d gyro_bias_    = Eigen::Vector3d::Zero();
-  Eigen::Vector3d accel_bias_   = Eigen::Vector3d::Zero();
-  double imu_time_              = 0;
+  Eigen::Vector3d imu_position_     = Eigen::Vector3d::Zero();
+  Eigen::Vector3d imu_velocity_     = Eigen::Vector3d::Zero();
+  Eigen::Vector3d gyro_bias_        = Eigen::Vector3d::Zero();
+  Eigen::Vector3d accel_bias_       = Eigen::Vector3d::Zero();
+  Eigen::Vector3d gravity_in_world_ = Eigen::Vector3d(0, 0, -kGravity);
+  double time_offset_ = 0; // 图像时刻 + time_offset_ = 对应的 IMU 时刻
+  double imu_time_    = 0;
   ImuSample last_imu_;
   bool has_last_imu_ = false;
 
@@ -1300,7 +1367,10 @@ int main(int argc, char **argv)
     ClaheEnhancer enhancer;
     FeatureTracker tracker(rectifier);
     Msckf filter(rectifier.body_from_rectified_left(), rectifier.baseline(),
-                 rectifier.focal_length(), imu_noise);
+                 rectifier.focal_length(), imu_noise,
+                 options.initial_time_offset);
+    std::println("相机-IMU 时间偏移初值 {:+.2f} ms (滤波器在线估计)",
+                 options.initial_time_offset * 1e3);
 
     const double first_frame_time = stereo_frames.front().time;
     size_t imu_index              = 0;
@@ -1339,10 +1409,17 @@ int main(int argc, char **argv)
     long frame_id = 0;
     for (const StereoFrame &frame : stereo_frames)
     {
+      const double clone_time = frame.time + filter.time_offset_camera_to_imu();
       while (imu_index < imu_samples.size()
-             && imu_samples[imu_index].time <= frame.time)
+             && imu_samples[imu_index].time <= clone_time)
       {
         filter.PropagateWithImu(imu_samples[imu_index++]);
+      }
+      if (imu_index > 0 && imu_index < imu_samples.size())
+      {
+        filter.PropagateWithImu(InterpolateImuSample(imu_samples[imu_index - 1],
+                                                     imu_samples[imu_index],
+                                                     clone_time));
       }
 
       const cv::Mat raw_left
@@ -1366,27 +1443,36 @@ int main(int argc, char **argv)
       const Eigen::Vector3d &position = filter.imu_position();
       std::println(trajectory_file,
                    "{:.9f} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f}",
-                   frame.time, position.x(), position.y(), position.z(),
+                   clone_time, position.x(), position.y(), position.z(),
                    orientation.x(), orientation.y(), orientation.z(),
                    orientation.w());
 
       if (frame_id % 50 == 0)
       {
         std::println("帧 {:4}  位置 [{:7.3f} {:7.3f} {:7.3f}]  速度 {:5.2f} "
-                     "m/s  特征 {:3}  克隆 {}",
+                     "m/s  t_d {:+.2f} ms  |g| {:.3f}  特征 {:3}  克隆 {}",
                      frame_id, position.x(), position.y(), position.z(),
-                     filter.imu_velocity().norm(), tracked.size(),
+                     filter.imu_velocity().norm(),
+                     filter.time_offset_camera_to_imu() * 1e3,
+                     filter.gravity_in_world().norm(), tracked.size(),
                      filter.clone_count());
       }
       ++frame_id;
     }
-    std::println("完成, 轨迹已写入 trajectory_tum.txt (TUM 格式)");
+    const Eigen::Vector3d &gravity = filter.gravity_in_world();
+    std::println("完成, 轨迹已写入 trajectory_tum.txt (TUM 格式), 最终 t_d "
+                 "{:+.3f} ms, 重力 [{:.4f} {:.4f} {:.4f}] m/s^2",
+                 filter.time_offset_camera_to_imu() * 1e3, gravity.x(),
+                 gravity.y(), gravity.z());
   }
   catch (const std::exception &error)
   {
     std::println(stderr, "错误: {}", error.what());
-    std::println(stderr, "用法: {} <数据集mav0路径> [--init imu|groundtruth]",
-                 argv[0]);
+    std::println(
+        stderr,
+        "用法: {} <数据集mav0路径> [--init imu|groundtruth] [--time-offset 秒]",
+        argv[0]
+    );
     return 1;
   }
   return 0;
