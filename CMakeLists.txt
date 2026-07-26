@@ -88,6 +88,20 @@ add_ros2_executable(VisualInertial src/VisualSim/VisualInertial.cpp)
 # ===== 目标： 加载生成的 CSV 或 GroundTruth 并发布为 ROS2 话题 =====
 add_ros2_executable(SimpleDataLoader src/DataLoader/DataLoader.cpp)
 
+# ===== 目标： MSCKF 双目视觉+IMU 紧耦合里程计 (由子目录 CMakeLists.txt 构建) =====
+# add_subdirectory 会进入 src/MSCKF/CMakeLists.txt 执行:
+# 在其中完成 Ceres / glog / Threads 等私有依赖查找并定义 msckf 可执行目标;
+# 父目录已 add_compile_options 的告警与 -march=native / -freflection 会被子目录继承,
+# 子目录内的 project(msckf) 仅改变其自身作用域的 PROJECT_NAME, 不影响本文件。
+add_subdirectory(src/MSCKF)
+
+# msckf 目标在子目录中创建, 安装规则放在父目录以使用本包的 ${PROJECT_NAME}
+# (CMake >= 3.13 起允许 install 其他目录创建的目标),
+# 安装后可通过 `ros2 run euroc_vio msckf <mav0路径> [--init ...]` 运行
+install(TARGETS msckf
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 # --- 资源安装 ---
 install(DIRECTORY include/${PROJECT_NAME}/
   DESTINATION include/${PROJECT_NAME}

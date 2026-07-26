@@ -60,8 +60,8 @@ target_link_libraries(msckf PRIVATE
   ${OpenCV_LIBS}
   Eigen3::Eigen
   Sophus::Sophus
-  ${CERES_TARGET}
-  ${YAML_CPP_TARGET}
+  Ceres::ceres
+  yaml-cpp::yaml-cpp
   glog::glog
   Threads::Threads
 )
