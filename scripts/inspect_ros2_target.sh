@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 
 # CMake Target Inspector —— 检索任意已安装包 (ROS 2 或系统级) 导出的 CMake Targets
+# 两种模式:
+#   grep 快扫 (默认): 不执行 CMake, 静态扫描配置文件, 速度快、可离线批量看全局
+#   CMake 精查 (probe 子命令): 生成临时工程真实执行 find_package, 结果最权威,
+#                              能覆盖 COMPONENTS 展开 / 传递依赖 / 动态生成的目标
 # 用法:
-#   ./inspect_cmake_targets.sh                       # 默认查 nav_msgs (ROS 2)
-#   ./inspect_cmake_targets.sh yaml-cpp              # 非 ROS 包
-#   ./inspect_cmake_targets.sh Sophus /opt/mylibs    # 追加自定义搜索根目录
-#   ./inspect_cmake_targets.sh Threads               # CMake 内建 Find 模块也能识别
+#   ./inspect_cmake_targets.sh                       # 快扫, 默认查 nav_msgs (ROS 2)
+#   ./inspect_cmake_targets.sh yaml-cpp              # 快扫非 ROS 包
+#   ./inspect_cmake_targets.sh Sophus /opt/mylibs    # 快扫 + 追加自定义搜索根目录
+#   ./inspect_cmake_targets.sh probe Threads         # 精查 (内建模块同样适用)
+#   ./inspect_cmake_targets.sh probe OpenCV core imgproc          # 精查 + 组件
+#   CMAKE_PREFIX_PATH=/opt/mylibs ./inspect_cmake_targets.sh probe Sophus  # 精查自定义前缀
 # 严格匹配失败时, 用 Levenshtein 距离给出最接近的 5 个已安装候选包名
 
 # 设置输出颜色
@@ -68,13 +74,143 @@ suggest_similar_names() {
     done
 }
 
+# ---------------------------------------------------------------
+# CMake 精查: 生成临时最小工程, 真实执行 find_package, 读回
+# IMPORTED_TARGETS 目录属性与各 Target 的接口属性 —— 结果最权威
+# ---------------------------------------------------------------
+run_cmake_probe() {
+    local pkg="$1"
+    shift
+    local components=("$@")
+
+    if ! command -v cmake >/dev/null 2>&1; then
+        echo -e "${RED}❌ 错误: 未找到 cmake, 精查模式需要它: sudo apt install cmake${NC}"
+        return 1
+    fi
+
+    echo -e "${CYAN}================================================================${NC}"
+    echo -e "  🎯  CMake 精查模式 (真实执行 find_package)"
+    echo -e "  📦  包名: ${YELLOW}${pkg}${NC}   组件: ${YELLOW}${components[*]:-无}${NC}"
+    echo -e "${CYAN}================================================================${NC}"
+
+    # 清理策略: EXIT 覆盖正常结束与失败返回; 把 INT/TERM 转为 exit 使 EXIT 必然触发,
+    # 因此 Ctrl-C / kill 打断 configure 时临时工程同样会被删除 (RETURN trap 做不到这点)
+    PROBE_TMP_DIR=$(mktemp -d /tmp/cmake_probe_XXXXXX)
+    trap '[ -n "${PROBE_TMP_DIR:-}" ] && rm -rf "$PROBE_TMP_DIR"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    local probe_dir="$PROBE_TMP_DIR"
+
+    cat > "${probe_dir}/CMakeLists.txt" << 'PROBE_EOF'
+cmake_minimum_required(VERSION 3.21)
+project(cmake_target_probe LANGUAGES CXX)
+
+if(NOT PKG)
+  message(FATAL_ERROR "需要 -DPKG=<包名>")
+endif()
+
+if(PKG_COMPONENTS)
+  find_package(${PKG} COMPONENTS ${PKG_COMPONENTS})
+else()
+  find_package(${PKG})
+endif()
+
+if(NOT ${PKG}_FOUND)
+  message(STATUS "PROBE_NOT_FOUND")
+  return()
+endif()
+
+message(STATUS "PROBE_FOUND|${${PKG}_VERSION}|${${PKG}_DIR}|${${PKG}_CONFIG}")
+
+get_property(imported_targets DIRECTORY PROPERTY IMPORTED_TARGETS)
+list(SORT imported_targets)
+foreach(target IN LISTS imported_targets)
+  get_target_property(target_type ${target} TYPE)
+  get_target_property(include_dirs ${target} INTERFACE_INCLUDE_DIRECTORIES)
+  if(NOT include_dirs)
+    set(include_dirs "")
+  endif()
+  get_target_property(link_libraries ${target} INTERFACE_LINK_LIBRARIES)
+  if(NOT link_libraries)
+    set(link_libraries "")
+  endif()
+  set(location "")
+  if(NOT target_type STREQUAL "INTERFACE_LIBRARY")
+    foreach(location_property IMPORTED_LOCATION IMPORTED_LOCATION_RELEASE
+            IMPORTED_LOCATION_NOCONFIG IMPORTED_LOCATION_DEBUG)
+      get_target_property(location_candidate ${target} ${location_property})
+      if(location_candidate)
+        set(location "${location_candidate}")
+        break()
+      endif()
+    endforeach()
+  endif()
+  message(STATUS "PROBE_TARGET|${target}|${target_type}|${include_dirs}|${link_libraries}|${location}")
+endforeach()
+PROBE_EOF
+
+    local components_joined
+    components_joined=$(IFS=';'; echo "${components[*]}")
+    local prefix_path="${ROS_DISTRO_DIR}"
+    [ -n "${CMAKE_PREFIX_PATH:-}" ] && prefix_path="${CMAKE_PREFIX_PATH};${prefix_path}"
+
+    local output
+    output=$(cmake -S "$probe_dir" -B "${probe_dir}/build" \
+                   -DPKG="$pkg" -DPKG_COMPONENTS="$components_joined" \
+                   -DCMAKE_PREFIX_PATH="$prefix_path" 2>&1)
+    local status=$?
+
+    if [ $status -ne 0 ] || ! grep -q "^-- PROBE_FOUND|" <<< "$output"; then
+        echo -e "\n${RED}❌ find_package(${pkg}) 失败, CMake 原始诊断如下:${NC}"
+        grep -vE "^-- (The CXX|Detecting|Check for working|Configuring|Generating|Build files)" \
+            <<< "$output" | sed 's/^/  /'
+        echo -e "\n${GREEN}提示:${NC} 可先用快扫模式模糊定位包名: $0 <近似名>"
+        echo -e "      若报编译器缺失: sudo apt install g++"
+        return 1
+    fi
+
+    echo -e "\n${YELLOW}[1] find_package 结果:${NC}"
+    echo -e "----------------------------------------------------------------"
+    local probe_line
+    probe_line=$(grep '^-- PROBE_FOUND|' <<< "$output" | head -1)
+    IFS='|' read -r _ found_version found_dir found_config <<< "$probe_line"
+    echo -e "  ✅ 版本:     ${GREEN}${found_version:-未声明}${NC}"
+    echo -e "  📂 配置目录: ${CYAN}${found_dir:-模块模式 (由 CMake 内建 Find 模块提供)}${NC}"
+    echo -e "  📄 配置文件: ${CYAN}${found_config:-无}${NC}"
+
+    echo -e "\n${YELLOW}[2] 本次引入的全部 IMPORTED Targets (含传递依赖的包):${NC}"
+    echo -e "----------------------------------------------------------------"
+    grep "^-- PROBE_TARGET|" <<< "$output" | \
+    while IFS='|' read -r _ name type includes links location; do
+        echo -e "  ⭐ ${GREEN}${name}${NC}  ${CYAN}[${type}]${NC}"
+        [ -n "$includes" ] && echo -e "       头文件: ${includes}"
+        [ -n "$links" ]    && echo -e "       依赖链: ${links}"
+        [ -n "$location" ] && echo -e "       库文件: ${location}"
+    done
+    echo -e "${CYAN}----------------------------------------------------------------${NC}"
+    echo -e "${GREEN}建议:${NC} 上面任意 Target 均可直接写入 target_link_libraries()。"
+    return 0
+}
+
+ROS_DISTRO_DIR="/opt/ros/${ROS_DISTRO:-jazzy}"
+
+# probe 子命令分发: ./inspect_cmake_targets.sh probe <包名> [组件...]
+if [ "${1:-}" = "probe" ]; then
+    shift
+    if [ -z "${1:-}" ]; then
+        echo -e "${RED}❌ 用法: $0 probe <包名> [find_package 组件...]${NC}"
+        exit 1
+    fi
+    run_cmake_probe "$@"
+    exit $?
+fi
+
 # 默认查找的对象，如果脚本后面没带参数，默认查 nav_msgs
 TARGET_PKG=${1:-"nav_msgs"}
 EXTRA_ROOT=${2:-""}
-ROS_DISTRO_DIR="/opt/ros/${ROS_DISTRO:-jazzy}"
 
 echo -e "${CYAN}================================================================${NC}"
-echo -e "  🔍  CMake Target Inspector (Target: ${YELLOW}${TARGET_PKG}${NC})"
+echo -e "  🔍  CMake Target Inspector — grep 快扫 (Target: ${YELLOW}${TARGET_PKG}${NC})"
 echo -e "${CYAN}================================================================${NC}"
 
 # ---------------------------------------------------------------
@@ -199,3 +335,5 @@ done
 
 echo -e "${CYAN}----------------------------------------------------------------${NC}"
 echo -e "${GREEN}建议:${NC} 请在上方 [2] 中选择带有双冒号 ${YELLOW}::${NC} 的标准 C++ 目标填入你的 CMakeLists.txt 中。"
+echo -e "      需要最权威的结果 (组件展开/传递依赖/属性求值) 时改用精查:"
+echo -e "      ${YELLOW}$0 probe ${TARGET_PKG}${NC}"
