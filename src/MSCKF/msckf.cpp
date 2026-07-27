@@ -10,9 +10,8 @@
 //         长轨迹经延迟初始化升级为 SLAM 特征进入状态向量 [IMU | SLAM特征 | 克隆]
 // MonocularUpdate: 融合外部单目算法输出的帧间相对旋转(高精度)与平移方向(无尺度、低精度)
 //
-// 编译:
-//   g++ -std=c++2c -O3 -march=native msckf.cpp -o msckf \
-//       $(pkg-config --cflags --libs opencv4 eigen3 yaml-cpp) -lceres -lglog -pthread
+// 编译 (或直接使用配套 CMakeLists.txt):
+//   g++ -std=c++2c -O3 -march=native msckf.cpp -o msckf $(pkg-config --cflags --libs opencv4 eigen3 yaml-cpp) -lceres -lglog -pthread
 // 运行:
 //   ./msckf EuRoC_MAV_Datasets/V2_01_easy/mav0                      # 静止 IMU 初始化 (默认)
 //   ./msckf EuRoC_MAV_Datasets/V2_01_easy/mav0 --init groundtruth   # 真值姿态初始化
@@ -189,9 +188,10 @@ CameraCalibration LoadCameraCalibration(const fs::path &sensor_yaml_path)
 
   CameraCalibration calibration;
   calibration.camera_matrix
-      = (cv::Mat_<double>(3, 3) << intrinsics[0].as<double>(), 0,
-         intrinsics[2].as<double>(), 0, intrinsics[1].as<double>(),
-         intrinsics[3].as<double>(), 0, 0, 1);
+      = cv::Mat_<double>({3, 3}, {intrinsics[0].as<double>(), 0.0,
+                                  intrinsics[2].as<double>(), 0.0,
+                                  intrinsics[1].as<double>(),
+                                  intrinsics[3].as<double>(), 0.0, 0.0, 1.0});
   calibration.distortion
       = cv::Mat::zeros(1, static_cast<int>(distortion_coefficients.size()),
                        CV_64F);
@@ -811,10 +811,10 @@ struct StereoReprojectionCost
 {
   StereoReprojectionCost(const Sophus::SE3d &camera_from_world,
                          const StereoObservation &observation,
-                         double baseline) :
+                         double stereo_baseline) :
     rotation(camera_from_world.rotationMatrix()),
     translation(camera_from_world.translation()), measurement(observation),
-    baseline(baseline)
+    baseline(stereo_baseline)
   {
   }
 
