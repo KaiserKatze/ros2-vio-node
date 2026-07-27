@@ -22,7 +22,8 @@ def generate_launch_description():
     mav0_path = path_home / "EuRoC_MAV_Datasets" / "V2_01_easy" / "mav0"
     truth_path = mav0_path / "state_groundtruth_estimate0"
     path_truth_csv = str(truth_path / "data.csv")
-    path_stereo_csv = str(path_workdir / "estimated_trajectory.csv")
+    # path_stereo_csv = str(path_workdir / "estimated_trajectory.csv")
+    path_stereo_csv = str(path_workdir / "trajectory_tum.txt")
 
     # 使用 GDB 查错
     prefix = ["xterm -fa 'Monospace' -fs 16 -e gdb -ex run --args"] if debug else []
@@ -40,8 +41,8 @@ def generate_launch_description():
                 {
                     "csv_file": path_stereo_csv,
                     "topic_name": "/traj/stereo_est",
-                    "skip_header": True,
-                    "delim": ",",
+                    "skip_header": path_stereo_csv.endswith(".csv"),
+                    "delim": "," if path_stereo_csv.endswith(".csv") else " ",
                 }
             ],
             prefix=prefix,
