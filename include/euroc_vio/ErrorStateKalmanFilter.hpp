@@ -6,10 +6,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <functional>
+#include <iterator>
 #include <map>
-#include <meta>
 #include <print>
 #include <ranges>
+#include <span>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -65,8 +67,11 @@ public:
     Vector3 accelerometer_bias_{Vector3::Zero()};
     // 陀螺仪零偏
     Vector3 gyroscope_bias_{Vector3::Zero()};
-    // 重力加速度
-    Vector3 gravity_{-Vector3::UnitZ()};
+    // 重力加速度 (世界坐标系; 单位: m/s^2, 默认取标准重力模长)
+    // 调用者应根据实际场景通过 SetNominalState 提供更精确的初值
+    // 地球表面重力加速度取值范围是 9.7639 到 9.8337 m/s^2
+    // 那么重力加速度的协方差矩阵就应该取为 0.04*I
+    Vector3 gravity_{static_cast<value_type>(-9.8) * Vector3::UnitZ()};
 
     auto GetPosition() const noexcept -> Vector3
     {
@@ -106,8 +111,10 @@ public:
     // 经过立体矫正后，右目相机的 3x4 投影矩阵
     ProjectionMatrix proj_right_{ProjectionMatrix::Zero()};
     // 经过立体矫正后，左目相机相对于体坐标系的变换矩阵 $T_{BS}$ (假设刚性不变)
-    //    [ r^{pi}_i ; 1 ] = T_{BS} * [ r^{pv}_v ; 1 ]
-    //    T_{BS} = [ C_{iv}, r^{vi}_i ; 0, 1 ]
+    //    记 B 为体坐标系(IMU)、S 为左目相机坐标系、P 为空间点，则
+    //        [ r^{PB}_B ; 1 ] = T_{BS} * [ r^{PS}_S ; 1 ]
+    //        T_{BS} = [ C_{BS}, r^{SB}_B ; 0, 1 ]
+    //    其中 $C_{BS}$ 将相机坐标旋转至体坐标，$r^{SB}_B$ 为相机原点在体坐标系下的位置
     Pose transform_cam0_{};
   };
 
@@ -158,11 +165,9 @@ private:
   {
     // 当前帧、原始 IMU 数据 (未作零偏矫正)
     DatumImu raw_imu_datum_;
-    // 上一帧、经过零偏矫正的 IMU 数据
-    DatumImu last_imu_datum_;
     // 名义状态变量
     NominalStateVariable nominal_;
-    // 过程噪声的协方差矩阵
+    // 误差状态协方差矩阵
     TransitionMatrix error_state_covariance_;
 
     auto GetTimestamp() const noexcept
@@ -230,55 +235,38 @@ private:
     }
 
     /**
-     * @brief 根据时间戳查找历史状态。
+     * @brief 查找不晚于给定时间戳的最近历史状态（向下取整）。
      *
      * @param timestamp Unix 时间戳。
-     * @return 找到返回对应迭代器；未找到返回 End()。
+     * @return 找到返回对应迭代器；若时间戳晚于所有历史状态，钳位到最新一条；
+     *         若缓冲区为空，或时间戳早于最早的历史状态，返回 end()。
      */
     [[nodiscard]]
     iterator Find(std::int64_t timestamp) noexcept
     {
       auto it{std::ranges::lower_bound(buffer_, timestamp, std::less<>(),
                                        &HistoryState::GetTimestamp)};
-      if (it == buffer_.begin())
-      {
-        return buffer_.begin();
-      }
       if (it == buffer_.end())
       {
-        return std::prev(buffer_.end());
+        // 时间戳晚于所有历史状态时，钳位到最新一条
+        return buffer_.empty() ? buffer_.end() : std::prev(buffer_.end());
       }
-      if (it->GetTimestamp() > timestamp)
+      if (it->GetTimestamp() == timestamp)
       {
-        return std::prev(it);
+        return it;
       }
-      return it;
+      if (it == buffer_.begin())
+      {
+        // 时间戳早于最早的历史状态，视为未找到
+        return buffer_.end();
+      }
+      return std::prev(it);
     }
 
-    /**
-     * @brief const 版本时间戳查找。
-     *
-     * @param timestamp Unix 时间戳。
-     * @return 找到返回对应常量迭代器；未找到返回 End()。
-     */
     [[nodiscard]]
-    const_iterator Find(std::int64_t timestamp) const noexcept
+    iterator end() noexcept
     {
-      auto it{std::ranges::lower_bound(buffer_, timestamp, std::less<>(),
-                                       &HistoryState::GetTimestamp)};
-      if (it == buffer_.cbegin())
-      {
-        return buffer_.cbegin();
-      }
-      if (it == buffer_.cend())
-      {
-        return std::prev(buffer_.cend());
-      }
-      if (it->GetTimestamp() > timestamp)
-      {
-        return std::prev(it);
-      }
-      return it;
+      return buffer_.end();
     }
 
     [[nodiscard]]
@@ -387,7 +375,12 @@ private:
 #pragma region INITIALIZATION
 
 public:
-  ErrorStateKalmanFilter() {}
+  /**
+   * @brief 默认构造函数。
+   * @note 委托至带 Config 的构造函数，
+   *       保证历史缓冲区容量非零（否则回滚/重放机制整体失效）。
+   */
+  ErrorStateKalmanFilter() : ErrorStateKalmanFilter(Config{}) {}
 
   /**
    * @brief 构造函数。
@@ -483,6 +476,13 @@ public:
     nominal_state_.gyroscope_bias_     = Vector3::Zero();
     nominal_state_.gravity_            = gravity_body;
     prev_pose_                         = nominal_state_.pose_;
+
+    // 既然选择由重力向量吸收初始姿态的不确定性，
+    // 就必须同步放大重力误差块的初始协方差，
+    // 否则滤波器会对这一并不可靠的先验过度自信、阻碍初期收敛
+    // (约对应 ±2° 的初始倾斜角误差: (9.81 * sin(2°))^2 ≈ 0.117)
+    error_state_covariance_.template block<3, 3>(15, 15)
+        = Matrix3::Identity() * static_cast<value_type>(0.12);
   }
 
 #pragma endregion
@@ -523,21 +523,22 @@ public:
 
 #pragma region WORLD_ANGULAR_VELOCITY_AND_LINEAR_ACCELERATION
 
-    // 假设上一帧 IMU 数据 `last_imu_datum_` 中的角速度、线加速度都已经去除零偏
-    Vector3 unbias_gyro_prev{last_imu_datum_.angular_velocity_};
-    Vector3 unbias_acc_prev{last_imu_datum_.linear_acceleration_};
+    // `last_imu_datum_` 缓存的是上一帧原始 IMU 数据（未作零偏矫正），
+    // 上一帧与当前帧统一使用当前名义零偏进行矫正；
+    // 这样在观测更新修正零偏以后，上一帧数据也能以最新零偏重新矫正，
+    // 不会残留由过期零偏矫正的数据
+    Vector3 unbias_gyro_prev{last_imu_datum_.angular_velocity_
+                             - nominal_state_.gyroscope_bias_};
+    Vector3 unbias_acc_prev{last_imu_datum_.linear_acceleration_
+                            - nominal_state_.accelerometer_bias_};
 
     // 当前帧 IMU 数据 imu_datum 去除零偏
     Vector3 unbias_gyro_curr{imu_datum->angular_velocity_
                              - nominal_state_.gyroscope_bias_};
     Vector3 unbias_acc_curr{imu_datum->linear_acceleration_
                             - nominal_state_.accelerometer_bias_};
-    // 保存当前帧 IMU 数据
-    last_imu_datum_ = DatumImu{
-        imu_datum->timestamp_,
-        unbias_gyro_curr,
-        unbias_acc_curr,
-    };
+    // 缓存当前帧原始 IMU 数据
+    last_imu_datum_ = *imu_datum;
 
     Vector3 omega_m{static_cast<value_type>(0.5)
                     * (unbias_gyro_prev + unbias_gyro_curr)};
@@ -640,7 +641,14 @@ public:
     };
     Vector3 angular_displacement{d_attitude.log()};
 
-    JacobiMeasurementFast H{GetMeasurementJacobiFast(angular_displacement)};
+    // 由 IMU 数据计算得到的相邻两帧间平移 (上一帧位姿视为常量)
+    [[maybe_unused]]
+    Vector3 delta_position{
+        nominal_state_.pose_.translation() - prev_pose_.translation(),
+    };
+
+    JacobiMeasurementFast H{GetMeasurementJacobiFast(angular_displacement,
+                                                     delta_position)};
     CovarianceMeasurementFast V{GetMeasurementCovarianceFast()};
     KalmanGainFast K{GetKalmanGain(error_state_covariance_, H, V)};
 
@@ -651,9 +659,6 @@ public:
                                 - angular_displacement};
 #else
     // 由 IMU 数据计算得到的平移方向
-    Vector3 delta_position{
-        nominal_state_.pose_.translation() - prev_pose_.translation(),
-    };
     value_type delta_position_norm{delta_position.norm()};
     Vector3 normalized_translation{Vector3::Zero()};
     if (delta_position_norm > static_cast<value_type>(1e-6))
@@ -679,12 +684,26 @@ public:
     last_cam_time_ = monocular_datum->timestamp_;
   }
 
+  /**
+   * @brief 每当收到新的双目视觉观测时，回滚至观测时刻、执行序列化测量更新，
+   *        再重放 IMU 数据回到当前时刻。
+   * @param timestamp 双目图像帧时间戳。
+   * @param obs 双目观测集合。
+   * @note 调用者必须保证 obs 按 feature_id_ 升序排列且无重复。
+   */
   void StereoUpdate(std::int64_t timestamp,
                     std::span<StereoObservation<value_type>> obs) noexcept
   {
     ++vision_frame_count_;
 
-    typename HistoryBuffer::const_iterator itr{FindHistoryIndex(timestamp)};
+    typename HistoryBuffer::iterator itr{FindHistoryIndex(timestamp)};
+    const bool skip_rollback{itr == history_buffer_.end()
+                             && !history_buffer_.Empty()};
+    if (skip_rollback)
+    {
+      std::print(stderr, "[WARN] 双目观测时间戳早于历史缓冲区，"
+                         "跳过回滚，直接在当前状态上执行测量更新\n");
+    }
     RollbackToHistory(itr);
 
     UpdateLandmarks(timestamp, obs);
@@ -694,6 +713,12 @@ public:
     {
       auto landmark_id{ob.feature_id_};
       const auto landmark_it{landmark_database_.find(landmark_id)};
+      // 本帧观测到的路标可能已在 RemoveLostLandmarks 中
+      // 因投影深度非正而被删除，必须判空后再解引用
+      if (landmark_it == landmark_database_.end())
+      {
+        continue;
+      }
       const Landmark &landmark{landmark_it->second};
 
       // 防范自反馈
@@ -705,8 +730,6 @@ public:
       {
         continue;
       }
-
-      has_valid_update = true;
 
       const auto &landmark_pos{landmark.position_};
       JacobiMeasurementStereo H{GetMeasurementJacobiStereo(landmark_pos)};
@@ -724,6 +747,18 @@ public:
       Vector4 residual{z_meas - z_pred};
       // 序列化更新误差状态
       Vector4 effective_residual{residual - H * error_state_};
+
+      // 卡方门限检验 (自由度=4)，剔除误匹配等野值观测
+      const value_type chi2{GetMahalanobisDistanceSquared(
+          error_state_covariance_, H, V, effective_residual
+      )};
+      if (chi2 > chi2_threshold_stereo_)
+      {
+        continue;
+      }
+
+      has_valid_update = true;
+
       // 计算卡尔曼增益
       KalmanGainStereo K{GetKalmanGain(error_state_covariance_, H, V)};
       // 累加状态误差
@@ -820,8 +855,6 @@ private:
     HistoryState history_state;
     // 保存当前帧、未经零偏校正的原始 IMU 数据
     history_state.raw_imu_datum_ = imu_datum;
-    // 保存上一帧、经过零偏矫正的 IMU 数据
-    history_state.last_imu_datum_ = last_imu_datum_;
     // 保存当前名义状态
     history_state.nominal_ = nominal_state_;
     // 保存当前误差协方差
@@ -832,11 +865,12 @@ private:
 
   /**
    * @brief 根据时间戳查找历史状态。
-   * @return 返回历史状态的指针
+   * @return 返回不晚于该时间戳的最近历史状态的迭代器；
+   *         若缓冲区为空或时间戳早于最早历史状态，返回 end()。
    */
   [[nodiscard]]
-  typename HistoryBuffer::const_iterator
-  FindHistoryIndex(std::int64_t timestamp) const noexcept
+  typename HistoryBuffer::iterator
+  FindHistoryIndex(std::int64_t timestamp) noexcept
   {
     return history_buffer_.Find(timestamp);
   }
@@ -844,31 +878,38 @@ private:
   /**
    * @brief 回滚到指定历史状态
    */
-  void
-  RollbackToHistory(const typename HistoryBuffer::const_iterator &itr) noexcept
+  void RollbackToHistory(const typename HistoryBuffer::iterator &itr) noexcept
   {
-    if (itr == history_buffer_.cend())
+    if (itr == history_buffer_.end())
     {
       return;
     }
     nominal_state_          = itr->nominal_;
     error_state_covariance_ = itr->error_state_covariance_;
     last_imu_time_          = itr->raw_imu_datum_.timestamp_;
-    last_imu_datum_         = itr->last_imu_datum_;
+    last_imu_datum_         = itr->raw_imu_datum_;
   }
 
   /**
-   * @brief 从 index+1 开始重新积分 IMU
+   * @brief 从 itr+1 开始重新积分 IMU，并将校正后的状态回写历史缓冲区。
+   *
+   * @details
+   * 回写是必要的：若不回写，itr 之后的历史条目仍保存本次观测校正前的
+   * 名义状态与协方差，下一次视觉观测回滚到这些条目时会恢复过期状态，
+   * 导致本次测量更新被静默丢弃。
    */
-  void ReplayHistory(typename HistoryBuffer::const_iterator itr) noexcept
+  void ReplayHistory(typename HistoryBuffer::iterator itr) noexcept
   {
-    if (itr == history_buffer_.cend())
+    if (itr == history_buffer_.end())
     {
       return;
     }
-    for (++itr; itr != history_buffer_.cend(); ++itr)
+    for (++itr; itr != history_buffer_.end(); ++itr)
     {
       ImuUpdate(&itr->raw_imu_datum_, false);
+      // 将校正后的滤波器状态回写至历史条目
+      itr->nominal_                = nominal_state_;
+      itr->error_state_covariance_ = error_state_covariance_;
     }
   }
 
@@ -878,19 +919,18 @@ private:
    * @details
    * StereoUpdate() 完成所有 Feature 匹配以后调用。
    *
+   * @note 前提条件：obs 必须按 feature_id_ 升序排列且无重复
+   *       （本函数与有序 map 做归并遍历）。
+   *
    * 状态转移：
    *
-   * New
-   *    ├── 连续观测>=3帧 ----------> Active
-   *    └── 本帧丢失 ---------------> Lost
-   *
-   * Active
-   *    ├── 本帧继续观测 -----------> Active
-   *    └── 本帧未观测 -------------> Lost
+   * New / Active / Lost
+   *    ├── 本帧观测到，且连续观测>=3帧 ------> Active
+   *    ├── 本帧观测到，连续观测不足3帧 ------> 保持原状态，累计观测计数
+   *    └── 本帧未观测到 --------------------> Lost（清零观测计数）
    *
    * Lost
-   *    ├── 再次观测 ---------------> Active
-   *    └── 连续丢失>20帧 ---------> Erased
+   *    └── 连续丢失>20帧 或 位于相机后方 ----> 从数据库删除
    */
   void UpdateLandmarks(std::int64_t timestamp,
                        std::span<StereoObservation<value_type>> obs)
@@ -901,6 +941,10 @@ private:
     {
       return;
     }
+
+    assert((std::ranges::is_sorted(
+        obs, {}, &StereoObservation<value_type>::feature_id_
+    )));
 
     auto landmark_it{landmark_database_.begin()};
     const auto landmark_end{landmark_database_.end()};
@@ -943,6 +987,17 @@ private:
       landmark.lost_count_     = 0;
       landmark.observed_count_ = 1;
       landmark_database_.put(std::move(landmark));
+    }
+
+    // id 大于最后一个观测的路标同样属于“本帧未观测到”，
+    // 必须一并标记丢失（obs 为空时，所有路标都会走到这里），
+    // 否则这部分路标的 lost_count_ 永远不会增长、无法被淘汰
+    for (; landmark_it != landmark_end; ++landmark_it)
+    {
+      Landmark &landmark{landmark_it->second};
+      landmark.lost_count_ += 1;
+      landmark.observed_count_ = 0;
+      landmark.status_         = LandmarkStatus::Lost;
     }
 
     RemoveLostLandmarks();
@@ -1191,11 +1246,11 @@ private:
         (gyroscope_random_walk_ * gyroscope_random_walk_) * dt,
     };
     // 将 $V_i$, $\Theta_i$, $A_i$, $\Omega_i$ 填入系统过程噪声协方差矩阵中
-    template for (int i = 1;
-                  value_type var : {var_v, var_theta, var_ba, var_bg})
+    const value_type vars[]{0.0, var_v, var_theta, var_ba, var_bg};
+    for (int i = 1; i <= 4; ++i)
     {
+      value_type var{vars[i]};
       Q.template block<3, 3>(3 * i, 3 * i) = var * Matrix3::Identity();
-      ++i;
     }
     return Q;
   }
@@ -1203,10 +1258,14 @@ private:
   /**
    * @brief 计算测量函数的雅可比矩阵
    * @param angular_displacement 利用 IMU 数据估计得到的相邻两个图像帧间的角位移
+   * @param delta_position 利用 IMU 数据估计得到的相邻两个图像帧间的平移
+   *        （世界坐标系，上一帧位姿视为常量）
    */
   [[nodiscard]]
-  JacobiMeasurementFast
-  GetMeasurementJacobiFast(const Vector3 &angular_displacement) const noexcept
+  JacobiMeasurementFast GetMeasurementJacobiFast(
+      const Vector3 &angular_displacement,
+      [[maybe_unused]] const Vector3 &delta_position
+  ) const noexcept
   {
     JacobiMeasurementFast result{JacobiMeasurementFast::Zero()};
 
@@ -1215,15 +1274,18 @@ private:
         = Attitude::leftJacobianInverse(-angular_displacement);
 
 #if (!ONLY_USE_ANGULAR_DISPLACEMENT)
-    auto velocity_norm{nominal_state_.linear_velocity_.norm()};
-    if (velocity_norm > static_cast<value_type>(1e-6))
+    // 测量量是单位化的帧间平移 $t = \Delta p / \|\Delta p\|$，
+    // 其中 $\Delta p = p - p_prev$ 且 $p_prev$ 视为常量，
+    // 故应对当前位置误差求导 ($\partial\Delta p / \partial\delta p = I$)：
+    //    $\partial t / \partial\delta p = (I - t t^T) / \|\Delta p\|$
+    auto delta_position_norm{delta_position.norm()};
+    if (delta_position_norm > static_cast<value_type>(1e-6))
     {
-      auto velocity_direction{nominal_state_.linear_velocity_ / velocity_norm};
-      // 单位化平移向量对线速度的导数
-      result.template block<3, 3>(3, 3)
+      auto translation_direction{delta_position / delta_position_norm};
+      result.template block<3, 3>(3, 0)
           = (Matrix3::Identity()
-             - velocity_direction * velocity_direction.transpose())
-            / velocity_norm;
+             - translation_direction * translation_direction.transpose())
+            / delta_position_norm;
     }
 #endif
     return result;
@@ -1254,8 +1316,34 @@ private:
   }
 
   /**
+   * @brief 计算新息（残差）协方差矩阵 S = H * P * H^T + V。
+   * @param P 误差状态协方差矩阵
+   * @param H 测量函数的雅可比矩阵
+   * @param V 测量噪声的协方差矩阵
+   * @return 新息协方差矩阵 S 矩阵
+   */
+  template <class JacobiMeasurement, class CovarianceMeasurement>
+  [[nodiscard]]
+  static auto GetInnovationCovariance(const TransitionMatrix &P,
+                                      const JacobiMeasurement &H,
+                                      const CovarianceMeasurement &V) noexcept
+    requires(
+        static_cast<int>(TransitionMatrix::RowsAtCompileTime)
+            == static_cast<int>(TransitionMatrix::ColsAtCompileTime)
+        && static_cast<int>(JacobiMeasurement::RowsAtCompileTime)
+               == static_cast<int>(CovarianceMeasurement::RowsAtCompileTime)
+        && static_cast<int>(JacobiMeasurement::ColsAtCompileTime)
+               == static_cast<int>(TransitionMatrix::RowsAtCompileTime)
+        && static_cast<int>(CovarianceMeasurement::RowsAtCompileTime)
+               == static_cast<int>(CovarianceMeasurement::ColsAtCompileTime)
+    )
+  {
+    return H * P * H.transpose() + V;
+  }
+
+  /**
    * @brief 求解卡尔曼增益。
-   * @param P 过程噪声的协方差矩阵
+   * @param P 误差状态协方差矩阵
    * @param H 测量函数的雅可比矩阵
    * @param V 测量噪声的协方差矩阵
    */
@@ -1277,14 +1365,40 @@ private:
                == static_cast<int>(CovarianceMeasurement::ColsAtCompileTime)
     )
   {
-    auto hphv{H * P * H.transpose() + V};
-    return hphv.ldlt().solve(H * P.transpose()).transpose();
-    // return P * H.transpose() * hphv.inverse();
+    const auto innovation_cov{GetInnovationCovariance(P, H, V)};
+    return innovation_cov.ldlt().solve(H * P.transpose()).transpose();
+    // return P * H.transpose() * innovation_cov.inverse();
   }
 
   /**
-   * @brief 使用 Joseph 稳定形式更新过程噪声的协方差矩阵。
-   * @param P 过程噪声的协方差矩阵
+   * @brief 计算残差的马氏距离平方（即卡方统计量），用于异常值检测。
+   * @param P 误差状态协方差矩阵
+   * @param H 测量雅可比矩阵
+   * @param V 测量噪声协方差矩阵
+   * @param residual 测量残差向量
+   * @return 标量值，即 residual^T * (H*P*H^T + V)^(-1) * residual
+   *
+   * @note 该函数假设 V 正定，且维度匹配；内部使用 LDLT 分解以提高数值稳定性。
+   */
+  template <class JacobiMeasurement, class CovarianceMeasurement,
+            typename VectorResid>
+  [[nodiscard]]
+  static value_type
+  GetMahalanobisDistanceSquared(const TransitionMatrix &P,
+                                const JacobiMeasurement &H,
+                                const CovarianceMeasurement &V,
+                                const VectorResid &residual) noexcept
+
+  {
+    // 计算新息协方差矩阵 S = H * P * H^T + V
+    const auto innovation_cov{GetInnovationCovariance(P, H, V)};
+    // 求解 S * x = residual，并计算 residual^T * x
+    return residual.dot(innovation_cov.ldlt().solve(residual));
+  }
+
+  /**
+   * @brief 使用 Joseph 稳定形式更新误差状态协方差矩阵。
+   * @param P 误差状态协方差矩阵
    * @param K 卡尔曼增益
    * @param H 测量函数的雅可比矩阵
    * @param V 测量噪声的协方差矩阵
@@ -1306,7 +1420,7 @@ private:
    * @param a 被旋转的三维向量
    * @return 3x4 的雅可比矩阵
    */
-  [[nodiscard]]
+  [[nodiscard]] [[maybe_unused]]
   static auto Jacobian_Rotation_wrt_Quaternion(const Quaternion &q,
                                                const Vector3 &a) noexcept
   {
@@ -1332,7 +1446,7 @@ private:
    * @param q 旋转四元数
    * @return 4x3 的雅可比矩阵
    */
-  [[nodiscard]]
+  [[nodiscard]] [[maybe_unused]]
   static auto Jacobian_Quaternion_wrt_dtheta(const Quaternion &q) noexcept
   {
     using RetType = Eigen::Matrix<value_type, 4, 3>;
@@ -1434,6 +1548,9 @@ public:
   value_type confidence_angular_displacement_{1e-4};
   // 单目视觉估计平移方向置信度
   value_type confidence_normalized_translation_{1e-4};
+  // 双目观测的卡方门限 (自由度=4, 显著性水平 0.05 的分位数)
+  // 用于剔除误匹配等野值观测
+  value_type chi2_threshold_stereo_{9.487729};
 
 #pragma endregion
 
@@ -1465,7 +1582,7 @@ private:
   std::uint32_t vision_frame_count_{0};
   // 上一帧图像帧的姿态
   Pose prev_pose_{};
-  // 上一帧 IMU 数据的缓存结构
+  // 上一帧原始 IMU 数据的缓存 (未作零偏矫正，使用时以当前名义零偏矫正)
   DatumImu last_imu_datum_{};
   // 历史状态缓冲区
   HistoryBuffer history_buffer_{};
