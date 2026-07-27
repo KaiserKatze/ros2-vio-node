@@ -32,6 +32,7 @@
 #include <Eigen/Dense>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -76,7 +77,8 @@ InitializationMode ParseInitializationValue(std::string_view value)
 
 struct CommandLineOptions
 {
-  fs::path dataset_root                  = "EuRoC_MAV_Datasets/V2_01_easy/mav0";
+  fs::path dataset_root = fs::path{std::getenv("HOME")} / "EuRoC_MAV_Datasets"
+                          / "V2_01_easy" / "mav0";
   InitializationMode initialization_mode = InitializationMode::kStaticImu;
   double initial_time_offset      = 0; // 图像时刻 + t_d = 对应的 IMU 时刻 (秒)
   fs::path output_trajectory_path = "trajectory_tum.txt";
