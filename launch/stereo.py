@@ -75,6 +75,7 @@ def generate_launch_description():
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to setup evo virtual environment: {e}")
             # 如果失败，设置 use_evo = False
+            global use_evo
             use_evo = False
             logger.warning("Skipping evo steps due to setup failure.")
 
