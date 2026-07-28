@@ -34,6 +34,8 @@ def generate_launch_description():
     # path_stereo_raw = path_workdir / "estimated_trajectory.csv"
     path_stereo_raw = path_workdir / "trajectory_tum.txt"
 
+    logger.info(f"path_stereo_raw={str(path_stereo_raw)}")
+
     # 参考 EvoSim3.hpp, 借助 python 模块 evo 完成轨迹变换与误差评估:
     #   1. 真值轨迹 (EuRoC CSV) 转换为 TUM 格式, 作为参考轨迹;
     #   2. evo_traj --align 对估计轨迹执行 SE(3) Umeyama 对齐
@@ -195,16 +197,25 @@ def generate_launch_description():
     # 注意: evo_traj 子命令指定的格式会同时解析估计轨迹与 --ref 参考轨迹,
     # 因此两者格式必须一致。为避免格式混用导致解析失败, 采用如下策略:
     #   - 步骤 1: 真值 CSV → TUM (统一参考系格式)
-    #   - 步骤 2: 估计轨迹 (CSV/TUM) → 先转 TUM 再对齐
-    #     (分两步: 先 --save_as_tum 转格式, 再 evo_ape --align 对齐和计算误差)
+    #   - 步骤 2a: 估计轨迹 (CSV/TUM) → TUM (仅转格式)
+    #   - 步骤 2b: 在统一的 TUM 格式下, 参照真值执行 Umeyama 对齐
+    #   - 步骤 3: evo_ape 计算对齐后的绝对轨迹误差 APE
     evo_command = " && ".join(
         [
             f'source "{path_venv}/bin/activate"',
             # 1. 真值轨迹: EuRoC CSV -> TUM (生成 data.tum)
             f'yes y | evo_traj euroc "{path_truth_csv}" --save_as_tum',
-            # 2. 估计轨迹: 先转成 TUM 格式 (生成 <估计轨迹主干>.tum)
+            # 2a. 估计轨迹: 先转成 TUM 格式 (生成 <估计轨迹主干>.tum)
             f'yes y | evo_traj {"euroc" if path_stereo_raw.suffix == ".csv" else "tum"} "{path_stereo_raw}" --save_as_tum',
-            # 3. 对齐与误差计算: 两个 TUM 文件执行 SE(3) Umeyama 对齐并计算 APE
+            # 2b. 参照真值轨迹 (data.tum), 对估计轨迹执行 Umeyama 对齐
+            #     (求解最优旋转 SO(3) + 平移, 即 SE(3), 不含尺度),
+            #     对齐结果覆盖写回同名 .tum, 供 RViz 与真值轨迹同框对比。
+            #     注: evo_traj 的 --ref 与被处理轨迹共用子命令指定的格式,
+            #     故须在两者都已是 TUM 格式后才能对齐 (直接对 CSV 用
+            #     euroc 子命令 + TUM 参考文件会因格式混用解析失败)
+            f'yes y | evo_traj tum "{path_aligned_tum}"'
+            f' --ref="{path_truth_tum}" --align --save_as_tum',
+            # 3. 误差计算: 基于同样的 SE(3) 对齐计算 APE
             #    (rmse/mean/median/std/min/max 打印到屏幕, 结果存档为 zip)
             f'yes y | evo_ape tum "{path_truth_tum}" "{path_aligned_tum}"'
             f' --align --save_results "{path_ape_results}"',
