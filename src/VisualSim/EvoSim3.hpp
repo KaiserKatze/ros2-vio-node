@@ -77,6 +77,11 @@ public:
     );
   }
 
+  static double get_item_as_double(std::stringstream &ss)
+  {
+    return FastVIO::AbstractLoader::get_item_as_double(ss, ' ');
+  }
+
   template <typename Callback>
   void Read(Callback callback)
   {
@@ -89,21 +94,19 @@ public:
       std::stringstream ss(line);
       try
       {
-        // 读取时间戳
+        // 读取时间戳 in nanoseconds
         const std::int64_t timestamp{
-            static_cast<std::int64_t>(
-                AbstractLoader::get_item_as_double(ss, ' ')
-            ), // in nanoseconds
+            static_cast<std::int64_t>(get_item_as_double(ss))
         };
         // 读取位置
-        const double px{AbstractLoader::get_item_as_double(ss, ' ')};
-        const double py{AbstractLoader::get_item_as_double(ss, ' ')};
-        const double pz{AbstractLoader::get_item_as_double(ss, ' ')};
+        const double px{get_item_as_double(ss)};
+        const double py{get_item_as_double(ss)};
+        const double pz{get_item_as_double(ss)};
         // 读取朝向
-        const double qw{AbstractLoader::get_item_as_double(ss, ' ')};
-        const double qx{AbstractLoader::get_item_as_double(ss, ' ')};
-        const double qy{AbstractLoader::get_item_as_double(ss, ' ')};
-        const double qz{AbstractLoader::get_item_as_double(ss, ' ')};
+        const double qw{get_item_as_double(ss)};
+        const double qx{get_item_as_double(ss)};
+        const double qy{get_item_as_double(ss)};
+        const double qz{get_item_as_double(ss)};
         callback(timestamp, Eigen::Quaterniond{qw, qx, qy, qz},
                  Eigen::Vector3d{px, py, pz});
       }
