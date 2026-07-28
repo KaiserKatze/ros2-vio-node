@@ -334,6 +334,38 @@ struct GroundTruthState
   Eigen::Vector3d accel_bias = Eigen::Vector3d::Zero();
 };
 
+double LoadGroundTruthStartTime(const fs::path &dataset_root)
+{
+  const fs::path csv_path
+      = dataset_root / "state_groundtruth_estimate0" / "data.csv";
+  std::ifstream file(csv_path);
+  if (!file)
+  {
+    throw std::runtime_error("无法打开 " + csv_path.string());
+  }
+  std::string line;
+  while (std::getline(file, line))
+  {
+    if (!line.empty() && line.back() == '\r')
+    {
+      line.pop_back();
+    }
+    if (line.empty() || line.front() == '#')
+    {
+      continue;
+    }
+    std::ranges::replace(line, ',', ' ');
+    std::istringstream stream(line);
+    long long timestamp_ns = 0;
+    if (stream >> timestamp_ns)
+    {
+      return static_cast<double>(timestamp_ns) * 1e-9;
+    }
+  }
+  throw std::runtime_error("groundtruth 文件中没有有效记录: "
+                           + csv_path.string());
+}
+
 GroundTruthState LoadClosestGroundTruthState(const fs::path &dataset_root,
                                              double target_time)
 {
@@ -2142,8 +2174,7 @@ int main(int argc, char **argv)
                      ? "groundtruth 姿态"
                      : "静止 IMU");
     const std::vector<ImuSample> imu_samples = LoadImuSamples(dataset_root);
-    const std::vector<StereoFrame> stereo_frames
-        = LoadStereoFrames(dataset_root);
+    std::vector<StereoFrame> stereo_frames   = LoadStereoFrames(dataset_root);
     std::println("IMU 样本数 {}, 双目帧数 {}", imu_samples.size(),
                  stereo_frames.size());
     if (imu_samples.empty() || stereo_frames.empty())
@@ -2178,10 +2209,29 @@ int main(int argc, char **argv)
     std::println("相机-IMU 时间偏移初值 {:+.2f} ms (滤波器在线估计)",
                  options.initial_time_offset * 1e3);
 
-    const double first_frame_time = stereo_frames.front().time;
-    size_t imu_index              = 0;
+    size_t imu_index = 0;
     if (options.initialization_mode == InitializationMode::kGroundTruth)
     {
+      // groundtruth 可能晚于传感器数据开始: 抛弃 groundtruth 首条记录之前的
+      // 双目帧与 IMU 样本, 从有真值的时刻开始
+      const double groundtruth_start_time
+          = LoadGroundTruthStartTime(dataset_root);
+      const auto first_covered_frame = std::ranges::find_if(
+          stereo_frames, [groundtruth_start_time](const StereoFrame &frame)
+          { return frame.time >= groundtruth_start_time; }
+      );
+      if (first_covered_frame == stereo_frames.end())
+      {
+        throw std::runtime_error("所有双目帧都早于 groundtruth 起始时刻");
+      }
+      if (first_covered_frame != stereo_frames.begin())
+      {
+        std::println("groundtruth 起始于 t={:.3f}s, 抛弃之前的 {} 帧双目图像",
+                     groundtruth_start_time,
+                     std::distance(stereo_frames.begin(), first_covered_frame));
+        stereo_frames.erase(stereo_frames.begin(), first_covered_frame);
+      }
+      const double first_frame_time = stereo_frames.front().time;
       const GroundTruthState initial_state
           = LoadClosestGroundTruthState(dataset_root, first_frame_time);
       filter.InitializeFromGroundTruth(initial_state);
@@ -2198,6 +2248,7 @@ int main(int argc, char **argv)
     }
     else
     {
+      const double first_frame_time = stereo_frames.front().time;
       std::vector<ImuSample> initial_samples;
       while (imu_index < imu_samples.size()
              && imu_samples[imu_index].time < first_frame_time)
