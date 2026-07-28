@@ -42,7 +42,7 @@ struct AbstractLoader
     auto [ptr, ec] = std::from_chars(first, last, result);
     if (ec != std::errc())
     {
-      throw std::runtime_error{"Failed to parse int64: " + std::string(sv)};
+      throw std::runtime_error{std::format("Failed to parse int64: '{}'.", sv)};
     }
     return result;
   }
@@ -74,7 +74,8 @@ struct AbstractLoader
     auto [ptr, ec] = std::from_chars(first, last, result);
     if (ec != std::errc())
     {
-      throw std::runtime_error{"Failed to parse double: " + std::string(sv)};
+      throw std::runtime_error{std::format("Failed to parse double: '{}'.",
+                                           sv)};
     }
     return result;
   }
