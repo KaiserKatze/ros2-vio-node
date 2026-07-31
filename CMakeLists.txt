@@ -88,6 +88,14 @@ add_ros2_executable(VisualInertial src/VisualSim/VisualInertial.cpp)
 # ===== 目标： 加载生成的 CSV 或 GroundTruth 并发布为 ROS2 话题 =====
 add_ros2_executable(SimpleDataLoader src/DataLoader/DataLoader.cpp)
 
+# --- 构建选项 ---
+# 控制 src/MSCKF/msckf.cpp 中的耗时统计宏 ENABLE_TIMER (默认开启)。
+# 关闭方式:
+#   colcon build --packages-select euroc_vio --cmake-args ... -D ENABLE_TIMER=0
+# 取值兼容 1/0 与 ON/OFF, 在 src/MSCKF/CMakeLists.txt 中归一化后
+# 以 target_compile_definitions 传给 msckf 目标, 优先于源码内的默认值
+set(ENABLE_TIMER 1 CACHE STRING "msckf 耗时统计: 1 开启 (默认), 0 关闭")
+
 # ===== 目标： MSCKF 双目视觉+IMU 紧耦合里程计 (由子目录 CMakeLists.txt 构建) =====
 # add_subdirectory 会进入 src/MSCKF/CMakeLists.txt 执行:
 # 在其中完成 Ceres / glog / Threads 等私有依赖查找并定义 msckf 可执行目标;

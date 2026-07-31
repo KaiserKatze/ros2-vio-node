@@ -8,7 +8,9 @@
 // 前端: 滤波姿态(陀螺积分)辅助光流初值预测 + buildOpticalFlowPyramid 金字塔复用
 // 边缘化: 低运动冗余克隆优先剔除, 仅吸收被删克隆上的观测、轨迹保活;
 //         长轨迹经延迟初始化升级为 SLAM 特征进入状态向量 [IMU | SLAM特征 | 克隆]
-// MonocularUpdate: 融合外部单目算法输出的帧间相对旋转(高精度)与平移方向(无尺度、低精度)
+// MonocularUpdate: 融合外部单目算法输出的帧间相对旋转(高精度)与平移方向(无尺度、低精度),
+//                  数据来自 ~/vio_ws/estimated_motion_cam0.csv, 按图像时间戳查找;
+//                  流程: IMU 预测 → 克隆增广 → 单目先验融合 → 陀螺辅助光流 → 双目量测更新
 //
 // 编译 (或直接使用配套 CMakeLists.txt):
 //   g++ -std=c++2c -O3 -march=native msckf.cpp -o msckf $(pkg-config --cflags --libs opencv4 eigen3 yaml-cpp) -lceres -lglog -pthread
@@ -35,6 +37,7 @@
 #include <Eigen/Dense>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -43,8 +46,10 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <ostream>
 #include <print>
@@ -59,12 +64,109 @@
 #include <utility>
 #include <vector>
 
+#include "euroc_vio/DatumFast.hpp"
+
 namespace fs = std::filesystem;
 
 // 帧编号
 using FrameId = long;
 // 特征编号
 using FeatureId = long;
+
+// ==================== 计时工具 (评估 MonocularUpdate 对运行效率的影响) ====================
+// 用法: 分别在启用 / 不启用 MonocularUpdate (如 --mono-csv 指向不存在的文件) 的
+// 两种配置下运行, 对比 "MonocularUpdate 耗时 + 双目估计相关函数总耗时" 的报表,
+// 验证单目先验能否通过改善光流初值与线性化点降低双目部分的耗时。
+// 宏 ENABLE_TIMER 默认开启; 编译时以 -DENABLE_TIMER=0 关闭,
+// 关闭后所有计时代码退化为空操作, 完全回到无计时的业务逻辑。
+#ifndef ENABLE_TIMER
+#define ENABLE_TIMER 1
+#endif
+
+#if ENABLE_TIMER
+// 按名字累计函数调用次数与总耗时, 程序结束时打印统计报表
+class FunctionTimer
+{
+public:
+  using Clock = std::chrono::steady_clock;
+
+  // RAII 计时: 构造时记录起点, 析构时把区间耗时累加到同名条目
+  class Scope
+  {
+  public:
+    Scope(FunctionTimer &timer, std::string_view name) :
+      timer_(timer), name_(name), start_(Clock::now())
+    {
+    }
+    ~Scope()
+    {
+      timer_.Accumulate(name_, Clock::now() - start_);
+    }
+    Scope(const Scope &)            = delete;
+    Scope &operator=(const Scope &) = delete;
+
+  private:
+    FunctionTimer &timer_;
+    std::string_view name_;
+    Clock::time_point start_;
+  };
+
+  void Accumulate(std::string_view name, Clock::duration elapsed)
+  {
+    Entry &entry = entries_[std::string{name}];
+    entry.total_elapsed += elapsed;
+    ++entry.call_count;
+  }
+
+  double TotalMilliseconds(std::string_view name) const
+  {
+    const auto found = entries_.find(name);
+    return found == entries_.end()
+               ? 0.0
+               : ToMilliseconds(found->second.total_elapsed);
+  }
+
+  void PrintReport() const
+  {
+    std::println("==== 耗时统计 (ENABLE_TIMER=1) ====");
+    for (const auto &[name, entry] : entries_)
+    {
+      const double total_ms = ToMilliseconds(entry.total_elapsed);
+      std::println("  {:<32} 调用 {:6} 次  总计 {:10.2f} ms  平均 {:8.4f} ms",
+                   name, entry.call_count, total_ms,
+                   entry.call_count > 0
+                       ? total_ms / static_cast<double>(entry.call_count)
+                       : 0.0);
+    }
+  }
+
+private:
+  struct Entry
+  {
+    Clock::duration total_elapsed{};
+    long call_count = 0;
+  };
+
+  static double ToMilliseconds(Clock::duration elapsed)
+  {
+    return std::chrono::duration<double, std::milli>(elapsed).count();
+  }
+
+  // std::less<> 透明比较器: find 可直接用 string_view 查找, 免临时 string
+  std::map<std::string, Entry, std::less<>> entries_;
+};
+
+#define TIMER_CONCAT_IMPL(a, b) a##b
+#define TIMER_CONCAT(a, b) TIMER_CONCAT_IMPL(a, b)
+// 对当前作用域计时, 计入 timer 中名为 name 的条目
+#define TIME_SCOPE(timer, name)                                                \
+  const FunctionTimer::Scope TIMER_CONCAT(timed_scope_, __LINE__)              \
+  {                                                                            \
+    (timer), (name)                                                            \
+  }
+#else
+#define TIME_SCOPE(timer, name) static_cast<void>(0)
+#endif
 
 // ============================ 命令行参数 ============================
 enum class InitializationMode
@@ -95,6 +197,9 @@ struct CommandLineOptions
   InitializationMode initialization_mode = InitializationMode::kStaticImu;
   double initial_time_offset      = 0; // 图像时刻 + t_d = 对应的 IMU 时刻 (秒)
   fs::path output_trajectory_path = "trajectory_tum.txt";
+  // 外部单目算法输出: 时间戳 + 左目系相对旋转轴角 + 左目系平移方向
+  fs::path monocular_estimation_path
+      = fs::path{std::getenv("HOME")} / "vio_ws" / "estimated_motion_cam0.csv";
 };
 
 CommandLineOptions ParseCommandLine(int argc, char **argv)
@@ -139,6 +244,18 @@ CommandLineOptions ParseCommandLine(int argc, char **argv)
         throw std::runtime_error("--output 缺少取值 (轨迹文件路径)");
       }
       options.output_trajectory_path = fs::path(argv[i]);
+    }
+    else if (argument.starts_with("--mono-csv="))
+    {
+      options.monocular_estimation_path = fs::path(argument.substr(11));
+    }
+    else if (argument == "--mono-csv")
+    {
+      if (++i >= argc)
+      {
+        throw std::runtime_error("--mono-csv 缺少取值 (外部单目估计 CSV 路径)");
+      }
+      options.monocular_estimation_path = fs::path(argv[i]);
     }
     else
     {
@@ -271,7 +388,8 @@ ImuSample InterpolateImuSample(const ImuSample &before, const ImuSample &after,
 // 双目图像
 struct StereoFrame
 {
-  double time = 0;
+  double time               = 0; // 秒
+  std::int64_t timestamp_ns = 0; // 原始纳秒时间戳 (用于外部单目估计查找)
   fs::path left_image_path;
   fs::path right_image_path;
 };
@@ -346,7 +464,8 @@ std::vector<StereoFrame> LoadStereoFrames(const fs::path &dataset_root)
     {
       continue;
     }
-    StereoFrame frame{.time = static_cast<double>(timestamp_ns) * 1e-9,
+    StereoFrame frame{.time         = static_cast<double>(timestamp_ns) * 1e-9,
+                      .timestamp_ns = timestamp_ns,
                       .left_image_path
                       = dataset_root / "cam0" / "data" / file_name,
                       .right_image_path
@@ -357,6 +476,76 @@ std::vector<StereoFrame> LoadStereoFrames(const fs::path &dataset_root)
     }
   }
   return frames;
+}
+
+// ================ 外部单目算法输出的帧间相对运动 (DatumFast) ================
+
+// 时间戳匹配容差: 图像与外部估计来自同一 cam0 时间轴, 理论上应精确相等,
+// 留 0.5 ms 容差以吸收浮点/导出误差
+constexpr std::int64_t kMonocularTimestampToleranceNs = 500'000;
+
+// 在按时间戳升序排列的外部单目估计中二分查找与 timestamp_ns 最接近的记录;
+// 偏差超过容差时视为该帧无外部估计, 返回空
+std::optional<FastVIO::DatumFast>
+FindDatumFastByTimestamp(const std::vector<FastVIO::DatumFast> &data,
+                         std::int64_t timestamp_ns)
+{
+  if (data.empty())
+  {
+    return std::nullopt;
+  }
+  const auto next = std::ranges::lower_bound(data, timestamp_ns, {},
+                                             &FastVIO::DatumFast::timestamp_);
+  const FastVIO::DatumFast *closest = nullptr;
+  if (next != data.end())
+  {
+    closest = &*next;
+  }
+  if (next != data.begin())
+  {
+    const auto previous = std::prev(next);
+    if (closest == nullptr
+        || timestamp_ns - previous->timestamp_
+               < closest->timestamp_ - timestamp_ns)
+    {
+      closest = &*previous;
+    }
+  }
+  if (std::abs(closest->timestamp_ - timestamp_ns)
+      > kMonocularTimestampToleranceNs)
+  {
+    return std::nullopt;
+  }
+  return *closest;
+}
+
+// 加载外部单目估计; 文件缺失时返回空表 (MonocularUpdate 整体退化为不启用)。
+// rectified_from_raw_left: 原始左目系到矫正后左目系的旋转, 把 CSV 中在原始
+// 左目系表达的轴角/平移方向变换到滤波器克隆所在的矫正后左目系
+std::vector<FastVIO::DatumFast>
+LoadMonocularEstimations(const fs::path &estimation_csv_path,
+                         const Sophus::SO3d &rectified_from_raw_left)
+{
+  if (!fs::exists(estimation_csv_path))
+  {
+    std::println("外部单目估计文件不存在, 跳过 MonocularUpdate: '{}'",
+                 fs::absolute(estimation_csv_path).string());
+    return {};
+  }
+  if (std::ifstream probe{estimation_csv_path}; !probe)
+  {
+    throw std::runtime_error(
+        std::format("外部单目估计文件无法读取 (请检查权限): '{}'.",
+                    fs::absolute(estimation_csv_path).string())
+    );
+  }
+  std::vector<FastVIO::DatumFast> data
+      = FastVIO::DatumFast::Load(estimation_csv_path.string(),
+                                 rectified_from_raw_left);
+  std::ranges::sort(data, {}, &FastVIO::DatumFast::timestamp_);
+  std::println("外部单目估计: {} 条记录, 来自 '{}'", data.size(),
+               estimation_csv_path.string());
+  return data;
 }
 
 // 真实轨迹数据
@@ -993,6 +1182,8 @@ public:
       = 0.1; // rad, 平移方向切平面噪声 (低精度)
   static constexpr double kMinBaselineForDirection
       = 0.01; // m, 基线过短时方向量测退化
+  static constexpr double kHuberLossThreshold
+      = 0.01; // 三角化重投影残差鲁棒核阈值 (归一化平面)
 
   Msckf(const Sophus::SE3d &body_from_camera, double baseline,
         double focal_length, const ImuNoiseParameters &imu_noise,
@@ -1089,88 +1280,7 @@ public:
     imu_time_ = sample.time;
     last_imu_ = sample;
 
-    Eigen::Matrix<double, kImuErrorDim, kImuErrorDim> transition
-        = Eigen::Matrix<double, kImuErrorDim, kImuErrorDim>::Identity();
-    transition.block<3, 3>(0, 0) = Sophus::SO3d::exp(-gyro * dt).matrix();
-    transition.block<3, 3>(0, 9) = -Eigen::Matrix3d::Identity() * dt;
-    transition.block<3, 3>(3, 0)
-        = -0.5 * rotation_matrix * Sophus::SO3d::hat(accel) * dt * dt;
-    transition.block<3, 3>(3, 6)  = Eigen::Matrix3d::Identity() * dt;
-    transition.block<3, 3>(3, 12) = -0.5 * rotation_matrix * dt * dt;
-    transition.block<3, 3>(3, kGravityIndex)
-        = 0.5 * Eigen::Matrix3d::Identity() * dt * dt;
-    transition.block<3, 3>(6, 0)
-        = -rotation_matrix * Sophus::SO3d::hat(accel) * dt;
-    transition.block<3, 3>(6, 12)            = -rotation_matrix * dt;
-    transition.block<3, 3>(6, kGravityIndex) = Eigen::Matrix3d::Identity() * dt;
-
-    // OC 一致性修正 (Hesch et al.): 强制 Φ·N_k = N_{k+1}, N 为不可观子空间
-    // 全局平移列 Φ 天然满足; 绕重力偏航列需修正姿态/速度/位置对 δθ 的三个块
-    transition.block<3, 3>(0, 0)
-        = world_from_imu_rotation_.inverse().matrix() * null_rotation_.matrix();
-
-    const Eigen::Vector3d yaw_direction_in_body
-        = null_rotation_.inverse().matrix() * null_gravity_;
-    const Eigen::RowVector3d yaw_projector
-        = yaw_direction_in_body.transpose()
-          / yaw_direction_in_body.squaredNorm();
-
-    const Eigen::Matrix3d velocity_block = transition.block<3, 3>(6, 0);
-    const Eigen::Vector3d velocity_constraint
-        = Sophus::SO3d::hat(null_velocity_ - imu_velocity_) * null_gravity_;
-    transition.block<3, 3>(6, 0)
-        = velocity_block
-          - (velocity_block * yaw_direction_in_body - velocity_constraint)
-                * yaw_projector;
-
-    const Eigen::Matrix3d position_block = transition.block<3, 3>(3, 0);
-    const Eigen::Vector3d position_constraint
-        = Sophus::SO3d::hat(dt * null_velocity_ + null_position_
-                            - imu_position_)
-          * null_gravity_;
-    transition.block<3, 3>(3, 0)
-        = position_block
-          - (position_block * yaw_direction_in_body - position_constraint)
-                * yaw_projector;
-
-    Eigen::Matrix<double, kImuErrorDim, 12> noise_jacobian
-        = Eigen::Matrix<double, kImuErrorDim, 12>::Zero();
-    noise_jacobian.block<3, 3>(0, 0)  = -Eigen::Matrix3d::Identity();
-    noise_jacobian.block<3, 3>(6, 3)  = rotation_matrix;
-    noise_jacobian.block<3, 3>(9, 6)  = Eigen::Matrix3d::Identity();
-    noise_jacobian.block<3, 3>(12, 9) = Eigen::Matrix3d::Identity();
-
-    Eigen::Matrix<double, 12, 12> continuous_noise
-        = Eigen::Matrix<double, 12, 12>::Zero();
-    continuous_noise.diagonal().segment<3>(0).setConstant(
-        imu_noise_.gyro_noise_density * imu_noise_.gyro_noise_density
-    );
-    continuous_noise.diagonal().segment<3>(3).setConstant(
-        imu_noise_.accel_noise_density * imu_noise_.accel_noise_density
-    );
-    continuous_noise.diagonal().segment<3>(6).setConstant(
-        imu_noise_.gyro_random_walk * imu_noise_.gyro_random_walk
-    );
-    continuous_noise.diagonal().segment<3>(9).setConstant(
-        imu_noise_.accel_random_walk * imu_noise_.accel_random_walk
-    );
-
-    const Eigen::Matrix<double, kImuErrorDim, kImuErrorDim> discrete_noise
-        = noise_jacobian * continuous_noise * noise_jacobian.transpose() * dt;
-
-    covariance_.topLeftCorner<kImuErrorDim, kImuErrorDim>()
-        = transition * covariance_.topLeftCorner<kImuErrorDim, kImuErrorDim>()
-              * transition.transpose()
-          + discrete_noise;
-    const int clone_dim = static_cast<int>(covariance_.rows()) - kImuErrorDim;
-    if (clone_dim > 0)
-    {
-      covariance_.topRightCorner(kImuErrorDim, clone_dim)
-          = transition * covariance_.topRightCorner(kImuErrorDim, clone_dim);
-      covariance_.bottomLeftCorner(clone_dim, kImuErrorDim)
-          = covariance_.topRightCorner(kImuErrorDim, clone_dim).transpose();
-    }
-    Symmetrize();
+    PropagateImuCovariance(dt, gyro, accel, rotation_matrix);
     SaveNullLinearizationPoint();
   }
 
@@ -1190,13 +1300,60 @@ public:
     return true;
   }
 
-  // 融合外部单目算法输出的帧间相对运动 (在 ProcessFrame 之后调用)。
+  // 更新协方差矩阵，增广相机克隆。
+  // 每帧图像到来时先调用本函数, 再依次执行 MonocularUpdate / ProcessFrame。
+  void AugmentCameraClone(FrameId frame_id)
+  {
+    const Sophus::SO3d world_from_camera_rotation
+        = world_from_imu_rotation_ * body_from_camera_.so3();
+    const Eigen::Vector3d camera_position
+        = imu_position_
+          + world_from_imu_rotation_ * body_from_camera_.translation();
+
+    const int old_dim = StateDim();
+    Eigen::MatrixXd clone_jacobian
+        = Eigen::MatrixXd::Zero(kCloneErrorDim, old_dim);
+    clone_jacobian.block<3, 3>(0, 0)
+        = body_from_camera_.so3().inverse().matrix();
+    clone_jacobian.block<3, 3>(3, 0)
+        = -world_from_imu_rotation_.matrix()
+          * Sophus::SO3d::hat(body_from_camera_.translation());
+    clone_jacobian.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity();
+    // t_d 偏差使克隆位姿沿当前运动方向平移: dθ_c/dt_d = R_ci·ω, dp_c/dt_d = 相机质心的世界系速度
+    const Eigen::Vector3d angular_velocity
+        = last_imu_.angular_velocity - gyro_bias_;
+    clone_jacobian.block<3, 1>(0, kTimeOffsetIndex)
+        = body_from_camera_.so3().inverse().matrix() * angular_velocity;
+    clone_jacobian.block<3, 1>(3, kTimeOffsetIndex)
+        = imu_velocity_
+          + world_from_imu_rotation_.matrix()
+                * angular_velocity.cross(body_from_camera_.translation());
+
+    Eigen::MatrixXd augmented(old_dim + kCloneErrorDim,
+                              old_dim + kCloneErrorDim);
+    augmented.topLeftCorner(old_dim, old_dim) = covariance_;
+    augmented.bottomLeftCorner(kCloneErrorDim, old_dim)
+        = clone_jacobian * covariance_;
+    augmented.topRightCorner(old_dim, kCloneErrorDim)
+        = augmented.bottomLeftCorner(kCloneErrorDim, old_dim).transpose();
+    augmented.bottomRightCorner(kCloneErrorDim, kCloneErrorDim)
+        = clone_jacobian * covariance_ * clone_jacobian.transpose();
+    covariance_ = std::move(augmented);
+    Symmetrize();
+
+    clones_.push_back({frame_id, world_from_camera_rotation, camera_position,
+                       world_from_camera_rotation, camera_position});
+  }
+
+  // 融合外部单目算法输出的帧间相对运动。
+  // 调用时机: 当前帧克隆增广 (AugmentCameraClone) 之后、前端跟踪与 ProcessFrame
+  // 之前, 修正后的姿态可直接改善陀螺辅助光流初值与双目量测线性化点。
   // 约定 (矫正后左相机系):
   //   rotation_vector:       上一帧到当前帧的相对旋转轴角, R_上帧_from_当帧 = Exp(rVec)
   //   translation_direction: 当前光心相对上一帧光心的平移方向, 在上一帧相机系中表达 (无尺度)
   // 旋转做 3 维流形残差 (高权重), 平移只约束量测方向切平面上的 2 维分量 (低权重, 尺度自然
   // 不受约束); 两者按顺序 EKF 更新。相对位姿量测对全局平移/绕重力偏航天然满足 H·N = 0,
-  // 无需 OC 投影。上一帧克隆若已被冗余边缘化 (悬停时可能) 则跳过, 返回 false。
+  // 无需 OC 投影。上一帧克隆若缺失 (如上一帧图像读取失败) 则跳过, 返回 false。
   bool MonocularUpdate(const Eigen::Vector3d &rotation_vector,
                        const Eigen::Vector3d &translation_direction)
   {
@@ -1212,100 +1369,22 @@ public:
     {
       return false;
     }
-
-    // --- 旋转: r = Log(R̂_相对⁻¹·Exp(rVec)), H_θ上 = -R̂_相对⁻¹, H_θ当 = I ---
-    const Sophus::SO3d predicted_relative_rotation
-        = previous_clone.world_from_camera_rotation.inverse()
-          * current_clone.world_from_camera_rotation;
-    Eigen::MatrixXd rotation_jacobian = Eigen::MatrixXd::Zero(3, StateDim());
-    rotation_jacobian.block<3, 3>(0, CloneStateIndex(previous_index))
-        = -predicted_relative_rotation.inverse().matrix();
-    rotation_jacobian.block<3, 3>(0, CloneStateIndex(current_index))
-        = Eigen::Matrix3d::Identity();
-    Eigen::VectorXd rotation_residual = (predicted_relative_rotation.inverse()
-                                         * Sophus::SO3d::exp(rotation_vector))
-                                            .log();
-
-    const double rotation_noise_variance
-        = kMonocularRotationSigma * kMonocularRotationSigma;
-    bool rotation_applied = false;
-    if (PassesChiSquareGate(rotation_jacobian, rotation_residual,
-                            rotation_noise_variance))
-    {
-      ApplyEkfUpdate(std::move(rotation_jacobian), std::move(rotation_residual),
-                     rotation_noise_variance);
-      rotation_applied = true;
-    }
-
-    // --- 平移方向: 旋转更新后的最新状态上重新线性化 (克隆引用随更新自动生效) ---
-    const double direction_norm = translation_direction.norm();
-    if (direction_norm < 1e-6)
-    {
-      return rotation_applied;
-    }
-    const Eigen::Vector3d measured_direction
-        = translation_direction / direction_norm;
-
-    const Eigen::Matrix3d previous_camera_from_world
-        = previous_clone.world_from_camera_rotation.inverse().matrix();
-    const Eigen::Vector3d baseline_in_previous_camera
-        = previous_camera_from_world
-          * (current_clone.position_in_world
-             - previous_clone.position_in_world);
-    const double baseline_norm = baseline_in_previous_camera.norm();
-    if (baseline_norm < kMinBaselineForDirection)
-    {
-      return rotation_applied; // 悬停: 方向退化
-    }
-    const Eigen::Vector3d predicted_direction
-        = baseline_in_previous_camera / baseline_norm;
-
-    const Eigen::Vector3d helper = std::abs(measured_direction.z()) < 0.9
-                                       ? Eigen::Vector3d::UnitZ()
-                                       : Eigen::Vector3d::UnitX();
-    const Eigen::Vector3d tangent_basis_1
-        = measured_direction.cross(helper).normalized();
-    const Eigen::Vector3d tangent_basis_2
-        = measured_direction.cross(tangent_basis_1);
-    Eigen::Matrix<double, 2, 3> tangent_projector;
-    tangent_projector.row(0) = tangent_basis_1.transpose();
-    tangent_projector.row(1) = tangent_basis_2.transpose();
-
-    const Eigen::Matrix3d normalization_jacobian
-        = (Eigen::Matrix3d::Identity()
-           - predicted_direction * predicted_direction.transpose())
-          / baseline_norm;
-    const Eigen::Matrix<double, 2, 3> direction_jacobian
-        = tangent_projector * normalization_jacobian;
-
-    Eigen::MatrixXd translation_jacobian = Eigen::MatrixXd::Zero(2, StateDim());
-    translation_jacobian.block<2, 3>(0, CloneStateIndex(previous_index))
-        = direction_jacobian * Sophus::SO3d::hat(baseline_in_previous_camera);
-    translation_jacobian.block<2, 3>(0, CloneStateIndex(previous_index) + 3)
-        = -direction_jacobian * previous_camera_from_world;
-    translation_jacobian.block<2, 3>(0, CloneStateIndex(current_index) + 3)
-        = direction_jacobian * previous_camera_from_world;
-    Eigen::VectorXd translation_residual
-        = -(tangent_projector * predicted_direction);
-
-    const double direction_noise_variance
-        = kMonocularDirectionSigma * kMonocularDirectionSigma;
-    if (!PassesChiSquareGate(translation_jacobian, translation_residual,
-                             direction_noise_variance))
-    {
-      return rotation_applied;
-    }
-    ApplyEkfUpdate(std::move(translation_jacobian),
-                   std::move(translation_residual), direction_noise_variance);
-    return true;
+    const bool rotation_applied
+        = ApplyMonocularRotationUpdate(previous_index, current_index,
+                                       rotation_vector);
+    // 平移方向在旋转更新后的最新状态上重新线性化
+    const bool direction_applied
+        = ApplyMonocularDirectionUpdate(previous_index, current_index,
+                                        translation_direction);
+    return rotation_applied || direction_applied;
   }
 
-  // 返回需要前端删除的特征 id (量测门限判为外点的 SLAM 特征)
+  // 返回需要前端删除的特征 id (量测门限判为外点的 SLAM 特征)。
+  // 前置条件: 本帧克隆已通过 AugmentCameraClone(frame_id) 增广。
   std::vector<FeatureId>
   ProcessFrame(FrameId frame_id,
                const std::vector<FeatureTracker::TrackedFeature> &tracked)
   {
-    AugmentCameraClone(frame_id);
     std::vector<FeatureId> dropped_feature_ids;
 
     std::set<FeatureId> visible_ids;
@@ -1407,6 +1486,111 @@ private:
     covariance_ = ((covariance_ + covariance_.transpose()) * 0.5).eval();
   }
 
+  // IMU 传播的误差状态转移矩阵 (含 OC 一致性修正)
+  Eigen::Matrix<double, kImuErrorDim, kImuErrorDim>
+  BuildImuTransitionMatrix(double dt, const Eigen::Vector3d &gyro,
+                           const Eigen::Vector3d &accel,
+                           const Eigen::Matrix3d &rotation_matrix) const
+  {
+    Eigen::Matrix<double, kImuErrorDim, kImuErrorDim> transition
+        = Eigen::Matrix<double, kImuErrorDim, kImuErrorDim>::Identity();
+    transition.block<3, 3>(0, 0) = Sophus::SO3d::exp(-gyro * dt).matrix();
+    transition.block<3, 3>(0, 9) = -Eigen::Matrix3d::Identity() * dt;
+    transition.block<3, 3>(3, 0)
+        = -0.5 * rotation_matrix * Sophus::SO3d::hat(accel) * dt * dt;
+    transition.block<3, 3>(3, 6)  = Eigen::Matrix3d::Identity() * dt;
+    transition.block<3, 3>(3, 12) = -0.5 * rotation_matrix * dt * dt;
+    transition.block<3, 3>(3, kGravityIndex)
+        = 0.5 * Eigen::Matrix3d::Identity() * dt * dt;
+    transition.block<3, 3>(6, 0)
+        = -rotation_matrix * Sophus::SO3d::hat(accel) * dt;
+    transition.block<3, 3>(6, 12)            = -rotation_matrix * dt;
+    transition.block<3, 3>(6, kGravityIndex) = Eigen::Matrix3d::Identity() * dt;
+
+    // OC 一致性修正 (Hesch et al.): 强制 Φ·N_k = N_{k+1}, N 为不可观子空间
+    // 全局平移列 Φ 天然满足; 绕重力偏航列需修正姿态/速度/位置对 δθ 的三个块
+    transition.block<3, 3>(0, 0)
+        = world_from_imu_rotation_.inverse().matrix() * null_rotation_.matrix();
+
+    const Eigen::Vector3d yaw_direction_in_body
+        = null_rotation_.inverse().matrix() * null_gravity_;
+    const Eigen::RowVector3d yaw_projector
+        = yaw_direction_in_body.transpose()
+          / yaw_direction_in_body.squaredNorm();
+
+    const Eigen::Matrix3d velocity_block = transition.block<3, 3>(6, 0);
+    const Eigen::Vector3d velocity_constraint
+        = Sophus::SO3d::hat(null_velocity_ - imu_velocity_) * null_gravity_;
+    transition.block<3, 3>(6, 0)
+        = velocity_block
+          - (velocity_block * yaw_direction_in_body - velocity_constraint)
+                * yaw_projector;
+
+    const Eigen::Matrix3d position_block = transition.block<3, 3>(3, 0);
+    const Eigen::Vector3d position_constraint
+        = Sophus::SO3d::hat(dt * null_velocity_ + null_position_
+                            - imu_position_)
+          * null_gravity_;
+    transition.block<3, 3>(3, 0)
+        = position_block
+          - (position_block * yaw_direction_in_body - position_constraint)
+                * yaw_projector;
+    return transition;
+  }
+
+  // IMU 传播的离散过程噪声
+  Eigen::Matrix<double, kImuErrorDim, kImuErrorDim>
+  BuildImuDiscreteNoise(double dt, const Eigen::Matrix3d &rotation_matrix) const
+  {
+    Eigen::Matrix<double, kImuErrorDim, 12> noise_jacobian
+        = Eigen::Matrix<double, kImuErrorDim, 12>::Zero();
+    noise_jacobian.block<3, 3>(0, 0)  = -Eigen::Matrix3d::Identity();
+    noise_jacobian.block<3, 3>(6, 3)  = rotation_matrix;
+    noise_jacobian.block<3, 3>(9, 6)  = Eigen::Matrix3d::Identity();
+    noise_jacobian.block<3, 3>(12, 9) = Eigen::Matrix3d::Identity();
+
+    Eigen::Matrix<double, 12, 12> continuous_noise
+        = Eigen::Matrix<double, 12, 12>::Zero();
+    continuous_noise.diagonal().segment<3>(0).setConstant(
+        imu_noise_.gyro_noise_density * imu_noise_.gyro_noise_density
+    );
+    continuous_noise.diagonal().segment<3>(3).setConstant(
+        imu_noise_.accel_noise_density * imu_noise_.accel_noise_density
+    );
+    continuous_noise.diagonal().segment<3>(6).setConstant(
+        imu_noise_.gyro_random_walk * imu_noise_.gyro_random_walk
+    );
+    continuous_noise.diagonal().segment<3>(9).setConstant(
+        imu_noise_.accel_random_walk * imu_noise_.accel_random_walk
+    );
+    return noise_jacobian * continuous_noise * noise_jacobian.transpose() * dt;
+  }
+
+  // 用状态转移矩阵与过程噪声传播协方差 (IMU 块及其与克隆的互协方差)
+  void PropagateImuCovariance(double dt, const Eigen::Vector3d &gyro,
+                              const Eigen::Vector3d &accel,
+                              const Eigen::Matrix3d &rotation_matrix)
+  {
+    const Eigen::Matrix<double, kImuErrorDim, kImuErrorDim> transition
+        = BuildImuTransitionMatrix(dt, gyro, accel, rotation_matrix);
+    const Eigen::Matrix<double, kImuErrorDim, kImuErrorDim> discrete_noise
+        = BuildImuDiscreteNoise(dt, rotation_matrix);
+
+    covariance_.topLeftCorner<kImuErrorDim, kImuErrorDim>()
+        = transition * covariance_.topLeftCorner<kImuErrorDim, kImuErrorDim>()
+              * transition.transpose()
+          + discrete_noise;
+    const int clone_dim = static_cast<int>(covariance_.rows()) - kImuErrorDim;
+    if (clone_dim > 0)
+    {
+      covariance_.topRightCorner(kImuErrorDim, clone_dim)
+          = transition * covariance_.topRightCorner(kImuErrorDim, clone_dim);
+      covariance_.bottomLeftCorner(clone_dim, kImuErrorDim)
+          = covariance_.topRightCorner(kImuErrorDim, clone_dim).transpose();
+    }
+    Symmetrize();
+  }
+
   // 根据帧编号，检索克隆在队列中的序号
   int FindCloneIndex(FrameId frame_id) const
   {
@@ -1431,50 +1615,6 @@ private:
       }
     }
     return -1;
-  }
-
-  // 更新协方差矩阵，增广相机克隆
-  void AugmentCameraClone(FrameId frame_id)
-  {
-    const Sophus::SO3d world_from_camera_rotation
-        = world_from_imu_rotation_ * body_from_camera_.so3();
-    const Eigen::Vector3d camera_position
-        = imu_position_
-          + world_from_imu_rotation_ * body_from_camera_.translation();
-
-    const int old_dim = StateDim();
-    Eigen::MatrixXd clone_jacobian
-        = Eigen::MatrixXd::Zero(kCloneErrorDim, old_dim);
-    clone_jacobian.block<3, 3>(0, 0)
-        = body_from_camera_.so3().inverse().matrix();
-    clone_jacobian.block<3, 3>(3, 0)
-        = -world_from_imu_rotation_.matrix()
-          * Sophus::SO3d::hat(body_from_camera_.translation());
-    clone_jacobian.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity();
-    // t_d 偏差使克隆位姿沿当前运动方向平移: dθ_c/dt_d = R_ci·ω, dp_c/dt_d = 相机质心的世界系速度
-    const Eigen::Vector3d angular_velocity
-        = last_imu_.angular_velocity - gyro_bias_;
-    clone_jacobian.block<3, 1>(0, kTimeOffsetIndex)
-        = body_from_camera_.so3().inverse().matrix() * angular_velocity;
-    clone_jacobian.block<3, 1>(3, kTimeOffsetIndex)
-        = imu_velocity_
-          + world_from_imu_rotation_.matrix()
-                * angular_velocity.cross(body_from_camera_.translation());
-
-    Eigen::MatrixXd augmented(old_dim + kCloneErrorDim,
-                              old_dim + kCloneErrorDim);
-    augmented.topLeftCorner(old_dim, old_dim) = covariance_;
-    augmented.bottomLeftCorner(kCloneErrorDim, old_dim)
-        = clone_jacobian * covariance_;
-    augmented.topRightCorner(old_dim, kCloneErrorDim)
-        = augmented.bottomLeftCorner(kCloneErrorDim, old_dim).transpose();
-    augmented.bottomRightCorner(kCloneErrorDim, kCloneErrorDim)
-        = clone_jacobian * covariance_ * clone_jacobian.transpose();
-    covariance_ = std::move(augmented);
-    Symmetrize();
-
-    clones_.push_back({frame_id, world_from_camera_rotation, camera_position,
-                       world_from_camera_rotation, camera_position});
   }
 
   // 三角化，计算路标点三维坐标
@@ -1522,16 +1662,30 @@ private:
                             first_observation.left_normalized.y() * depth,
                             depth);
 
+    ceres::Problem::Options problem_options;
+    // Ceres (含 2.2) 的 AddResidualBlock 只接受裸指针且默认接管所有权;
+    // 这里显式设置 DO_NOT_TAKE_OWNERSHIP, 由 unique_ptr/栈对象管理生命周期,
+    // 避免"裸 new 无对应 delete"的隐患
+    problem_options.cost_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
+    problem_options.loss_function_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
     // 对路标点进行非线性优化
-    ceres::Problem problem;
+    ceres::Problem problem{problem_options};
+
+    using StereoCostFunction
+        = ceres::AutoDiffCostFunction<StereoReprojectionCost, 4, 3>;
+    std::vector<std::unique_ptr<StereoCostFunction>> cost_functions;
+    cost_functions.reserve(observations.size());
+    ceres::HuberLoss huber_loss{kHuberLossThreshold};
     for (const auto &[camera_from_world, observation] : observations)
     {
-      auto *cost
-          = new ceres::AutoDiffCostFunction<StereoReprojectionCost, 4, 3>(
-              new StereoReprojectionCost(camera_from_world, observation,
-                                         baseline_)
-          );
-      problem.AddResidualBlock(cost, new ceres::HuberLoss(0.01),
+      auto functor
+          = std::make_unique<StereoReprojectionCost>(camera_from_world,
+                                                     observation, baseline_);
+      // AutoDiffCostFunction 内部以 unique_ptr 持有 functor 并接管所有权
+      cost_functions.push_back(
+          std::make_unique<StereoCostFunction>(functor.release())
+      );
+      problem.AddResidualBlock(cost_functions.back().get(), &huber_loss,
                                world_point.data());
     }
 
@@ -1699,6 +1853,127 @@ private:
            < ChiSquare95(static_cast<int>(residual.size()));
   }
 
+  // 单目相对旋转量测: r = Log(R̂_相对⁻¹·Exp(rVec)), H_θ上 = -R̂_相对⁻¹, H_θ当 = I
+  bool ApplyMonocularRotationUpdate(int previous_index, int current_index,
+                                    const Eigen::Vector3d &rotation_vector)
+  {
+    const CameraClone &current_clone  = clones_[current_index];
+    const CameraClone &previous_clone = clones_[previous_index];
+
+    // --- 旋转: r = Log(R̂_相对⁻¹·Exp(rVec)), H_θ上 = -R̂_相对⁻¹, H_θ当 = I ---
+    const Sophus::SO3d predicted_relative_rotation
+        = previous_clone.world_from_camera_rotation.inverse()
+          * current_clone.world_from_camera_rotation;
+    Eigen::MatrixXd jacobian = Eigen::MatrixXd::Zero(3, StateDim());
+    jacobian.block<3, 3>(0, CloneStateIndex(previous_index))
+        = -predicted_relative_rotation.inverse().matrix();
+    jacobian.block<3, 3>(0, CloneStateIndex(current_index))
+        = Eigen::Matrix3d::Identity();
+    Eigen::VectorXd residual = (predicted_relative_rotation.inverse()
+                                * Sophus::SO3d::exp(rotation_vector))
+                                   .log();
+
+    const double noise_variance
+        = kMonocularRotationSigma * kMonocularRotationSigma;
+    if (!PassesChiSquareGate(jacobian, residual, noise_variance))
+    {
+      return false;
+    }
+    ApplyEkfUpdate(std::move(jacobian), std::move(residual), noise_variance);
+    return true;
+  }
+
+  // 单目平移方向量测: 只约束量测方向切平面上的 2 维分量 (尺度自然不受约束)
+  bool
+  ApplyMonocularDirectionUpdate(int previous_index, int current_index,
+                                const Eigen::Vector3d &translation_direction)
+  {
+    // --- 平移方向: 旋转更新后的最新状态上重新线性化 (克隆引用随更新自动生效) ---
+    const double direction_norm = translation_direction.norm();
+    if (direction_norm < 1e-6)
+    {
+      return false;
+    }
+    const Eigen::Vector3d measured_direction
+        = translation_direction / direction_norm;
+
+    const CameraClone &previous_clone = clones_[previous_index];
+    const CameraClone &current_clone  = clones_[current_index];
+    const Eigen::Matrix3d previous_camera_from_world
+        = previous_clone.world_from_camera_rotation.inverse().matrix();
+    const Eigen::Vector3d baseline_in_previous_camera
+        = previous_camera_from_world
+          * (current_clone.position_in_world
+             - previous_clone.position_in_world);
+    const double baseline_norm = baseline_in_previous_camera.norm();
+    if (baseline_norm < kMinBaselineForDirection)
+    {
+      return false; // 悬停: 方向退化
+    }
+    const Eigen::Vector3d predicted_direction
+        = baseline_in_previous_camera / baseline_norm;
+
+    const Eigen::Vector3d helper = std::abs(measured_direction.z()) < 0.9
+                                       ? Eigen::Vector3d::UnitZ()
+                                       : Eigen::Vector3d::UnitX();
+    const Eigen::Vector3d tangent_basis_1
+        = measured_direction.cross(helper).normalized();
+    const Eigen::Vector3d tangent_basis_2
+        = measured_direction.cross(tangent_basis_1);
+    Eigen::Matrix<double, 2, 3> tangent_projector;
+    tangent_projector.row(0) = tangent_basis_1.transpose();
+    tangent_projector.row(1) = tangent_basis_2.transpose();
+
+    const Eigen::Matrix3d normalization_jacobian
+        = (Eigen::Matrix3d::Identity()
+           - predicted_direction * predicted_direction.transpose())
+          / baseline_norm;
+    const Eigen::Matrix<double, 2, 3> direction_jacobian
+        = tangent_projector * normalization_jacobian;
+
+    Eigen::MatrixXd jacobian = Eigen::MatrixXd::Zero(2, StateDim());
+    jacobian.block<2, 3>(0, CloneStateIndex(previous_index))
+        = direction_jacobian * Sophus::SO3d::hat(baseline_in_previous_camera);
+    jacobian.block<2, 3>(0, CloneStateIndex(previous_index) + 3)
+        = -direction_jacobian * previous_camera_from_world;
+    jacobian.block<2, 3>(0, CloneStateIndex(current_index) + 3)
+        = direction_jacobian * previous_camera_from_world;
+    Eigen::VectorXd residual = -(tangent_projector * predicted_direction);
+
+    const double noise_variance
+        = kMonocularDirectionSigma * kMonocularDirectionSigma;
+    if (!PassesChiSquareGate(jacobian, residual, noise_variance))
+    {
+      return false;
+    }
+    ApplyEkfUpdate(std::move(jacobian), std::move(residual), noise_variance);
+    return true;
+  }
+
+  // 把若干量测块按行堆叠成单个大雅可比后执行一次 EKF 更新
+  void ApplyStackedEkfUpdate(std::vector<Eigen::MatrixXd> jacobian_blocks,
+                             std::vector<Eigen::VectorXd> residual_blocks,
+                             int total_rows, double noise_variance)
+  {
+    if (jacobian_blocks.empty())
+    {
+      return;
+    }
+    Eigen::MatrixXd stacked_jacobian(total_rows, StateDim());
+    Eigen::VectorXd stacked_residual(total_rows);
+    int row = 0;
+    for (std::size_t i = 0; i < jacobian_blocks.size(); ++i)
+    {
+      stacked_jacobian.middleRows(row, jacobian_blocks[i].rows())
+          = jacobian_blocks[i];
+      stacked_residual.segment(row, residual_blocks[i].size())
+          = residual_blocks[i];
+      row += static_cast<int>(jacobian_blocks[i].rows());
+    }
+    ApplyEkfUpdate(std::move(stacked_jacobian), std::move(stacked_residual),
+                   noise_variance);
+  }
+
   void UpdateWithTracks(const std::vector<FeatureTrack> &finished_tracks)
   {
     const double vision_noise_variance
@@ -1738,24 +2013,9 @@ private:
         break;
       }
     }
-    if (jacobian_blocks.empty())
-    {
-      return;
-    }
-
-    Eigen::MatrixXd stacked_jacobian(total_rows, StateDim());
-    Eigen::VectorXd stacked_residual(total_rows);
-    int row = 0;
-    for (std::size_t i = 0; i < jacobian_blocks.size(); ++i)
-    {
-      stacked_jacobian.middleRows(row, jacobian_blocks[i].rows())
-          = jacobian_blocks[i];
-      stacked_residual.segment(row, residual_blocks[i].size())
-          = residual_blocks[i];
-      row += static_cast<int>(jacobian_blocks[i].rows());
-    }
-    ApplyEkfUpdate(std::move(stacked_jacobian), std::move(stacked_residual),
-                   vision_noise_variance);
+    ApplyStackedEkfUpdate(std::move(jacobian_blocks),
+                          std::move(residual_blocks), total_rows,
+                          vision_noise_variance);
   }
 
   bool BuildSlamObservationJacobian(int feature_index, int clone_index,
@@ -1847,21 +2107,10 @@ private:
       residual_blocks.push_back(std::move(residual));
     }
 
-    if (!jacobian_blocks.empty())
-    {
-      const int total_rows = 4 * static_cast<int>(jacobian_blocks.size());
-      Eigen::MatrixXd stacked_jacobian(total_rows, StateDim());
-      Eigen::VectorXd stacked_residual(total_rows);
-      for (std::size_t i = 0; i < jacobian_blocks.size(); ++i)
-      {
-        stacked_jacobian.middleRows(4 * static_cast<int>(i), 4)
-            = jacobian_blocks[i];
-        stacked_residual.segment(4 * static_cast<int>(i), 4)
-            = residual_blocks[i];
-      }
-      ApplyEkfUpdate(std::move(stacked_jacobian), std::move(stacked_residual),
-                     vision_noise_variance);
-    }
+    const int total_rows = 4 * static_cast<int>(jacobian_blocks.size());
+    ApplyStackedEkfUpdate(std::move(jacobian_blocks),
+                          std::move(residual_blocks), total_rows,
+                          vision_noise_variance);
 
     // 门限失败视为外点: 移出状态并反馈前端删除 (索引降序保证删除安全)
     std::ranges::sort(failed_feature_indices);
@@ -2131,7 +2380,20 @@ private:
       removed_frame_ids.insert(clones_[index].frame_id);
     }
 
-    // 第一遍: 观测到被删克隆、且足够长的活跃轨迹升级为 SLAM 特征 (吸收其全部历史观测)
+    PromoteTracksObservingRemovedClones(removed_frame_ids);
+    AbsorbObservationsOnRemovedClones(removed_frame_ids);
+
+    for (const int index : std::views::reverse(remove_indices))
+    {
+      RemoveCloneAt(index);
+    }
+  }
+
+  // 第一遍: 观测到被删克隆、且足够长的活跃轨迹升级为 SLAM 特征 (吸收其全部历史观测)
+  void PromoteTracksObservingRemovedClones(
+      const std::set<FrameId> &removed_frame_ids
+  )
+  {
     for (auto it = active_tracks_.begin(); it != active_tracks_.end();)
     {
       FeatureTrack &track            = it->second;
@@ -2150,8 +2412,12 @@ private:
         ++it;
       }
     }
+  }
 
-    // 第二遍: 其余轨迹只吸收被删克隆上的观测 (>=2 帧才有零空间余量), 轨迹保活
+  // 第二遍: 其余轨迹只吸收被删克隆上的观测 (>=2 帧才有零空间余量), 轨迹保活
+  void
+  AbsorbObservationsOnRemovedClones(const std::set<FrameId> &removed_frame_ids)
+  {
     const double vision_noise_variance
         = pixel_noise_normalized_ * pixel_noise_normalized_;
     std::vector<Eigen::MatrixXd> jacobian_blocks;
@@ -2208,27 +2474,9 @@ private:
       }
     }
 
-    if (!jacobian_blocks.empty())
-    {
-      Eigen::MatrixXd stacked_jacobian(total_rows, StateDim());
-      Eigen::VectorXd stacked_residual(total_rows);
-      int row = 0;
-      for (std::size_t i = 0; i < jacobian_blocks.size(); ++i)
-      {
-        stacked_jacobian.middleRows(row, jacobian_blocks[i].rows())
-            = jacobian_blocks[i];
-        stacked_residual.segment(row, residual_blocks[i].size())
-            = residual_blocks[i];
-        row += static_cast<int>(jacobian_blocks[i].rows());
-      }
-      ApplyEkfUpdate(std::move(stacked_jacobian), std::move(stacked_residual),
-                     vision_noise_variance);
-    }
-
-    for (const int index : std::views::reverse(remove_indices))
-    {
-      RemoveCloneAt(index);
-    }
+    ApplyStackedEkfUpdate(std::move(jacobian_blocks),
+                          std::move(residual_blocks), total_rows,
+                          vision_noise_variance);
   }
 
   // OC 线性化点仅在初始化与传播时保存, EKF 更新不改动, 保证不可观子空间跨时刻一致
@@ -2269,6 +2517,324 @@ private:
 };
 
 // ============================ 主流程 ============================
+
+void PrintCalibrationSummary(const CameraCalibration &left_calibration,
+                             const CameraCalibration &right_calibration,
+                             const ImuNoiseParameters &imu_noise)
+{
+  std::println("标定读取完成:\n"
+               "\tcam0\n"
+               "\t\tfu={:.3f},\n"
+               "\t\tfv={:.3f},\n"
+               "\tcam1\n"
+               "\t\tfu={:.3f},\n"
+               "\t\tfv={:.3f},\n"
+               "\t分辨率 {}x{},\n"
+               "\t陀螺仪白噪声 {:.4e}\n"
+               "\t陀螺仪随机游走 {:.4e}\n"
+               "\t加速度计白噪声 {:.4e}\n"
+               "\t加速度计随机游走 {:.4e}\n",
+               left_calibration.camera_matrix.at<double>(0, 0),
+               left_calibration.camera_matrix.at<double>(1, 1),
+               right_calibration.camera_matrix.at<double>(0, 0),
+               right_calibration.camera_matrix.at<double>(1, 1),
+               left_calibration.image_size.width,
+               left_calibration.image_size.height, imu_noise.gyro_noise_density,
+               imu_noise.gyro_random_walk, imu_noise.accel_noise_density,
+               imu_noise.accel_random_walk);
+}
+
+// groundtruth 姿态初始化: 抛弃 groundtruth 首条记录之前的双目帧与 IMU 样本,
+// 返回滤波起始的 IMU 样本下标
+std::size_t
+InitializeFromGroundTruthPose(const fs::path &dataset_root,
+                              std::vector<StereoFrame> &stereo_frames,
+                              std::span<const ImuSample> imu_samples,
+                              Msckf &filter)
+{
+  const double groundtruth_start_time = LoadGroundTruthStartTime(dataset_root);
+  const auto first_covered_frame
+      = std::ranges::find_if(stereo_frames,
+                             [groundtruth_start_time](const StereoFrame &frame)
+                             { return frame.time >= groundtruth_start_time; });
+  if (first_covered_frame == stereo_frames.end())
+  {
+    throw std::runtime_error("所有双目帧都早于 groundtruth 起始时刻");
+  }
+  if (first_covered_frame != stereo_frames.begin())
+  {
+    std::println("groundtruth 起始于 t={:.3f}s, 抛弃之前的 {} 帧双目图像",
+                 groundtruth_start_time,
+                 std::distance(stereo_frames.begin(), first_covered_frame));
+    stereo_frames.erase(stereo_frames.begin(), first_covered_frame);
+  }
+  const double first_frame_time = stereo_frames.front().time;
+  const GroundTruthState initial_state
+      = LoadClosestGroundTruthState(dataset_root, first_frame_time);
+  filter.InitializeFromGroundTruth(initial_state);
+
+  std::size_t imu_index = 0;
+  while (imu_index < imu_samples.size()
+         && imu_samples[imu_index].time < first_frame_time)
+  {
+    ++imu_index; // 首帧之前的 IMU 不参与积分
+  }
+  std::println("groundtruth 初始状态: t={:.3f}s 位置 [{:.3f} {:.3f} {:.3f}]",
+               initial_state.time, initial_state.position.x(),
+               initial_state.position.y(), initial_state.position.z());
+  return imu_index;
+}
+
+// 静止 IMU 姿态初始化, 返回滤波起始的 IMU 样本下标
+std::size_t InitializeFromStaticImuPose(std::span<const ImuSample> imu_samples,
+                                        double first_frame_time, Msckf &filter)
+{
+  static constexpr std::size_t kMinInitialSampleCount = 200;
+  std::size_t imu_index                               = 0;
+  std::vector<ImuSample> initial_samples;
+  while (imu_index < imu_samples.size()
+         && imu_samples[imu_index].time < first_frame_time)
+  {
+    initial_samples.push_back(imu_samples[imu_index++]);
+  }
+  while (initial_samples.size() < kMinInitialSampleCount
+         && imu_index < imu_samples.size())
+  {
+    initial_samples.push_back(imu_samples[imu_index++]);
+  }
+  filter.InitializeFromStaticImu(initial_samples);
+  return imu_index;
+}
+
+std::ofstream OpenTrajectoryFile(const fs::path &trajectory_path)
+{
+  if (trajectory_path.has_parent_path())
+  {
+    fs::create_directories(trajectory_path.parent_path());
+  }
+  std::ofstream trajectory_file(trajectory_path);
+  if (!trajectory_file)
+  {
+    throw std::runtime_error(std::format(
+        "无法创建轨迹输出文件: '{}'.", fs::absolute(trajectory_path).string()
+    ));
+  }
+  return trajectory_file;
+}
+
+// 逐帧滤波主循环: IMU 预测 → 克隆增广 → 单目先验融合 → 陀螺辅助光流 → 双目量测
+class VioPipeline
+{
+public:
+  VioPipeline(const StereoRectifier &rectifier, const ClaheEnhancer &enhancer,
+              StationaryDetector &stationary_detector, FeatureTracker &tracker,
+              Msckf &filter,
+              const std::vector<FastVIO::DatumFast> &monocular_estimations,
+              std::span<const ImuSample> imu_samples, std::size_t imu_index,
+              std::ostream &trajectory_stream) :
+    rectifier_(rectifier), enhancer_(enhancer),
+    stationary_detector_(stationary_detector), tracker_(tracker),
+    filter_(filter), monocular_estimations_(monocular_estimations),
+    imu_samples_(imu_samples), imu_index_(imu_index),
+    trajectory_stream_(trajectory_stream),
+    camera_rotation_in_body_(rectifier.body_from_rectified_left().so3())
+  {
+  }
+
+  void Run(std::span<const StereoFrame> stereo_frames)
+  {
+    for (const StereoFrame &frame : stereo_frames)
+    {
+      ProcessStereoFrame(frame);
+    }
+  }
+
+  long zero_velocity_update_count() const
+  {
+    return zero_velocity_update_count_;
+  }
+  long monocular_update_count() const
+  {
+    return monocular_update_count_;
+  }
+
+#if ENABLE_TIMER
+  // 打印计时报表: MonocularUpdate 耗时、双目估计相关函数总耗时及其占比对照
+  void PrintTimerReport() const
+  {
+    timer_.PrintReport();
+    const double monocular_ms = timer_.TotalMilliseconds(kTimerMonocularUpdate);
+    const double stereo_ms    = timer_.TotalMilliseconds(kTimerStereoTotal);
+    std::println("MonocularUpdate 总耗时 {:.2f} ms, 双目估计总耗时 {:.2f} ms, "
+                 "视觉部分合计 {:.2f} ms",
+                 monocular_ms, stereo_ms, monocular_ms + stereo_ms);
+    std::println("(对比方法: 用 --mono-csv 指向不存在的文件再跑一次, "
+                 "对比两次的双目估计总耗时与视觉部分合计)");
+  }
+#endif
+
+private:
+  static constexpr FrameId kProgressLogInterval = 50;
+#if ENABLE_TIMER
+  static constexpr std::string_view kTimerMonocularUpdate
+      = "MonocularUpdate(含查找)";
+  static constexpr std::string_view kTimerStereoTotal = "双目估计(总)";
+  static constexpr std::string_view kTimerStereoTrack = "双目估计/角点+光流";
+  static constexpr std::string_view kTimerStereoFilterUpdate
+      = "双目估计/三角化+EKF更新";
+#endif
+
+  void ProcessStereoFrame(const StereoFrame &frame)
+  {
+    const double clone_time = frame.time + filter_.time_offset_camera_to_imu();
+    PropagateImuUntil(clone_time);
+
+    // 实施 ZUPT
+    if (stationary_detector_.IsStationary()
+        && filter_.ApplyZeroVelocityUpdate())
+    {
+      ++zero_velocity_update_count_;
+    }
+
+    // 读取双目图像
+    const cv::Mat raw_left
+        = cv::imread(frame.left_image_path.string(), cv::IMREAD_GRAYSCALE);
+    const cv::Mat raw_right
+        = cv::imread(frame.right_image_path.string(), cv::IMREAD_GRAYSCALE);
+    if (raw_left.empty() || raw_right.empty())
+    {
+      return;
+    }
+
+    // 进行立体矫正和图像增强
+    cv::Mat rectified_left, rectified_right;
+    rectifier_.Rectify(raw_left, raw_right, rectified_left, rectified_right);
+    const cv::Mat enhanced_left  = enhancer_.Enhance(rectified_left);
+    const cv::Mat enhanced_right = enhancer_.Enhance(rectified_right);
+
+    // 先增广本帧克隆, 再融合外部单目算法的相对运动初始猜测
+    // (rVec/tVec 约定见 Msckf::MonocularUpdate 注释); 修正后的姿态
+    // 随即用于陀螺辅助光流与双目量测更新
+    filter_.AugmentCameraClone(frame_id_);
+    {
+      TIME_SCOPE(timer_, kTimerMonocularUpdate);
+      ApplyMonocularEstimation(frame.timestamp_ns);
+    }
+
+    // 陀螺辅助: 滤波器传播的姿态差即两帧间(去零偏)陀螺积分, 作为光流的旋转先验
+    const Sophus::SO3d world_from_camera_now
+        = filter_.world_from_imu_rotation() * camera_rotation_in_body_;
+    const Sophus::SO3d current_camera_from_previous_camera
+        = has_previous_camera_rotation_
+              ? world_from_camera_now.inverse() * previous_world_from_camera_
+              : Sophus::SO3d();
+    {
+      // 双目估计: 角点提取/光流跟踪 + 三角化/非线性优化/EKF 量测更新
+      TIME_SCOPE(timer_, kTimerStereoTotal);
+      std::vector<FeatureTracker::TrackedFeature> tracked;
+      {
+        TIME_SCOPE(timer_, kTimerStereoTrack);
+        tracked = tracker_.Track(enhanced_left, enhanced_right,
+                                 current_camera_from_previous_camera);
+      }
+      std::vector<FeatureId> dropped_feature_ids;
+      {
+        TIME_SCOPE(timer_, kTimerStereoFilterUpdate);
+        dropped_feature_ids = filter_.ProcessFrame(frame_id_, tracked);
+      }
+      tracker_.DropFeatures(dropped_feature_ids);
+      tracked_count_last_frame_ = tracked.size();
+    }
+    previous_world_from_camera_
+        = filter_.world_from_imu_rotation() * camera_rotation_in_body_;
+    has_previous_camera_rotation_ = true;
+
+    WriteTrajectoryRecord(clone_time);
+    if (frame_id_ % kProgressLogInterval == 0)
+    {
+      PrintProgress(tracked_count_last_frame_);
+    }
+    ++frame_id_;
+  }
+
+  // IMU 插值精确传播到成像时刻
+  void PropagateImuUntil(double clone_time)
+  {
+    while (imu_index_ < imu_samples_.size()
+           && imu_samples_[imu_index_].time <= clone_time)
+    {
+      stationary_detector_.AddImuSample(imu_samples_[imu_index_]);
+      filter_.PropagateWithImu(imu_samples_[imu_index_++]);
+    }
+    if (imu_index_ > 0 && imu_index_ < imu_samples_.size())
+    {
+      filter_.PropagateWithImu(InterpolateImuSample(
+          imu_samples_[imu_index_ - 1], imu_samples_[imu_index_], clone_time
+      ));
+    }
+  }
+
+  // 按时间戳查找外部单目估计并做 EKF 更新
+  void ApplyMonocularEstimation(std::int64_t timestamp_ns)
+  {
+    const std::optional<FastVIO::DatumFast> estimation
+        = FindDatumFastByTimestamp(monocular_estimations_, timestamp_ns);
+    if (estimation.has_value()
+        && filter_.MonocularUpdate(estimation->angular_displacement_,
+                                   estimation->normalized_translation_))
+    {
+      ++monocular_update_count_;
+    }
+  }
+
+  void WriteTrajectoryRecord(double clone_time)
+  {
+    const Eigen::Quaterniond orientation
+        = filter_.world_from_imu_rotation().unit_quaternion();
+    const Eigen::Vector3d &position = filter_.imu_position();
+    std::println(trajectory_stream_,
+                 "{:.9f} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f}",
+                 clone_time, position.x(), position.y(), position.z(),
+                 orientation.x(), orientation.y(), orientation.z(),
+                 orientation.w());
+  }
+
+  void PrintProgress(std::size_t tracked_count) const
+  {
+    const Eigen::Vector3d &position = filter_.imu_position();
+    std::println(
+        "帧 {:4}  位置 [{:7.3f} {:7.3f} {:7.3f}]  速度 {:5.2f} m/s  t_d "
+        "{:+.2f} ms  |g| {:.3f}  特征 {:3}  SLAM {:2}  克隆 {}",
+        frame_id_, position.x(), position.y(), position.z(),
+        filter_.imu_velocity().norm(),
+        filter_.time_offset_camera_to_imu() * 1e3,
+        filter_.gravity_in_world().norm(), tracked_count,
+        filter_.slam_feature_count(), filter_.clone_count()
+    );
+  }
+
+  const StereoRectifier &rectifier_;
+  const ClaheEnhancer &enhancer_;
+  StationaryDetector &stationary_detector_;
+  FeatureTracker &tracker_;
+  Msckf &filter_;
+  const std::vector<FastVIO::DatumFast> &monocular_estimations_;
+  std::span<const ImuSample> imu_samples_;
+  std::size_t imu_index_;
+  std::ostream &trajectory_stream_;
+  const Sophus::SO3d camera_rotation_in_body_;
+
+  FrameId frame_id_                     = 0;
+  long zero_velocity_update_count_      = 0;
+  long monocular_update_count_          = 0;
+  std::size_t tracked_count_last_frame_ = 0;
+  Sophus::SO3d previous_world_from_camera_;
+  bool has_previous_camera_rotation_ = false;
+#if ENABLE_TIMER
+  mutable FunctionTimer timer_;
+#endif
+};
+
 int main(int argc, char **argv)
 {
   google::InitGoogleLogging(argv[0]);
@@ -2295,26 +2861,7 @@ int main(int argc, char **argv)
         = LoadCameraCalibration(dataset_root / "cam1" / "sensor.yaml");
     const ImuNoiseParameters imu_noise
         = LoadImuNoiseParameters(dataset_root / "imu0" / "sensor.yaml");
-    std::println("标定读取完成:\n"
-                 "\tcam0\n"
-                 "\t\tfu={:.3f},\n"
-                 "\t\tfv={:.3f},\n"
-                 "\tcam1\n"
-                 "\t\tfu={:.3f},\n"
-                 "\t\tfv={:.3f},\n"
-                 "\t分辨率 {}x{}, "
-                 "\t陀螺仪白噪声 {:.4e}\n"
-                 "\t陀螺仪随机游走 {:.4e}\n"
-                 "\t加速度计白噪声 {:.4e}\n"
-                 "\t加速度计随机游走 {:.4e}\n",
-                 left_calibration.camera_matrix.at<double>(0, 0),
-                 left_calibration.camera_matrix.at<double>(1, 1),
-                 right_calibration.camera_matrix.at<double>(0, 0),
-                 right_calibration.camera_matrix.at<double>(1, 1),
-                 left_calibration.image_size.width,
-                 left_calibration.image_size.height,
-                 imu_noise.gyro_noise_density, imu_noise.gyro_random_walk,
-                 imu_noise.accel_noise_density, imu_noise.accel_random_walk);
+    PrintCalibrationSummary(left_calibration, right_calibration, imu_noise);
 
     StereoRectifier rectifier(left_calibration, right_calibration);
     std::println("矫正后焦距 {:.2f} px, 基线 {:.4f} m",
@@ -2330,163 +2877,38 @@ int main(int argc, char **argv)
                  options.initial_time_offset * 1e3);
 
     // 姿态初始化
-    std::size_t imu_index = 0;
-    if (options.initialization_mode == InitializationMode::kGroundTruth)
-    {
-      // groundtruth 可能晚于传感器数据开始: 抛弃 groundtruth 首条记录之前的
-      // 双目帧与 IMU 样本, 从有真值的时刻开始
-      const double groundtruth_start_time
-          = LoadGroundTruthStartTime(dataset_root);
-      const auto first_covered_frame = std::ranges::find_if(
-          stereo_frames, [groundtruth_start_time](const StereoFrame &frame)
-          { return frame.time >= groundtruth_start_time; }
-      );
-      if (first_covered_frame == stereo_frames.end())
-      {
-        throw std::runtime_error("所有双目帧都早于 groundtruth 起始时刻");
-      }
-      if (first_covered_frame != stereo_frames.begin())
-      {
-        std::println("groundtruth 起始于 t={:.3f}s, 抛弃之前的 {} 帧双目图像",
-                     groundtruth_start_time,
-                     std::distance(stereo_frames.begin(), first_covered_frame));
-        stereo_frames.erase(stereo_frames.begin(), first_covered_frame);
-      }
-      const double first_frame_time = stereo_frames.front().time;
-      const GroundTruthState initial_state
-          = LoadClosestGroundTruthState(dataset_root, first_frame_time);
-      filter.InitializeFromGroundTruth(initial_state);
-      while (imu_index < imu_samples.size()
-             && imu_samples[imu_index].time < first_frame_time)
-      {
-        ++imu_index; // 首帧之前的 IMU 不参与积分
-      }
-      std::println(
-          "groundtruth 初始状态: t={:.3f}s 位置 [{:.3f} {:.3f} {:.3f}]",
-          initial_state.time, initial_state.position.x(),
-          initial_state.position.y(), initial_state.position.z()
-      );
-    }
-    else
-    {
-      const double first_frame_time = stereo_frames.front().time;
-      std::vector<ImuSample> initial_samples;
-      while (imu_index < imu_samples.size()
-             && imu_samples[imu_index].time < first_frame_time)
-      {
-        initial_samples.push_back(imu_samples[imu_index++]);
-      }
-      while (initial_samples.size() < 200 && imu_index < imu_samples.size())
-      {
-        initial_samples.push_back(imu_samples[imu_index++]);
-      }
-      filter.InitializeFromStaticImu(initial_samples);
-    }
+    const std::size_t imu_index
+        = options.initialization_mode == InitializationMode::kGroundTruth
+              ? InitializeFromGroundTruthPose(dataset_root, stereo_frames,
+                                              imu_samples, filter)
+              : InitializeFromStaticImuPose(imu_samples,
+                                            stereo_frames.front().time, filter);
 
     const fs::path &trajectory_path = options.output_trajectory_path;
-    if (trajectory_path.has_parent_path())
-    {
-      fs::create_directories(trajectory_path.parent_path());
-    }
-    std::ofstream trajectory_file(trajectory_path);
-    if (!trajectory_file)
-    {
-      throw std::runtime_error(std::format(
-          "无法创建轨迹输出文件: '{}'.", fs::absolute(trajectory_path).string()
-      ));
-    }
+    std::ofstream trajectory_file   = OpenTrajectoryFile(trajectory_path);
 
-    FrameId frame_id                = 0;
-    long zero_velocity_update_count = 0;
-    const Sophus::SO3d camera_rotation_in_body
-        = rectifier.body_from_rectified_left().so3();
-    Sophus::SO3d previous_world_from_camera;
-    bool has_previous_camera_rotation = false;
-    for (const StereoFrame &frame : stereo_frames)
-    {
-      const double clone_time = frame.time + filter.time_offset_camera_to_imu();
-      while (imu_index < imu_samples.size()
-             && imu_samples[imu_index].time <= clone_time)
-      {
-        stationary_detector.AddImuSample(imu_samples[imu_index]);
-        filter.PropagateWithImu(imu_samples[imu_index++]);
-      }
-      if (imu_index > 0 && imu_index < imu_samples.size())
-      {
-        filter.PropagateWithImu(InterpolateImuSample(imu_samples[imu_index - 1],
-                                                     imu_samples[imu_index],
-                                                     clone_time));
-      }
+    // 矫正后左目系 = (body_from_rectified_left)⁻¹ · body_from_raw_left · 原始左目系
+    const Sophus::SO3d rectified_from_raw_left
+        = rectifier.body_from_rectified_left().so3().inverse()
+          * left_calibration.body_from_camera.so3();
+    const std::vector<FastVIO::DatumFast> monocular_estimations
+        = LoadMonocularEstimations(options.monocular_estimation_path,
+                                   rectified_from_raw_left);
 
-      // 实施 ZUPT
-      if (stationary_detector.IsStationary()
-          && filter.ApplyZeroVelocityUpdate())
-      {
-        ++zero_velocity_update_count;
-      }
+    VioPipeline pipeline(rectifier, enhancer, stationary_detector, tracker,
+                         filter, monocular_estimations, imu_samples, imu_index,
+                         trajectory_file);
+    pipeline.Run(stereo_frames);
+#if ENABLE_TIMER
+    pipeline.PrintTimerReport();
+#endif
 
-      // 读取双目图像
-      const cv::Mat raw_left
-          = cv::imread(frame.left_image_path.string(), cv::IMREAD_GRAYSCALE);
-      const cv::Mat raw_right
-          = cv::imread(frame.right_image_path.string(), cv::IMREAD_GRAYSCALE);
-      if (raw_left.empty() || raw_right.empty())
-      {
-        continue;
-      }
-
-      // 进行立体矫正和图像增强
-      cv::Mat rectified_left, rectified_right;
-      rectifier.Rectify(raw_left, raw_right, rectified_left, rectified_right);
-      const cv::Mat enhanced_left  = enhancer.Enhance(rectified_left);
-      const cv::Mat enhanced_right = enhancer.Enhance(rectified_right);
-
-      // 陀螺辅助: 滤波器传播的姿态差即两帧间(去零偏)陀螺积分, 作为光流的旋转先验
-      const Sophus::SO3d world_from_camera_now
-          = filter.world_from_imu_rotation() * camera_rotation_in_body;
-      const Sophus::SO3d current_camera_from_previous_camera
-          = has_previous_camera_rotation
-                ? world_from_camera_now.inverse() * previous_world_from_camera
-                : Sophus::SO3d();
-      const auto tracked = tracker.Track(enhanced_left, enhanced_right,
-                                         current_camera_from_previous_camera);
-      const std::vector<FeatureId> dropped_feature_ids
-          = filter.ProcessFrame(frame_id, tracked);
-      tracker.DropFeatures(dropped_feature_ids);
-      // 接入单目相对运动算法时在此融合 (rVec/tVec 约定见 Msckf::MonocularUpdate 注释):
-      //   filter.MonocularUpdate(estimated_rotation_vector, estimated_translation_direction);
-      previous_world_from_camera
-          = filter.world_from_imu_rotation() * camera_rotation_in_body;
-      has_previous_camera_rotation = true;
-
-      const Eigen::Quaterniond orientation
-          = filter.world_from_imu_rotation().unit_quaternion();
-      const Eigen::Vector3d &position = filter.imu_position();
-      std::println(trajectory_file,
-                   "{:.9f} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f} {:.6f}",
-                   clone_time, position.x(), position.y(), position.z(),
-                   orientation.x(), orientation.y(), orientation.z(),
-                   orientation.w());
-
-      if (frame_id % 50 == 0)
-      {
-        std::println(
-            "帧 {:4}  位置 [{:7.3f} {:7.3f} {:7.3f}]  速度 {:5.2f} m/s  t_d "
-            "{:+.2f} ms  |g| {:.3f}  特征 {:3}  SLAM {:2}  克隆 {}",
-            frame_id, position.x(), position.y(), position.z(),
-            filter.imu_velocity().norm(),
-            filter.time_offset_camera_to_imu() * 1e3,
-            filter.gravity_in_world().norm(), tracked.size(),
-            filter.slam_feature_count(), filter.clone_count()
-        );
-      }
-      ++frame_id;
-    }
     const Eigen::Vector3d &gravity = filter.gravity_in_world();
-    std::println("完成, 轨迹已写入 {} (TUM 格式), ZUPT 触发 {} 次, 最终 t_d "
-                 "{:+.3f} ms, 重力 [{:.4f} {:.4f} {:.4f}] m/s^2",
+    std::println("完成, 轨迹已写入 {} (TUM 格式), ZUPT 触发 {} 次, 单目更新 {} "
+                 "次, 最终 t_d {:+.3f} ms, 重力 [{:.4f} {:.4f} {:.4f}] m/s^2",
                  fs::absolute(trajectory_path).string(),
-                 zero_velocity_update_count,
+                 pipeline.zero_velocity_update_count(),
+                 pipeline.monocular_update_count(),
                  filter.time_offset_camera_to_imu() * 1e3, gravity.x(),
                  gravity.y(), gravity.z());
   }
@@ -2496,7 +2918,7 @@ int main(int argc, char **argv)
     std::println(
         stderr,
         "用法: {} <数据集mav0路径> [--init imu|groundtruth] [--time-offset 秒] "
-        "[--output /path/to/filename.tum]",
+        "[--output /path/to/filename.tum] [--mono-csv /path/to/estimation.csv]",
         argv[0]
     );
     return 1;

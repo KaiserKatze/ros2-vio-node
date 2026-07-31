@@ -55,7 +55,21 @@ endif()
 
 add_executable(msckf msckf.cpp)
 
-target_include_directories(msckf PRIVATE ${OpenCV_INCLUDE_DIRS})
+# 耗时统计开关 (父目录已声明; 单独构建本目录时由此行兜底声明)
+set(ENABLE_TIMER 1 CACHE STRING "msckf 耗时统计: 1 开启 (默认), 0 关闭")
+# 归一化 1/0/ON/OFF/TRUE/FALSE 等写法, 源码中以 #if ENABLE_TIMER 判断
+if(ENABLE_TIMER)
+  set(MSCKF_ENABLE_TIMER 1)
+else()
+  set(MSCKF_ENABLE_TIMER 0)
+endif()
+target_compile_definitions(msckf PRIVATE ENABLE_TIMER=${MSCKF_ENABLE_TIMER})
+
+# euroc_vio/DatumFast.hpp 等公共头文件位于包根目录 include/
+target_include_directories(msckf PRIVATE
+  ${OpenCV_INCLUDE_DIRS}
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../include
+)
 target_link_libraries(msckf PRIVATE
   ${OpenCV_LIBS}
   Eigen3::Eigen
@@ -73,6 +87,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   )
 endif()
 
+message(STATUS "耗时统计 ENABLE_TIMER=${MSCKF_ENABLE_TIMER}")
 message(STATUS "OpenCV:   ${OpenCV_VERSION}")
 message(STATUS "Eigen:    ${Eigen3_VERSION}")
 message(STATUS "Ceres:    ${Ceres_VERSION} (目标: ${CERES_TARGET})")
