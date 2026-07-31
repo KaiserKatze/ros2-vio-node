@@ -6,6 +6,7 @@ colcon build --packages-select euroc_vio \
   --parallel-workers $(nproc) \
   --cmake-args -G Ninja \
     -D OpenCV_DIR=/usr/local/lib/cmake/opencv4 \
+    -D ENABLE_TIMER=1 \
   --event-handlers console_direct+
 # 激活 ROS2 运行环境
 source ~/vio_ws/install/local_setup.sh
