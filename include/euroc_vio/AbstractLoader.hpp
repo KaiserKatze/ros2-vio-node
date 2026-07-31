@@ -2,6 +2,7 @@
 
 #include <charconv>
 #include <cstdint>
+#include <format>
 #include <sstream>
 #include <stdexcept>
 #include <string>
