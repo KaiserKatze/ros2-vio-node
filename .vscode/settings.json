@@ -1,4 +1,13 @@
 {
+  "files.exclude": {
+    ".cache": true,
+    "**/__pycache__": true,
+    "**/.git": true,
+    "**/.svn": true,
+    "**/.hg": true,
+    "**/.DS_Store": true,
+    "**/Thumbs.db": true
+  },
   "python.analysis.typeCheckingMode": "strict",
   "chat.agent.maxRequests": 100,
   "cmake.configureOnOpen": false,
