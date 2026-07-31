@@ -83,6 +83,14 @@ using FeatureId = long;
 #define ENABLE_TIMER 1
 #endif
 
+// 宏 ENABLE_TIME_LOGGER 控制逐帧视觉任务合计耗时的 CSV 输出
+// (~/vio_ws/CornerTrackingStats.csv, 同名文件已存在时自动追加数字后缀),
+// 仅在 ENABLE_TIMER == 1 时生效; 编译时以 -DENABLE_TIME_LOGGER=0 关闭。
+// 输出数据可用 scripts/plot_corner_tracking_stats.py 绘制多次实验的对比曲线
+#ifndef ENABLE_TIME_LOGGER
+#define ENABLE_TIME_LOGGER 1
+#endif
+
 #if ENABLE_TIMER
 // 按名字累计函数调用次数与总耗时, 程序结束时打印统计报表
 class FunctionTimer
@@ -166,6 +174,68 @@ private:
   }
 #else
 #define TIME_SCOPE(timer, name) static_cast<void>(0)
+#endif
+
+#if ENABLE_TIMER && ENABLE_TIME_LOGGER
+// 逐帧记录视觉任务合计耗时并写入 CSV, 供 scripts/plot_corner_tracking_stats.py
+// 对比多次实验的耗时曲线; 构造时确定输出路径, 不覆盖历史实验数据
+class FrameTimeLogger
+{
+public:
+  FrameTimeLogger()
+  {
+    const fs::path output_path = ResolveNonClobberPath(
+        fs::path{std::getenv("HOME")} / kOutputDirectory / kOutputFileName
+    );
+    if (output_path.has_parent_path())
+    {
+      fs::create_directories(output_path.parent_path());
+    }
+    stream_.open(output_path);
+    if (!stream_)
+    {
+      throw std::runtime_error(std::format(
+          "无法创建逐帧视觉耗时输出文件: '{}'.",
+          fs::absolute(output_path).string()
+      ));
+    }
+    std::println("逐帧视觉任务耗时将写入 {} (ENABLE_TIME_LOGGER=1)",
+                 fs::absolute(output_path).string());
+    std::println(stream_, "frame_id,visual_total_ms");
+  }
+
+  void LogFrame(FrameId frame_id, double visual_total_ms)
+  {
+    std::println(stream_, "{},{:.4f}", frame_id, visual_total_ms);
+  }
+
+private:
+  static constexpr std::string_view kOutputDirectory = "vio_ws";
+  static constexpr std::string_view kOutputFileName = "CornerTrackingStats.csv";
+
+  // 已有同名文件时不覆盖, 在文件名 stem 与后缀之间插入递增数字: 1, 2, 3, ...
+  static fs::path ResolveNonClobberPath(const fs::path &desired_path)
+  {
+    if (!fs::exists(desired_path))
+    {
+      return desired_path;
+    }
+    const std::string stem      = desired_path.stem().string();
+    const std::string extension = desired_path.extension().string();
+    for (long sequence_number = 1;; ++sequence_number)
+    {
+      const fs::path candidate
+          = desired_path.parent_path()
+            / std::format("{}{}{}", stem, sequence_number, extension);
+      if (!fs::exists(candidate))
+      {
+        return candidate;
+      }
+    }
+  }
+
+  std::ofstream stream_;
+};
 #endif
 
 // ============================ 命令行参数 ============================
@@ -2686,6 +2756,9 @@ private:
 
   void ProcessStereoFrame(const StereoFrame &frame)
   {
+#if ENABLE_TIMER && ENABLE_TIME_LOGGER
+    const double visual_ms_before_frame = VisualTotalMilliseconds();
+#endif
     const double clone_time = frame.time + filter_.time_offset_camera_to_imu();
     PropagateImuUntil(clone_time);
 
@@ -2750,6 +2823,11 @@ private:
     has_previous_camera_rotation_ = true;
 
     WriteTrajectoryRecord(clone_time);
+#if ENABLE_TIMER && ENABLE_TIME_LOGGER
+    frame_time_logger_.LogFrame(
+        frame_id_, VisualTotalMilliseconds() - visual_ms_before_frame
+    );
+#endif
     if (frame_id_ % kProgressLogInterval == 0)
     {
       PrintProgress(tracked_count_last_frame_);
@@ -2832,6 +2910,16 @@ private:
   bool has_previous_camera_rotation_ = false;
 #if ENABLE_TIMER
   mutable FunctionTimer timer_;
+#if ENABLE_TIME_LOGGER
+  // 视觉任务合计 = MonocularUpdate(含查找) + 双目估计(总), 与报表口径一致
+  double VisualTotalMilliseconds() const
+  {
+    return timer_.TotalMilliseconds(kTimerMonocularUpdate)
+           + timer_.TotalMilliseconds(kTimerStereoTotal);
+  }
+
+  FrameTimeLogger frame_time_logger_;
+#endif
 #endif
 };
 

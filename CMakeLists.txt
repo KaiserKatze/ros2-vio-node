@@ -95,6 +95,10 @@ add_ros2_executable(SimpleDataLoader src/DataLoader/DataLoader.cpp)
 # 取值兼容 1/0 与 ON/OFF, 在 src/MSCKF/CMakeLists.txt 中归一化后
 # 以 target_compile_definitions 传给 msckf 目标, 优先于源码内的默认值
 set(ENABLE_TIMER 1 CACHE STRING "msckf 耗时统计: 1 开启 (默认), 0 关闭")
+# 控制逐帧视觉任务耗时 CSV 输出宏 ENABLE_TIME_LOGGER (默认开启),
+# 仅在 ENABLE_TIMER=1 时生效; 输出到 ~/vio_ws/CornerTrackingStats.csv,
+# 同名文件已存在时自动追加数字后缀 (CornerTrackingStats1.csv, ...)
+set(ENABLE_TIME_LOGGER 1 CACHE STRING "msckf 逐帧视觉耗时 CSV 输出: 1 开启 (默认), 0 关闭")
 
 # ===== 目标： MSCKF 双目视觉+IMU 紧耦合里程计 (由子目录 CMakeLists.txt 构建) =====
 # add_subdirectory 会进入 src/MSCKF/CMakeLists.txt 执行:
