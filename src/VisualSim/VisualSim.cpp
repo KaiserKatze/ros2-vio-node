@@ -672,7 +672,7 @@ struct VisualSim
   }
 };
 
-} // namespace FastVIO
+} // namespace FastVIO::VisualSim
 
 int main()
 {
