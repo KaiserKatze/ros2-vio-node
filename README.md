@@ -29,5 +29,6 @@ ros2 topic echo /traj/stereo_est/path nav_msgs/msg/Path
 # 为单目惯性里程计优化 ESKF 超参数
 ros2 run euroc_vio opt.py --config config.yaml
 # 运行 MSCKF
-ros2 run euroc_vio msckf --init groundtruth
+ros2 run euroc_vio msckf ~/EuRoC_MAV_Datasets/V2_01_easy/mav0/ --init groundtruth --mono-csv=estimated_motion_cam0.csv
+ros2 run euroc_vio msckf /tmp/imu_noise_analysis/mav0/ --init groundtruth --mono-csv=/tmp/nowhere/nothing
 ```
