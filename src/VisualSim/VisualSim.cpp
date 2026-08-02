@@ -31,6 +31,7 @@
 #include <opencv2/core/check.hpp>
 #include <opencv2/core/eigen.hpp>
 
+#include "ImuNoiseModel.hpp"
 #include "MeshPlot.hpp"
 #include "Path.hpp"
 #include "Room.hpp"
@@ -70,6 +71,15 @@ struct VisualSim
   const int rate_ratio_{10};
   // 真值和 IMU 的时间步长 (单位: 秒)
   const value_type imu_step_{step_ / rate_ratio_};
+  // 固定种子保证仿真数据可复现 (蒙特卡洛仿真时可改为 std::nullopt 以随机播种)
+  const typename ImuNoiseModel<value_type>::Seed imu_noise_seed_{42U};
+  // IMU 测量误差模型 (噪声密度默认取 EuRoC ADIS16448 规格, 详见 Config 定义)
+  ImuNoiseModel<value_type> imu_noise_model_{
+      typename ImuNoiseModel<value_type>::Config{
+          .sample_rate = static_cast<value_type>(rate_ratio_) / step_,
+      },
+      imu_noise_seed_,
+  };
 
   const std::filesystem::path path_mav0_{"mav0"};
   const std::filesystem::path path_cam0_{path_mav0_ / "cam0"};
@@ -330,6 +340,7 @@ struct VisualSim
 
   void WriteImuConfig(const std::filesystem::path &path_imu) const
   {
+    const auto &noise_config{imu_noise_model_.GetConfig()};
     std::ofstream fout_imu{path_imu / "sensor.yaml"};
     std::print(fout_imu,
                "sensor_type: imu\n\n"
@@ -351,15 +362,15 @@ struct VisualSim
                "accelerometer_random_walk:   {:.4e} "
                "# [ m / s^3 / sqrt(Hz) ]   ( accel bias diffusion )\n",
                // 采样频率
-               static_cast<value_type>(rate_ratio_) / step_,
+               noise_config.sample_rate,
                // 陀螺仪白噪声功率密度
-               0.0,
+               noise_config.gyro_noise_density,
                // 陀螺仪随机游走
-               0.0,
+               noise_config.gyro_random_walk,
                // 加速度计白噪声功率密度
-               0.0,
+               noise_config.accel_noise_density,
                // 加速度计随机游走
-               0.0);
+               noise_config.accel_random_walk);
   }
 
   void
@@ -559,39 +570,6 @@ struct VisualSim
         std::tie(imu_position, imu_attitude) = GetPose(imu_time);
         Quaternion imu_attitude_quat{imu_attitude};
 
-        // 输出仿真 Ground Truth 数据
-        std::print(fout_groundtruth_csv,
-                   // 时间戳
-                   "{:020d}, "
-                   // 位置
-                   "{:.18f}, {:.18f}, {:.18f}, "
-                   // 朝向
-                   "{:.18f}, {:.18f}, {:.18f}, {:.18f}, "
-                   // 线速度
-                   "{:.18f}, {:.18f}, {:.18f}, "
-                   // 陀螺仪零偏
-                   "0.0000, 0.0000, 0.0000, "
-                   // 加速度计零偏
-                   "0.0000, 0.0000, 0.0000, "
-                   // 线加速度
-                   "{:.18f}, {:.18f}, {:.18f}, "
-                   // 角速度
-                   "{:.18f}, {:.18f}, {:.18f}\n",
-                   imu_timestamp_ns, //
-                   imu_position.x(), imu_position.y(),
-                   imu_position.z(), //
-                   imu_attitude_quat.w(), imu_attitude_quat.x(),
-                   imu_attitude_quat.y(),
-                   imu_attitude_quat.z(), //
-                   imu_linear_velocity_world.x(), imu_linear_velocity_world.y(),
-                   imu_linear_velocity_world.z(), //
-                   imu_linear_acceleration_world.x(),
-                   imu_linear_acceleration_world.y(),
-                   imu_linear_acceleration_world.z(), //
-                   imu_angular_velocity_world.x(),
-                   imu_angular_velocity_world.y(),
-                   imu_angular_velocity_world.z());
-
         // 转换坐标系：从世界坐标系转为传感器坐标系
 
         Point3 imu_angular_velocity_sensor{
@@ -609,7 +587,57 @@ struct VisualSim
                 * (imu_linear_acceleration_world - gravity_world),
         };
 
-        // 输出仿真 IMU 数据
+        // 对传感器坐标系下的理想采样值叠加 Bias 随机游走和白噪声
+        // (真值变量不受污染, 仅测量值携带误差)
+        const auto [imu_angular_velocity_measured,
+                    imu_linear_acceleration_measured]
+            = imu_noise_model_.Corrupt(imu_angular_velocity_sensor,
+                                       imu_linear_acceleration_sensor);
+        const Point3 &gyro_bias{imu_noise_model_.GetGyroBias()};
+        const Point3 &accel_bias{imu_noise_model_.GetAccelBias()};
+
+        // 输出仿真 Ground Truth 数据
+        std::print(
+            fout_groundtruth_csv,
+            // 时间戳
+            "{:020d}, "
+            // 位置
+            "{:.18f}, {:.18f}, {:.18f}, "
+            // 朝向
+            "{:.18f}, {:.18f}, {:.18f}, {:.18f}, "
+            // 线速度
+            "{:.18f}, {:.18f}, {:.18f}, "
+            // 陀螺仪零偏
+            "{:.18f}, {:.18f}, {:.18f}, "
+            // 加速度计零偏
+            "{:.18f}, {:.18f}, {:.18f}, "
+            // 线加速度
+            "{:.18f}, {:.18f}, {:.18f}, "
+            // 角速度
+            "{:.18f}, {:.18f}, {:.18f}\n",
+            imu_timestamp_ns, //
+            // IMU 在世界坐标系下的位置 ( p_RS_R_x [m], p_RS_R_y [m], p_RS_R_z [m] )
+            imu_position.x(), imu_position.y(), imu_position.z(),
+            // IMU 的朝向 ( q_RS_w [], q_RS_x [], q_RS_y [], q_RS_z [] )
+            imu_attitude_quat.w(), imu_attitude_quat.x(), imu_attitude_quat.y(),
+            imu_attitude_quat.z(),
+            // IMU 在世界坐标系下的线速度 ( v_RS_R_x [m s^-1], v_RS_R_y [m s^-1], v_RS_R_z [m s^-1] )
+            imu_linear_velocity_world.x(), imu_linear_velocity_world.y(),
+            imu_linear_velocity_world.z(),
+            // 陀螺仪在传感器坐标系下的零偏 ( b_w_RS_S_x [rad s^-1], b_w_RS_S_y [rad s^-1], b_w_RS_S_z [rad s^-1] )
+            gyro_bias.x(), gyro_bias.y(), gyro_bias.z(),
+            // 加速度计在传感器坐标系下的零偏 ( b_a_RS_S_x [m s^-2], b_a_RS_S_y [m s^-2], b_a_RS_S_z [m s^-2] )
+            accel_bias.x(), accel_bias.y(), accel_bias.z(),
+            // IMU 在世界坐标系下的线加速度 ( a_RS_R_x [m s^-2], a_RS_R_y [m s^-2], a_RS_R_z [m s^-2] )
+            imu_linear_acceleration_world.x(),
+            imu_linear_acceleration_world.y(),
+            imu_linear_acceleration_world.z(),
+            // IMU 在世界坐标系下的角速度 ( w_RS_R_x [rad s^-1], w_RS_R_y [rad s^-1], w_RS_R_z [rad s^-1] )
+            imu_angular_velocity_world.x(), imu_angular_velocity_world.y(),
+            imu_angular_velocity_world.z()
+        );
+
+        // 输出仿真 IMU 数据 (已叠加 Bias 和白噪声)
         std::print(fout_imu0_data_csv,
                    // 时间戳
                    "{:020d}, "
@@ -618,12 +646,12 @@ struct VisualSim
                    // 加速度
                    "{:.18f}, {:.18f}, {:.18f}\n",
                    imu_timestamp_ns, //
-                   imu_angular_velocity_sensor.x(),
-                   imu_angular_velocity_sensor.y(),
-                   imu_angular_velocity_sensor.z(), //
-                   imu_linear_acceleration_sensor.x(),
-                   imu_linear_acceleration_sensor.y(),
-                   imu_linear_acceleration_sensor.z());
+                   imu_angular_velocity_measured.x(),
+                   imu_angular_velocity_measured.y(),
+                   imu_angular_velocity_measured.z(), //
+                   imu_linear_acceleration_measured.x(),
+                   imu_linear_acceleration_measured.y(),
+                   imu_linear_acceleration_measured.z());
       }
 #endif
 
