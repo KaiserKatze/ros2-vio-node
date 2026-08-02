@@ -6,6 +6,8 @@
 
 #include <Eigen/Dense>
 
+#include <sophus/se3.hpp>
+
 namespace FastVIO::VisualSim
 {
 
@@ -15,15 +17,13 @@ namespace FastVIO::VisualSim
 template <typename value_type>
 struct Camera
 {
-  Eigen::Matrix<value_type, 3, 3> intrinsic_{
-      Eigen::Matrix<value_type, 3, 3>::Identity(),
-  };
-  Eigen::Matrix<value_type, 3, 3> rotation_{
-      Eigen::Matrix<value_type, 3, 3>::Identity(),
-  };
-  Eigen::Vector<value_type, 3> translation_{
-      Eigen::Vector<value_type, 3>::Zero(),
-  };
+  using Pose      = Sophus::SE3<value_type>;
+  using Intrinsic = Eigen::Matrix<value_type, 3, 3>;
+
+  // 相机内参
+  Intrinsic intrinsic_{Intrinsic::Identity()};
+  // 相机外参: 载具坐标系 → 传感器坐标系的变换 (T_SB), p_S = T_SB · p_B
+  Pose sensor_from_body_{};
   int width_{752};
   int height_{480};
 
@@ -38,30 +38,24 @@ struct Camera
   using Point2 = Eigen::Vector<value_type, 2>;
   using Point3 = Eigen::Vector<value_type, 3>;
 
+  /**
+   * @param object_point 单个三维路标点在世界坐标系下的坐标
+   * @param body_pose 载具在世界坐标系下的位姿 (T_WB)
+   */
   Point3 ProjectPoint(const Point3 &object_point,
-                      const Eigen::Matrix<value_type, 3, 3> &parent_rotation
-                      = Eigen::Matrix<value_type, 3, 3>::Identity(),
-                      const Eigen::Vector<value_type, 3> &parent_translation
-                      = Eigen::Vector<value_type, 3>::Zero()) const
+                      const Pose &body_pose = Pose{}) const
   {
-    const Point3 object_point_parent{
-        parent_rotation * object_point + parent_translation,
-    };
-    const Point3 point_normalized{
-        rotation_ * object_point_parent + translation_,
-    };
-    const Point3 pixel_point{
-        intrinsic_ * point_normalized,
-    };
-    return pixel_point;
+    return intrinsic_
+           * (sensor_from_body_ * body_pose.inverse() * object_point);
   }
 
+  /**
+   * @param object_matrix 任意个三维路标点在世界坐标系下的坐标 (组成的 3xN 矩阵)
+   * @param body_pose 载具在世界坐标系下的位姿 (T_WB)
+   */
   std::pair<std::vector<std::size_t>, std::vector<Point2>>
   Project(const Eigen::Matrix<value_type, 3, Eigen::Dynamic> &object_matrix,
-          const Eigen::Matrix<value_type, 3, 3> &parent_rotation
-          = Eigen::Matrix<value_type, 3, 3>::Identity(),
-          const Eigen::Vector<value_type, 3> &parent_translation
-          = Eigen::Vector<value_type, 3>::Zero()) const
+          const Pose &body_pose = Pose{}) const
   {
     // 将三维点的非齐次坐标转换为齐次坐标
     auto n_points{object_matrix.cols()};
@@ -70,15 +64,12 @@ struct Camera
     object_matrix_homo(Eigen::seq(0, 2), Eigen::all) = object_matrix;
     object_matrix_homo.row(3).setOnes();
 
-    // 组装相机外参矩阵
-    Eigen::Matrix<value_type, 3, 4> extrinsic_matrix;
-    extrinsic_matrix.template block<3, 3>(0, 0) //
-        = rotation_ * parent_rotation;
-    extrinsic_matrix.template block<3, 1>(0, 3) //
-        = rotation_ * parent_translation + translation_;
+    // 组装相机外参矩阵 (世界系 → 传感器系)
+    const Pose sensor_from_world{sensor_from_body_ * body_pose.inverse()};
+    const auto extrinsic_matrix{sensor_from_world.matrix3x4()};
     // 投影得到像素坐标系下的齐次坐标
     Eigen::Matrix<value_type, 3, Eigen::Dynamic> pixel_matrix_homo{
-        // (3x3) * (3x4) * (4,N)
+        // (3x3) * (3x4) * (4xN)
         intrinsic_ * extrinsic_matrix * object_matrix_homo,
     };
 

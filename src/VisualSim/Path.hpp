@@ -12,6 +12,8 @@
 
 #include <Eigen/Dense>
 
+#include <sophus/se3.hpp>
+
 #include "Room.hpp"
 #include "StereoRig.hpp"
 
@@ -25,9 +27,9 @@ struct AbstractPath
   using Position           = Vector3;
   using LinearVelocity     = Vector3;
   using LinearAcceleration = Vector3;
-  using Attitude           = Eigen::Matrix<value_type, 3, 3>;
+  using Attitude           = Sophus::SO3<value_type>;
   using AngularVelocity    = Vector3;
-  using Pose               = std::pair<Position, Attitude>;
+  using Pose               = Sophus::SE3<value_type>;
   using Kinematics
       = std::tuple<LinearVelocity, LinearAcceleration, AngularVelocity>;
 
@@ -69,10 +71,9 @@ public:
   using Pose            = typename AbstractPath<value_type>::Pose;
   using Kinematics      = typename AbstractPath<value_type>::Kinematics;
 
-  PathStationary(value_type time_duration, Position position,
-                 Attitude attitude) :
-    AbstractPath<value_type>{time_duration}, position_{position},
-    attitude_{attitude}
+  PathStationary(value_type time_duration, Position position = Position::Zero(),
+                 Attitude attitude = Attitude{}) :
+    AbstractPath<value_type>{time_duration}, pose_{attitude, position}
   {
   }
 
@@ -81,7 +82,7 @@ public:
   Pose GetPose(value_type time) const override
   {
     (void) time;
-    return Pose{position_, attitude_};
+    return pose_;
   }
 
   Kinematics GetKinematics(value_type time) const override
@@ -97,19 +98,17 @@ public:
 public:
   const Position &GetPosition() const
   {
-    return position_;
+    return pose_.translation();
   }
 
   const Attitude &GetAttitude() const
   {
-    return attitude_;
+    return pose_.so3();
   }
 
 private:
   // 位置
-  const Position position_;
-  // 朝向
-  const Attitude attitude_;
+  const Pose pose_;
 };
 
 template <typename value_type = double>
@@ -164,7 +163,7 @@ public:
                          + static_cast<value_type>(0.5) * linear_acceleration
                                * time)
                             * time};
-    return Pose{position, attitude_};
+    return Pose{attitude_, position};
   }
 
   Kinematics GetKinematics(value_type time) const override
@@ -316,7 +315,7 @@ public:
     case OrientationMode::Tangent:
     {
       // 逆时针运动的切线方向
-      basis_z = -sin_theta * vec_u + cos_theta * vec_v;
+      basis_z = (-sin_theta * vec_u + cos_theta * vec_v).normalized();
       basis_y = -normalized_norm;                    // 朝向下方
       basis_x = basis_y.cross(basis_z).normalized(); // 朝向右侧
       break;
@@ -331,12 +330,12 @@ public:
     }
 
     // 朝向
-    Attitude att_body;
+    Eigen::Matrix<value_type, 3, 3> att_body;
     att_body.col(0) = basis_x;
     att_body.col(1) = basis_y;
     att_body.col(2) = basis_z;
 
-    return Pose{pos_body, att_body};
+    return Pose{Attitude{att_body}, pos_body};
   }
 
   Kinematics GetKinematics(value_type time) const override
@@ -490,11 +489,7 @@ PathManager<value_type>::GetImage(const StereoRig<value_type> &rig,
     return std::nullopt;
   }
   const typename PathManager<value_type>::Pose &pose{opt_pose.value()};
-  const auto &pos_body{std::get<0>(pose)};
-  const auto &att_body{std::get<1>(pose)};
-  return std::make_optional(rig.Project(room_.object_matrix_,
-                                        att_body.transpose(),
-                                        -att_body.transpose() * pos_body));
+  return std::make_optional(rig.Project(room_.object_matrix_, pose));
 }
 
 template <typename value_type>

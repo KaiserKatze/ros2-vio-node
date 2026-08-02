@@ -27,6 +27,8 @@
 
 #include <Eigen/Dense>
 
+#include <sophus/se3.hpp>
+
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/check.hpp>
 #include <opencv2/core/eigen.hpp>
@@ -95,12 +97,14 @@ struct VisualSim
   using Point2     = Eigen::Vector<value_type, 2>;
   using Attitude   = Eigen::Matrix<value_type, 3, 3>;
   using Quaternion = Eigen::Quaternion<value_type>;
+  using Pose       = typename AbstractPath<value_type>::Pose;
   using Frame      = typename StereoRig<value_type>::Frame;
 
   VisualSim() : mesh_plot_{room_}
   {
     // 只修改双目相机的基线长度
-    rig_.camera_right_.translation_ = {-0.1, 0.0, 0.0};
+    rig_.camera_right_.sensor_from_body_.translation()
+        = -0.1 * Eigen::Vector<value_type, 3>::UnitX();
 
 #pragma region CONSTRUCT_PATH
 
@@ -132,8 +136,8 @@ struct VisualSim
         OrientationMode::LookAtCenter
     )};
     // 初始朝向
-    const Attitude att_init{
-        std::get<Attitude>(path_circle->GetPose(static_cast<value_type>(0.0)))
+    const auto att_init{
+        path_circle->GetPose(static_cast<value_type>(0.0)).so3()
     };
     // 线速度大小
     const value_type linear_velocity_norm{omega * radius};
@@ -212,6 +216,8 @@ struct VisualSim
 
     // 输出 mav0/README.md 说明文件
     std::ofstream fout_readme{path_mav0_ / "README.txt"};
+    // 初始朝向的矩阵形式 (仅用于 README 输出)
+    const Attitude att_init_matrix{att_init.matrix()};
     std::print(
         fout_readme,
         "Simulation Time: {} [s]  <!-- 仿真时长 (单位: 秒) -->\n"
@@ -254,27 +260,27 @@ struct VisualSim
         "\t<!-- 匀速圆周运动的轨迹圆所在平面的法向量 -->\n"
         "\tTrajectory Norm: [{:.2f}, {:.2f}, {:.2f}]\n"
         "\tMovement Paradigm: {}  <!-- 无人机的运动范式 -->\n",
-        total_duration,                                          //
-        gravity_world_norm_,                                     //
-        room_.width_, room_.depth_, room_.height_,               //
-        room_.center_.x(), room_.center_.y(), room_.center_.z(), //
-        radius,                                                  //
-        time_static_,                                            //
-        pos_all_start.x(), pos_all_start.y(), pos_all_start.z(), //
-        att_init(0, 0), att_init(0, 1), att_init(0, 2),          //
-        att_init(1, 0), att_init(1, 1), att_init(1, 2),          //
-        att_init(2, 0), att_init(2, 1), att_init(2, 2),          //
-        path_acceleration->GetDuration(),                        //
-        path_acceleration->GetPositionStart().x(),               //
-        path_acceleration->GetPositionStart().y(),               //
-        path_acceleration->GetPositionStart().z(),               //
-        path_acceleration->GetPositionEnd().x(),                 //
-        path_acceleration->GetPositionEnd().y(),                 //
-        path_acceleration->GetPositionEnd().z(),                 //
-        path_acceleration->GetLinearVelocityStartNorm(),         //
-        path_acceleration->GetLinearAccelerationNorm(),          //
-        path_circle->GetDuration(),                              //
-        path_circle->GetOmega(),                                 //
+        total_duration,                                                      //
+        gravity_world_norm_,                                                 //
+        room_.width_, room_.depth_, room_.height_,                           //
+        room_.center_.x(), room_.center_.y(), room_.center_.z(),             //
+        radius,                                                              //
+        time_static_,                                                        //
+        pos_all_start.x(), pos_all_start.y(), pos_all_start.z(),             //
+        att_init_matrix(0, 0), att_init_matrix(0, 1), att_init_matrix(0, 2), //
+        att_init_matrix(1, 0), att_init_matrix(1, 1), att_init_matrix(1, 2), //
+        att_init_matrix(2, 0), att_init_matrix(2, 1), att_init_matrix(2, 2), //
+        path_acceleration->GetDuration(),                                    //
+        path_acceleration->GetPositionStart().x(),                           //
+        path_acceleration->GetPositionStart().y(),                           //
+        path_acceleration->GetPositionStart().z(),                           //
+        path_acceleration->GetPositionEnd().x(),                             //
+        path_acceleration->GetPositionEnd().y(),                             //
+        path_acceleration->GetPositionEnd().z(),                             //
+        path_acceleration->GetLinearVelocityStartNorm(),                     //
+        path_acceleration->GetLinearAccelerationNorm(),                      //
+        path_circle->GetDuration(),                                          //
+        path_circle->GetOmega(),                                             //
         path_circle->GetOmega()
             * path_circle->GetNorm()
                   .cross(path_circle->GetPositionStart()
@@ -306,11 +312,9 @@ struct VisualSim
   void WriteCameraConfig(const std::filesystem::path &path_cam,
                          const Camera<value_type> &camera) const
   {
-    // Camera 内部的 rotation_/translation_ 约定为 p_S = R·p_B + t (即 T_SB),
+    // Camera 的外参约定为 T_SB (p_S = T_SB·p_B),
     // 而 EuRoC sensor.yaml 中 T_BS 约定为 p_B = T_BS·p_S, 需取逆后输出
-    const Attitude rotation_body_from_sensor{camera.rotation_.transpose()};
-    const Point3 translation_body_from_sensor{-rotation_body_from_sensor
-                                              * camera.translation_};
+    const auto body_from_sensor{camera.sensor_from_body_.inverse().matrix3x4()};
     std::ofstream fout_cam{path_cam / "sensor.yaml"};
     std::print(fout_cam,
                "sensor_type: camera\n\n"
@@ -328,14 +332,12 @@ struct VisualSim
                "distortion_model: radial-tangential\n"
                "distortion_coefficients: [0.0, 0.0, 0.0, 0.0]\n",
                // 空间变换的齐次矩阵形式
-               rotation_body_from_sensor(0, 0), rotation_body_from_sensor(0, 1),
-               rotation_body_from_sensor(0, 2),
-               translation_body_from_sensor(0), //
-               rotation_body_from_sensor(1, 0), rotation_body_from_sensor(1, 1),
-               rotation_body_from_sensor(1, 2),
-               translation_body_from_sensor(1), //
-               rotation_body_from_sensor(2, 0), rotation_body_from_sensor(2, 1),
-               rotation_body_from_sensor(2, 2), translation_body_from_sensor(2),
+               body_from_sensor(0, 0), body_from_sensor(0, 1),
+               body_from_sensor(0, 2), body_from_sensor(0, 3), //
+               body_from_sensor(1, 0), body_from_sensor(1, 1),
+               body_from_sensor(1, 2), body_from_sensor(1, 3), //
+               body_from_sensor(2, 0), body_from_sensor(2, 1),
+               body_from_sensor(2, 2), body_from_sensor(2, 3),
                // 采样频率
                static_cast<value_type>(1.0) / step_,
                // 分辨率
@@ -397,7 +399,7 @@ struct VisualSim
 
 #pragma endregion
 
-  std::pair<Point3, Attitude> GetPose(value_type time) const
+  Pose GetPose(value_type time) const
   {
     auto opt_pose{path_manager_.GetPose(time)};
     if (opt_pose.has_value())
@@ -539,10 +541,6 @@ struct VisualSim
       }
       std::print(fout_cam1_pixels, "]\n");
 
-      Point3 true_current_position{Point3::Zero()};
-      Quaternion true_current_attitude{Quaternion::Identity()};
-      std::tie(true_current_position, true_current_attitude) = GetPose(time);
-
 #pragma region GENERATE_IMU_AND_GROUNDTRUTH_DATA
 
 #if (OUTPUT_AS_EUROC)
@@ -569,13 +567,10 @@ struct VisualSim
         std::tie(imu_linear_velocity_world, imu_linear_acceleration_world,
                  imu_angular_velocity_world) = opt_kinematics.value();
 
-        // 位置 $r^{vi}_i$
-        Point3 imu_position{Point3::Zero()};
-        // 朝向 $C_{iv}$
-        Attitude imu_attitude{Attitude::Identity()};
-        // 获取 IMU 在世界坐标系下的位置、朝向
-        std::tie(imu_position, imu_attitude) = GetPose(imu_time);
-        Quaternion imu_attitude_quat{imu_attitude};
+        // 获取 IMU 在世界坐标系下的位姿 (位置 $r^{vi}_i$、朝向 $C_{iv}$)
+        const Pose imu_pose{GetPose(imu_time)};
+        const Point3 imu_position{imu_pose.translation()};
+        const Attitude imu_attitude{imu_pose.rotationMatrix()};
 
         // 转换坐标系：从世界坐标系转为传感器坐标系
 
@@ -603,6 +598,7 @@ struct VisualSim
         const Point3 &gyro_bias{imu_noise_model_.GetGyroBias()};
         const Point3 &accel_bias{imu_noise_model_.GetAccelBias()};
 
+        const Quaternion imu_attitude_quat{imu_pose.unit_quaternion()};
         // 输出仿真 Ground Truth 数据
         std::print(
             fout_groundtruth_csv,

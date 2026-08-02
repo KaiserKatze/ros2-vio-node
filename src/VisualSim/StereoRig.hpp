@@ -24,22 +24,22 @@ struct StereoRig
   Camera<value_type> camera_right_;
 
   using Point2 = Eigen::Vector<value_type, 2>;
+  using Pose   = typename Camera<value_type>::Pose;
   using Frame  = std::tuple<std::vector<std::size_t>, std::vector<Point2>,
                             std::vector<Point2>>;
 
+  /**
+   * @param object_matrix 任意个三维路标点在世界坐标系下的坐标 (组成的 3xN 矩阵)
+   * @param body_pose 载具在世界坐标系下的位姿 (T_WB)
+   */
   Frame
   Project(const Eigen::Matrix<value_type, 3, Eigen::Dynamic> &object_matrix,
-          const Eigen::Matrix<value_type, 3, 3> &parent_rotation
-          = Eigen::Matrix<value_type, 3, 3>::Identity(),
-          const Eigen::Vector<value_type, 3> &parent_translation
-          = Eigen::Vector<value_type, 3>::Zero()) const
+          const Pose &body_pose = Pose{}) const
   {
     auto &&[indices_left, pixels_left]
-        = camera_left_.Project(object_matrix, parent_rotation,
-                               parent_translation);
+        = camera_left_.Project(object_matrix, body_pose);
     auto &&[indices_right, pixels_right]
-        = camera_right_.Project(object_matrix, parent_rotation,
-                                parent_translation);
+        = camera_right_.Project(object_matrix, body_pose);
 
     // std::print(
     //     stderr,
