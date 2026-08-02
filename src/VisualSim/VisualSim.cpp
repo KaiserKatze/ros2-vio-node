@@ -306,6 +306,11 @@ struct VisualSim
   void WriteCameraConfig(const std::filesystem::path &path_cam,
                          const Camera<value_type> &camera) const
   {
+    // Camera 内部的 rotation_/translation_ 约定为 p_S = R·p_B + t (即 T_SB),
+    // 而 EuRoC sensor.yaml 中 T_BS 约定为 p_B = T_BS·p_S, 需取逆后输出
+    const Attitude rotation_body_from_sensor{camera.rotation_.transpose()};
+    const Point3 translation_body_from_sensor{-rotation_body_from_sensor
+                                              * camera.translation_};
     std::ofstream fout_cam{path_cam / "sensor.yaml"};
     std::print(fout_cam,
                "sensor_type: camera\n\n"
@@ -323,12 +328,14 @@ struct VisualSim
                "distortion_model: radial-tangential\n"
                "distortion_coefficients: [0.0, 0.0, 0.0, 0.0]\n",
                // 空间变换的齐次矩阵形式
-               camera.rotation_(0, 0), camera.rotation_(0, 1),
-               camera.rotation_(0, 2), camera.translation_(0),
-               camera.rotation_(1, 0), camera.rotation_(1, 1),
-               camera.rotation_(1, 2), camera.translation_(1),
-               camera.rotation_(2, 0), camera.rotation_(2, 1),
-               camera.rotation_(2, 2), camera.translation_(2),
+               rotation_body_from_sensor(0, 0), rotation_body_from_sensor(0, 1),
+               rotation_body_from_sensor(0, 2),
+               translation_body_from_sensor(0), //
+               rotation_body_from_sensor(1, 0), rotation_body_from_sensor(1, 1),
+               rotation_body_from_sensor(1, 2),
+               translation_body_from_sensor(1), //
+               rotation_body_from_sensor(2, 0), rotation_body_from_sensor(2, 1),
+               rotation_body_from_sensor(2, 2), translation_body_from_sensor(2),
                // 采样频率
                static_cast<value_type>(1.0) / step_,
                // 分辨率
