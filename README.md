@@ -31,4 +31,5 @@ ros2 run euroc_vio opt.py --config config.yaml
 # 运行 MSCKF
 ros2 run euroc_vio msckf ~/EuRoC_MAV_Datasets/V2_01_easy/mav0/ --init groundtruth --mono-csv=estimated_motion_cam0.csv
 ros2 run euroc_vio msckf /tmp/imu_noise_analysis/mav0/ --init groundtruth --mono-csv=/tmp/nowhere/nothing
+ros2 run euroc_vio msckf ./mav0/ --init groundtruth --mono-csv=./mav0/estimated_motion_sim1.csv
 ```
