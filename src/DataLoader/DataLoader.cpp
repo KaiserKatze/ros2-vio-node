@@ -91,13 +91,17 @@ public:
 
     if (csv_file_.empty())
     {
-      throw std::runtime_error{"Required configuration path cannot be empty."};
+      throw std::runtime_error{"Required trajectory path cannot be empty."};
     }
     std::error_code ec;
-    if (!std::filesystem::is_regular_file(csv_file_, ec))
+    if (std::filesystem::is_regular_file(csv_file_, ec))
+    {
+      std::println(stderr, "Required trajectory path '{}' found.", csv_file_);
+    }
+    else
     {
       throw std::runtime_error{
-          std::format("Required configuration path '{}' not found.", csv_file_)
+          std::format("Required trajectory path '{}' not found.", csv_file_)
       };
     }
 
