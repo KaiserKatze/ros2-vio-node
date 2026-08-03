@@ -992,29 +992,21 @@ public:
     {
       estimator_config_.sensor_config_truth_
           = std::move(opt_sensor_config_truth.value());
+      const auto &T_BS_truth{
+          estimator_config_.sensor_config_truth_.transform_matrix_
+      };
       std::print(stderr,
                  "[INFO] T_BS_truth =\n"
                  "\t[[{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
                  "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}]]\n",
-                 estimator_config_.sensor_config_truth_.transform_matrix_(0, 0),
-                 estimator_config_.sensor_config_truth_.transform_matrix_(0, 1),
-                 estimator_config_.sensor_config_truth_.transform_matrix_(0, 2),
-                 estimator_config_.sensor_config_truth_.transform_matrix_(0, 3),
-                 estimator_config_.sensor_config_truth_.transform_matrix_(1, 0),
-                 estimator_config_.sensor_config_truth_.transform_matrix_(1, 1),
-                 estimator_config_.sensor_config_truth_.transform_matrix_(1, 2),
-                 estimator_config_.sensor_config_truth_.transform_matrix_(1, 3),
-                 estimator_config_.sensor_config_truth_.transform_matrix_(2, 0),
-                 estimator_config_.sensor_config_truth_.transform_matrix_(2, 1),
-                 estimator_config_.sensor_config_truth_.transform_matrix_(2, 2),
-                 estimator_config_.sensor_config_truth_.transform_matrix_(2, 3),
-                 estimator_config_.sensor_config_truth_.transform_matrix_(3, 0),
-                 estimator_config_.sensor_config_truth_.transform_matrix_(3, 1),
-                 estimator_config_.sensor_config_truth_.transform_matrix_(3, 2),
-                 estimator_config_.sensor_config_truth_.transform_matrix_(3,
-                                                                          3));
+                 T_BS_truth(0, 0), T_BS_truth(0, 1), T_BS_truth(0, 2),
+                 T_BS_truth(0, 3), T_BS_truth(1, 0), T_BS_truth(1, 1),
+                 T_BS_truth(1, 2), T_BS_truth(1, 3), T_BS_truth(2, 0),
+                 T_BS_truth(2, 1), T_BS_truth(2, 2), T_BS_truth(2, 3),
+                 T_BS_truth(3, 0), T_BS_truth(3, 1), T_BS_truth(3, 2),
+                 T_BS_truth(3, 3));
     }
     else
     {
