@@ -2,8 +2,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <format>
 #include <fstream>
+#include <print>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -30,6 +32,8 @@ struct DatumTruth
   Load(const std::string &path_truth_csv,
        const Sophus::SO3d &sensor_rotation_wrt_body)
   {
+    std::println(stderr, "Loading data from: {}", path_truth_csv);
+
     std::vector<DatumTruth> data;
 
     std::ifstream file{path_truth_csv};
