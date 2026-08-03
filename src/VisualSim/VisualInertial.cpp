@@ -855,37 +855,62 @@ public:
       throw std::runtime_error{"Required configuration paths cannot be empty."};
     }
     std::error_code ec;
-    if (!std::filesystem::is_regular_file(path_estimation_csv, ec))
+    if (std::filesystem::is_regular_file(path_estimation_csv, ec))
+    {
+      std::println("Required configuration path '{}' found.",
+                   path_estimation_csv);
+    }
+    else
     {
       throw std::runtime_error{std::format(
           "Required configuration path '{}' not found.", path_estimation_csv
       )};
     }
-    if (!std::filesystem::is_regular_file(path_cam0_yaml, ec))
+    if (std::filesystem::is_regular_file(path_cam0_yaml, ec))
+    {
+      std::println("Required configuration path '{}' found.", path_cam0_yaml);
+    }
+    else
     {
       throw std::runtime_error{std::format(
           "Required configuration path '{}' not found.", path_cam0_yaml
       )};
     }
-    if (!std::filesystem::is_regular_file(path_imu_csv, ec))
+    if (std::filesystem::is_regular_file(path_imu_csv, ec))
+    {
+      std::println("Required configuration path '{}' found.", path_imu_csv);
+    }
+    else
     {
       throw std::runtime_error{std::format(
           "Required configuration path '{}' not found.", path_imu_csv
       )};
     }
-    if (!std::filesystem::is_regular_file(path_imu_yaml, ec))
+    if (std::filesystem::is_regular_file(path_imu_yaml, ec))
+    {
+      std::println("Required configuration path '{}' found.", path_imu_yaml);
+    }
+    else
     {
       throw std::runtime_error{std::format(
           "Required configuration path '{}' not found.", path_imu_yaml
       )};
     }
-    if (!std::filesystem::is_regular_file(path_truth_csv, ec))
+    if (std::filesystem::is_regular_file(path_truth_csv, ec))
+    {
+      std::println("Required configuration path '{}' found.", path_truth_csv);
+    }
+    else
     {
       throw std::runtime_error{std::format(
           "Required configuration path '{}' not found.", path_truth_csv
       )};
     }
-    if (!std::filesystem::is_regular_file(path_truth_yaml, ec))
+    if (std::filesystem::is_regular_file(path_truth_yaml, ec))
+    {
+      std::println("Required configuration path '{}' found.", path_truth_yaml);
+    }
+    else
     {
       throw std::runtime_error{std::format(
           "Required configuration path '{}' not found.", path_truth_yaml
@@ -1020,6 +1045,7 @@ public:
     // 根据 Launch 动态生成需要的具体评估器。
     for (const auto &name : active_estimators)
     {
+      std::println(stderr, "创建估计器 {}.", name);
       if (name == "FastEstimator")
       {
         estimators_.push_back(
