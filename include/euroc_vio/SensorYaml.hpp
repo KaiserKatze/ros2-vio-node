@@ -1,13 +1,15 @@
 #pragma once
 
-#include <cassert>
 #include <cmath>
 #include <concepts>
+#include <cstddef>
 #include <filesystem>
+#include <format>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
-#include <vector>
 
 #include <Eigen/Dense>
 
@@ -51,45 +53,142 @@ struct SensorYaml
   static std::optional<SensorYaml>
   ReadSensorYaml(const PathLike auto &path_sensor_yaml)
   {
-    SensorYaml result_sensor_config;
-    YAML::Node node_sensor{YAML::LoadFile(path_sensor_yaml)};
-    if (node_sensor["sensor_type"]
-        && node_sensor["sensor_type"].as<std::string>() == "imu")
+    const std::filesystem::path yaml_path{path_sensor_yaml};
+    try
     {
-      result_sensor_config.gyroscope_noise_density_
-          = node_sensor["gyroscope_noise_density"].as<double>();
-      result_sensor_config.gyroscope_random_walk_
-          = node_sensor["gyroscope_random_walk"].as<double>();
-      result_sensor_config.accelerometer_noise_density_
-          = node_sensor["accelerometer_noise_density"].as<double>();
-      result_sensor_config.accelerometer_random_walk_
-          = node_sensor["accelerometer_random_walk"].as<double>();
+      return ParseSensorNode(YAML::LoadFile(yaml_path.string()), yaml_path);
+    }
+    catch (const YAML::Exception &ex)
+    {
+      throw std::runtime_error{std::format("解析传感器配置 '{}' 失败{}: {}.",
+                                           yaml_path.string(),
+                                           DescribeYamlMark(ex.mark), ex.msg)};
+    }
+  }
 
-      assert(result_sensor_config.gyroscope_noise_density_ >= 0.0
-             && !std::isnan(result_sensor_config.gyroscope_noise_density_)
-             && !std::isinf(result_sensor_config.gyroscope_noise_density_)
-             && result_sensor_config.gyroscope_random_walk_ >= 0.0
-             && !std::isnan(result_sensor_config.gyroscope_random_walk_)
-             && !std::isinf(result_sensor_config.gyroscope_random_walk_)
-             && result_sensor_config.accelerometer_noise_density_ >= 0.0
-             && !std::isnan(result_sensor_config.accelerometer_noise_density_)
-             && !std::isinf(result_sensor_config.accelerometer_noise_density_)
-             && result_sensor_config.accelerometer_random_walk_ >= 0.0
-             && !std::isnan(result_sensor_config.accelerometer_random_walk_)
-             && !std::isinf(result_sensor_config.accelerometer_random_walk_));
-    }
-    if (!(node_sensor["T_BS"] && node_sensor["T_BS"]["data"]))
+private:
+  static constexpr std::string_view kImuSensorType{"imu"};
+  static constexpr std::size_t kTransformMatrixCols{4};
+  static constexpr std::size_t kTransformDataElementCount{16};
+
+  // 按需解析: T_BS 对所有传感器必需; rate_hz 与噪声参数仅对 IMU 必需,
+  // 其他传感器 (如相机/真值) 缺失这些字段时保留默认值
+  static SensorYaml ParseSensorNode(const YAML::Node &node_sensor,
+                                    const std::filesystem::path &yaml_path)
+  {
+    SensorYaml config;
+    config.transform_matrix_ = ReadTransformMatrix(node_sensor, yaml_path);
+    if (IsImuSensor(node_sensor))
     {
-      return std::nullopt;
+      config.rate_hz_ = ReadPositiveDouble(node_sensor, "rate_hz", yaml_path);
+      config.gyroscope_noise_density_
+          = ReadNonNegativeDouble(node_sensor, "gyroscope_noise_density",
+                                  yaml_path);
+      config.gyroscope_random_walk_
+          = ReadNonNegativeDouble(node_sensor, "gyroscope_random_walk",
+                                  yaml_path);
+      config.accelerometer_noise_density_
+          = ReadNonNegativeDouble(node_sensor, "accelerometer_noise_density",
+                                  yaml_path);
+      config.accelerometer_random_walk_
+          = ReadNonNegativeDouble(node_sensor, "accelerometer_random_walk",
+                                  yaml_path);
     }
-    std::vector<double> T_BS_data{
-        node_sensor["T_BS"]["data"].as<std::vector<double>>()
-    };
-    Eigen::Map<Eigen::Matrix4d> T_BS_mat{T_BS_data.data()};
-    result_sensor_config.transform_matrix_ = std::move(T_BS_mat);
-    result_sensor_config.rate_hz_ = node_sensor["rate_hz"].as<double>();
-    assert(result_sensor_config.rate_hz_ > 0.0);
-    return result_sensor_config;
+    else if (node_sensor["rate_hz"])
+    {
+      config.rate_hz_ = ReadPositiveDouble(node_sensor, "rate_hz", yaml_path);
+    }
+    return config;
+  }
+
+  static bool IsImuSensor(const YAML::Node &node_sensor)
+  {
+    const YAML::Node node_type{node_sensor["sensor_type"]};
+    return node_type && node_type.as<std::string>() == kImuSensorType;
+  }
+
+  static Eigen::Matrix4d
+  ReadTransformMatrix(const YAML::Node &node_sensor,
+                      const std::filesystem::path &yaml_path)
+  {
+    const YAML::Node node_T_BS{node_sensor["T_BS"]};
+    if (!node_T_BS)
+    {
+      throw std::runtime_error{std::format("'{}' 缺少配置 T_BS.",
+                                           yaml_path.string())};
+    }
+    const YAML::Node node_data{node_T_BS["data"]};
+    if (!node_data || node_data.size() != kTransformDataElementCount)
+    {
+      throw std::runtime_error{
+          std::format("'{}' 的配置 T_BS.data 缺失或元素个数不是 {}.",
+                      yaml_path.string(), kTransformDataElementCount)
+      };
+    }
+    // EuRoC 的 T_BS.data 为行主序展开
+    Eigen::Matrix4d matrix;
+    for (std::size_t i = 0; i < kTransformDataElementCount; ++i)
+    {
+      matrix(i / kTransformMatrixCols, i % kTransformMatrixCols)
+          = node_data[i].as<double>();
+    }
+    return matrix;
+  }
+
+  static double ReadFiniteDouble(const YAML::Node &node_sensor,
+                                 std::string_view key,
+                                 const std::filesystem::path &yaml_path)
+  {
+    const YAML::Node node_value{node_sensor[std::string{key}]};
+    if (!node_value)
+    {
+      throw std::runtime_error{std::format("'{}' 缺少配置 {}.",
+                                           yaml_path.string(), key)};
+    }
+    const double value{node_value.as<double>()};
+    if (!std::isfinite(value))
+    {
+      throw std::runtime_error{std::format("'{}' 的配置 {} 不是有限数值.",
+                                           yaml_path.string(), key)};
+    }
+    return value;
+  }
+
+  static double ReadPositiveDouble(const YAML::Node &node_sensor,
+                                   std::string_view key,
+                                   const std::filesystem::path &yaml_path)
+  {
+    const double value{ReadFiniteDouble(node_sensor, key, yaml_path)};
+    if (value <= 0.0)
+    {
+      throw std::runtime_error{
+          std::format("'{}' 的配置 {} 必须为正数, 实际为 {}.",
+                      yaml_path.string(), key, value)
+      };
+    }
+    return value;
+  }
+
+  static double ReadNonNegativeDouble(const YAML::Node &node_sensor,
+                                      std::string_view key,
+                                      const std::filesystem::path &yaml_path)
+  {
+    const double value{ReadFiniteDouble(node_sensor, key, yaml_path)};
+    if (value < 0.0)
+    {
+      throw std::runtime_error{
+          std::format("'{}' 的配置 {} 不允许为负数, 实际为 {}.",
+                      yaml_path.string(), key, value)
+      };
+    }
+    return value;
+  }
+
+  static std::string DescribeYamlMark(const YAML::Mark &mark)
+  {
+    return mark.pos >= 0
+               ? std::format(" (行 {}, 列 {})", mark.line + 1, mark.column + 1)
+               : std::string{};
   }
 };
 

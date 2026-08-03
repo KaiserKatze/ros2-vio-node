@@ -12,8 +12,10 @@
 #include <print>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <tuple>
+#include <typeinfo>
 #include <utility>
 #include <vector>
 
@@ -28,6 +30,8 @@ using namespace std::chrono_literals;
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core/check.hpp>
 #include <opencv2/core/eigen.hpp>
+
+#include <yaml-cpp/yaml.h>
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/time.hpp>
@@ -115,6 +119,12 @@ public:
    */
   virtual std::string GetName() const = 0;
 
+  virtual std::filesystem::path GetOutputFile() const
+  {
+    return std::filesystem::path{config_.output_dir_}
+           / std::format("{}.csv", GetName());
+  }
+
 protected:
   const EstimatorConfig config_;
 
@@ -127,9 +137,10 @@ private:
     {
       return;
     }
-    file_.open(std::filesystem::path{config_.output_dir_}
-                   / std::format("{}.csv", GetName()),
-               std::ios::trunc);
+    auto traj_csv_file{GetOutputFile()};
+    std::println(stderr, "正在向 {} 写入轨迹 ...",
+                 std::filesystem::absolute(traj_csv_file).string());
+    file_.open(traj_csv_file, std::ios::trunc);
   }
 
 protected:
@@ -144,6 +155,13 @@ protected:
       std::print(file_, "#timestamp [ns],"
                         "p_RS_R_x [m],p_RS_R_y [m],p_RS_R_z [m],"
                         "q_RS_w [],q_RS_x [],q_RS_y [],q_RS_z []\n");
+    }
+    else
+    {
+      auto traj_csv_file{GetOutputFile()};
+      throw std::runtime_error{std::format(
+          "无法打开文件 {} !", std::filesystem::absolute(traj_csv_file).string()
+      )};
     }
   }
 
@@ -745,6 +763,35 @@ private:
   EstimatorConfig estimator_config_;
   std::vector<std::unique_ptr<AbstractEstimator>> estimators_;
 
+  static SensorYaml LoadSensorConfigOrThrow(const std::string &yaml_path,
+                                            std::string_view sensor_label)
+  {
+    auto opt_sensor_config{SensorYaml::ReadSensorYaml(yaml_path)};
+    if (!opt_sensor_config.has_value())
+    {
+      throw std::runtime_error{std::format(
+          "传感器 {} 的配置文件 '{}' 解析结果为空.", sensor_label, yaml_path
+      )};
+    }
+    return std::move(opt_sensor_config.value());
+  }
+
+  static void PrintTransformMatrix(std::string_view matrix_label,
+                                   const Eigen::Matrix4d &matrix)
+  {
+    std::print(stderr,
+               "[INFO] {} =\n"
+               "\t[[{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
+               "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
+               "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
+               "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}]]\n",
+               matrix_label, matrix(0, 0), matrix(0, 1), matrix(0, 2),
+               matrix(0, 3), matrix(1, 0), matrix(1, 1), matrix(1, 2),
+               matrix(1, 3), matrix(2, 0), matrix(2, 1), matrix(2, 2),
+               matrix(2, 3), matrix(3, 0), matrix(3, 1), matrix(3, 2),
+               matrix(3, 3));
+  }
+
 public:
   /**
    * @brief 构造函数，声明 ROS 参数并初始化读取配置文件和数据集。
@@ -917,103 +964,23 @@ public:
       )};
     }
 
-    auto opt_sensor_config_cam0{SensorYaml::ReadSensorYaml(path_cam0_yaml)};
-    if (opt_sensor_config_cam0.has_value())
-    {
-      estimator_config_.sensor_config_cam0_
-          = std::move(opt_sensor_config_cam0.value());
-      std::print(stderr,
-                 "[INFO] T_BS_cam0 =\n"
-                 "\t[[{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
-                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
-                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
-                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}]]\n",
-                 estimator_config_.sensor_config_cam0_.transform_matrix_(0, 0),
-                 estimator_config_.sensor_config_cam0_.transform_matrix_(0, 1),
-                 estimator_config_.sensor_config_cam0_.transform_matrix_(0, 2),
-                 estimator_config_.sensor_config_cam0_.transform_matrix_(0, 3),
-                 estimator_config_.sensor_config_cam0_.transform_matrix_(1, 0),
-                 estimator_config_.sensor_config_cam0_.transform_matrix_(1, 1),
-                 estimator_config_.sensor_config_cam0_.transform_matrix_(1, 2),
-                 estimator_config_.sensor_config_cam0_.transform_matrix_(1, 3),
-                 estimator_config_.sensor_config_cam0_.transform_matrix_(2, 0),
-                 estimator_config_.sensor_config_cam0_.transform_matrix_(2, 1),
-                 estimator_config_.sensor_config_cam0_.transform_matrix_(2, 2),
-                 estimator_config_.sensor_config_cam0_.transform_matrix_(2, 3),
-                 estimator_config_.sensor_config_cam0_.transform_matrix_(3, 0),
-                 estimator_config_.sensor_config_cam0_.transform_matrix_(3, 1),
-                 estimator_config_.sensor_config_cam0_.transform_matrix_(3, 2),
-                 estimator_config_.sensor_config_cam0_.transform_matrix_(3, 3));
-    }
-    else
-    {
-      throw std::runtime_error{std::format(
-          "Failed to parse camera config yaml '{}'.", path_cam0_yaml
-      )};
-    }
+    estimator_config_.sensor_config_cam0_
+        = LoadSensorConfigOrThrow(path_cam0_yaml, "cam0");
+    PrintTransformMatrix(
+        "T_BS_cam0", estimator_config_.sensor_config_cam0_.transform_matrix_
+    );
 
-    auto opt_sensor_config_imu0{SensorYaml::ReadSensorYaml(path_imu_yaml)};
-    if (opt_sensor_config_imu0.has_value())
-    {
-      estimator_config_.sensor_config_imu0_
-          = std::move(opt_sensor_config_imu0.value());
-      std::print(stderr,
-                 "[INFO] T_BS_imu0 =\n"
-                 "\t[[{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
-                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
-                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
-                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}]]\n",
-                 estimator_config_.sensor_config_imu0_.transform_matrix_(0, 0),
-                 estimator_config_.sensor_config_imu0_.transform_matrix_(0, 1),
-                 estimator_config_.sensor_config_imu0_.transform_matrix_(0, 2),
-                 estimator_config_.sensor_config_imu0_.transform_matrix_(0, 3),
-                 estimator_config_.sensor_config_imu0_.transform_matrix_(1, 0),
-                 estimator_config_.sensor_config_imu0_.transform_matrix_(1, 1),
-                 estimator_config_.sensor_config_imu0_.transform_matrix_(1, 2),
-                 estimator_config_.sensor_config_imu0_.transform_matrix_(1, 3),
-                 estimator_config_.sensor_config_imu0_.transform_matrix_(2, 0),
-                 estimator_config_.sensor_config_imu0_.transform_matrix_(2, 1),
-                 estimator_config_.sensor_config_imu0_.transform_matrix_(2, 2),
-                 estimator_config_.sensor_config_imu0_.transform_matrix_(2, 3),
-                 estimator_config_.sensor_config_imu0_.transform_matrix_(3, 0),
-                 estimator_config_.sensor_config_imu0_.transform_matrix_(3, 1),
-                 estimator_config_.sensor_config_imu0_.transform_matrix_(3, 2),
-                 estimator_config_.sensor_config_imu0_.transform_matrix_(3, 3));
-    }
-    else
-    {
-      throw std::runtime_error{
-          std::format("Failed to parse IMU config yaml '{}'.", path_imu_yaml)
-      };
-    }
+    estimator_config_.sensor_config_imu0_
+        = LoadSensorConfigOrThrow(path_imu_yaml, "imu0");
+    PrintTransformMatrix(
+        "T_BS_imu0", estimator_config_.sensor_config_imu0_.transform_matrix_
+    );
 
-    auto opt_sensor_config_truth{SensorYaml::ReadSensorYaml(path_truth_yaml)};
-    if (opt_sensor_config_truth.has_value())
-    {
-      estimator_config_.sensor_config_truth_
-          = std::move(opt_sensor_config_truth.value());
-      const auto &T_BS_truth{
-          estimator_config_.sensor_config_truth_.transform_matrix_
-      };
-      std::print(stderr,
-                 "[INFO] T_BS_truth =\n"
-                 "\t[[{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
-                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
-                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}],\n"
-                 "\t [{:.2f}, {:.2f}, {:.2f}, {:.2f}]]\n",
-                 T_BS_truth(0, 0), T_BS_truth(0, 1), T_BS_truth(0, 2),
-                 T_BS_truth(0, 3), T_BS_truth(1, 0), T_BS_truth(1, 1),
-                 T_BS_truth(1, 2), T_BS_truth(1, 3), T_BS_truth(2, 0),
-                 T_BS_truth(2, 1), T_BS_truth(2, 2), T_BS_truth(2, 3),
-                 T_BS_truth(3, 0), T_BS_truth(3, 1), T_BS_truth(3, 2),
-                 T_BS_truth(3, 3));
-    }
-    else
-    {
-      throw std::runtime_error{std::format(
-          "Failed to parse groundtruth config yaml '{}'.", path_truth_yaml
-      )};
-    }
+    estimator_config_.sensor_config_truth_
+        = LoadSensorConfigOrThrow(path_truth_yaml, "truth");
+    PrintTransformMatrix(
+        "T_BS_truth", estimator_config_.sensor_config_truth_.transform_matrix_
+    );
 
     estimator_config_.data_fast_
         = DatumFast::Load(path_estimation_csv,
@@ -1098,15 +1065,37 @@ public:
 int main(int argc, char *argv[])
 {
   rclcpp::init(argc, argv);
+  int exit_code{EXIT_SUCCESS};
   try
   {
     auto factory{std::make_shared<FastVIO::TrajectoryFactory>()};
     factory->Run();
   }
+  catch (const YAML::Exception &ex)
+  {
+    std::println(stderr,
+                 "[ERROR] TrajectoryFactory 因 YAML 解析异常终止 (类型: {}): "
+                 "{} (行 {}, 列 {}). 请检查各 sensor.yaml 的字段与格式.",
+                 typeid(ex).name(), ex.msg, ex.mark.line + 1,
+                 ex.mark.column + 1);
+    exit_code = EXIT_FAILURE;
+  }
+  catch (const std::filesystem::filesystem_error &ex)
+  {
+    std::println(stderr,
+                 "[ERROR] TrajectoryFactory 因文件系统异常终止: {} "
+                 "(涉及路径: '{}', '{}').",
+                 ex.code().message(), ex.path1().string(), ex.path2().string());
+    exit_code = EXIT_FAILURE;
+  }
   catch (const std::exception &ex)
   {
-    std::println(stderr, "{}", ex.what());
+    std::println(stderr,
+                 "[ERROR] TrajectoryFactory 因异常终止 (类型: {}): {}. "
+                 "请检查启动参数与数据集完整性.",
+                 typeid(ex).name(), ex.what());
+    exit_code = EXIT_FAILURE;
   }
   rclcpp::shutdown();
-  return 0;
+  return exit_code;
 }
