@@ -75,11 +75,12 @@ struct VisualSim
   const value_type imu_step_{step_ / rate_ratio_};
   // 固定种子保证仿真数据可复现 (蒙特卡洛仿真时可改为 std::nullopt 以随机播种)
   const typename ImuNoiseModel<value_type>::Seed imu_noise_seed_{42U};
+  // 采样率 (单位: Hz)
+  const value_type sample_rate_{static_cast<value_type>(rate_ratio_) / step_};
   // IMU 测量误差模型 (噪声密度默认取 EuRoC ADIS16448 规格, 详见 Config 定义)
   ImuNoiseModel<value_type> imu_noise_model_{
-      typename ImuNoiseModel<value_type>::Config{
-          .sample_rate = static_cast<value_type>(rate_ratio_) / step_,
-      },
+      typename ImuNoiseModel<value_type>::Config{},
+      sample_rate_,
       imu_noise_seed_,
   };
 
@@ -100,11 +101,18 @@ struct VisualSim
   using Pose       = typename AbstractPath<value_type>::Pose;
   using Frame      = typename StereoRig<value_type>::Frame;
 
-  VisualSim() : mesh_plot_{room_}
+  struct Config
+  {
+    const typename ImuNoiseModel<value_type>::Config noise_config{};
+  };
+
+  VisualSim(const Config &config = Config{}) : mesh_plot_{room_}
   {
     // 只修改双目相机的基线长度
     rig_.camera_right_.sensor_from_body_.translation()
         = -0.1 * Eigen::Vector<value_type, 3>::UnitX();
+
+    imu_noise_model_.SetConfig(config.noise_config);
 
 #pragma region CONSTRUCT_PATH
 
@@ -371,7 +379,7 @@ struct VisualSim
                "accelerometer_random_walk:   {:.4e} "
                "# [ m / s^3 / sqrt(Hz) ]   ( accel bias diffusion )\n",
                // 采样频率
-               noise_config.sample_rate,
+               sample_rate_,
                // 陀螺仪白噪声功率密度
                noise_config.gyro_noise_density,
                // 陀螺仪随机游走

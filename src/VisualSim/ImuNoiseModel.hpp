@@ -49,25 +49,21 @@ public:
     value_type accel_random_walk{
         static_cast<value_type>(3.0000e-3)
     }; // m/s³/√Hz
-    value_type sample_rate{static_cast<value_type>(200.0)}; // Hz
   };
 
   /**
-   * @param config 连续时间噪声密度与采样率
+   * @param config 连续时间噪声密度
+   * @param sample_rate 采样率 (Hz)
    * @param seed 有值时可复现 (单元测试/可重复实验);
    *             为空时以硬件熵源播种 (蒙特卡洛仿真)
    */
-  explicit ImuNoiseModel(const Config &config,
+  explicit ImuNoiseModel(const Config &config, value_type sample_rate,
                          std::optional<Seed> seed = std::nullopt) :
-    config_{config},
+    config_{config}, sqrt_rate_{std::sqrt(sample_rate)},
     generator_{seed.has_value() ? seed.value() : std::random_device{}()},
     standard_normal_{static_cast<value_type>(0.0), static_cast<value_type>(1.0)}
   {
-    const value_type sqrt_rate{std::sqrt(config.sample_rate)};
-    sigma_gyro_noise_      = config.gyro_noise_density * sqrt_rate;
-    sigma_accel_noise_     = config.accel_noise_density * sqrt_rate;
-    sigma_gyro_bias_walk_  = config.gyro_random_walk / sqrt_rate;
-    sigma_accel_bias_walk_ = config.accel_random_walk / sqrt_rate;
+    UpdateNoiseModel();
   }
 
   /**
@@ -86,6 +82,12 @@ public:
     };
   }
 
+  void SetConfig(const Config &config) noexcept
+  {
+    this->config_ = config;
+    UpdateNoiseModel();
+  }
+
   const Config &GetConfig() const
   {
     return config_;
@@ -102,6 +104,14 @@ public:
   }
 
 private:
+  void UpdateNoiseModel()
+  {
+    sigma_gyro_noise_      = config_.gyro_noise_density * sqrt_rate_;
+    sigma_accel_noise_     = config_.accel_noise_density * sqrt_rate_;
+    sigma_gyro_bias_walk_  = config_.gyro_random_walk / sqrt_rate_;
+    sigma_accel_bias_walk_ = config_.accel_random_walk / sqrt_rate_;
+  }
+
   Vector3 SampleIsotropicGaussian(value_type sigma)
   {
     return Vector3{
@@ -111,7 +121,8 @@ private:
     };
   }
 
-  const Config config_;
+  Config config_{};
+  const value_type sqrt_rate_{200.0};
   std::mt19937 generator_;
   std::normal_distribution<value_type> standard_normal_;
 
