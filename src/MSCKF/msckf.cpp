@@ -6,11 +6,12 @@
 // ZUPT: IMU 方差静止检测触发零速伪量测; 滑窗消费的特征 id 回馈前端删除, 避免重复关联
 // OC-EKF 一致性修正: 对 Φ 与 H 施加不可观子空间约束 (全局平移 + 绕重力偏航), 防伪可观
 // 前端: 滤波姿态(陀螺积分)辅助光流初值预测 + buildOpticalFlowPyramid 金字塔复用
-// 边缘化: 低运动冗余克隆优先剔除, 仅吸收被删克隆上的观测、轨迹保活;
-//         长轨迹经延迟初始化升级为 SLAM 特征进入状态向量 [IMU | SLAM特征 | 克隆]
+// 边缘化: 低运动冗余克隆优先剔除, 仅吸收被删克隆上的观测、轨迹保活
 // MonocularUpdate: 融合外部单目算法输出的帧间相对旋转(高精度)与平移方向(无尺度、低精度),
 //                  数据来自 ~/vio_ws/estimated_motion_cam0.csv, 按图像时间戳查找;
 //                  流程: IMU 预测 → 克隆增广 → 单目先验融合 → 陀螺辅助光流 → 双目量测更新
+// 状态向量: [IMU(19) | 相机克隆(6×N)], N ≤ kMaxCloneCount; 路标点不进入状态向量
+// 建图: PointCloudMapper 收集每帧 MSCKF 量测中成功三角化的路标点, 运行结束后写入 PLY 文件
 //
 // 编译 (或直接使用配套 CMakeLists.txt):
 //   g++ -std=c++2c -O3 -march=native msckf.cpp -o msckf $(pkg-config --cflags --libs opencv4 eigen3 yaml-cpp) -lceres -lglog -pthread
@@ -19,8 +20,10 @@
 //   ./msckf EuRoC_MAV_Datasets/V2_01_easy/mav0 --init groundtruth   # 真值姿态初始化
 //   ./msckf EuRoC_MAV_Datasets/V2_01_easy/mav0 --time-offset 0.005  # t_d 初值(秒), 在线精化
 //   ./msckf EuRoC_MAV_Datasets/V2_01_easy/mav0 --output /tmp/v2_01.tum  # 指定轨迹输出路径
+//   ./msckf EuRoC_MAV_Datasets/V2_01_easy/mav0 --pointcloud /tmp/map.ply # 指定点云输出路径
 // 输出:
 //   TUM 格式轨迹 (time px py pz qx qy qz qw), 默认写入当前目录 trajectory_tum.txt
+//   ASCII PLY 点云文件, 默认写入当前目录 pointcloud.ply
 
 #include <ceres/ceres.h>
 
@@ -184,9 +187,9 @@ class FrameTimeLogger
 public:
   FrameTimeLogger()
   {
-    const fs::path output_path = ResolveNonClobberPath(
-        fs::path{std::getenv("HOME")} / kOutputDirectory / kOutputFileName
-    );
+    const fs::path output_path
+        = ResolveNonClobberPath(fs::path{std::getenv("HOME")} / kOutputDirectory
+                                / kOutputFileName);
     if (output_path.has_parent_path())
     {
       fs::create_directories(output_path.parent_path());
@@ -194,10 +197,10 @@ public:
     stream_.open(output_path);
     if (!stream_)
     {
-      throw std::runtime_error(std::format(
-          "无法创建逐帧视觉耗时输出文件: '{}'.",
-          fs::absolute(output_path).string()
-      ));
+      throw std::runtime_error(
+          std::format("无法创建逐帧视觉耗时输出文件: '{}'.",
+                      fs::absolute(output_path).string())
+      );
     }
     std::println("逐帧视觉任务耗时将写入 {} (ENABLE_TIME_LOGGER=1)",
                  fs::absolute(output_path).string());
@@ -267,6 +270,7 @@ struct CommandLineOptions
   InitializationMode initialization_mode = InitializationMode::kStaticImu;
   double initial_time_offset      = 0; // 图像时刻 + t_d = 对应的 IMU 时刻 (秒)
   fs::path output_trajectory_path = "trajectory_tum.txt";
+  fs::path output_pointcloud_path = "pointcloud.ply";
   // 外部单目算法输出: 时间戳 + 左目系相对旋转轴角 + 左目系平移方向
   fs::path monocular_estimation_path
       = fs::path{std::getenv("HOME")} / "vio_ws" / "estimated_motion_cam0.csv";
@@ -326,6 +330,18 @@ CommandLineOptions ParseCommandLine(int argc, char **argv)
         throw std::runtime_error("--mono-csv 缺少取值 (外部单目估计 CSV 路径)");
       }
       options.monocular_estimation_path = fs::path(argv[i]);
+    }
+    else if (argument.starts_with("--pointcloud="))
+    {
+      options.output_pointcloud_path = fs::path(argument.substr(13));
+    }
+    else if (argument == "--pointcloud")
+    {
+      if (++i >= argc)
+      {
+        throw std::runtime_error("--pointcloud 缺少取值 (点云文件路径)");
+      }
+      options.output_pointcloud_path = fs::path(argv[i]);
     }
     else
     {
@@ -1218,15 +1234,6 @@ struct CameraClone
   Eigen::Vector3d null_position = Eigen::Vector3d::Zero();
 };
 
-// 路标点的三维坐标
-struct SlamFeature
-{
-  FeatureId feature_id              = -1;
-  Eigen::Vector3d position_in_world = Eigen::Vector3d::Zero();
-  Eigen::Vector3d null_position
-      = Eigen::Vector3d::Zero(); // OC/FEJ: 初始化时刻的首次估计
-};
-
 class Msckf
 {
 public:
@@ -1240,9 +1247,6 @@ public:
   static constexpr int kMaxUpdateRows                = 600;
   static constexpr double kInitialTimeOffsetVariance = 2.5e-5; // (5 ms)^2
   static constexpr double kZuptVelocitySigma = 0.02; // m/s, 零速伪量测噪声
-  static constexpr std::size_t kMaxSlamFeatureCount = 20;
-  static constexpr std::size_t kMinSlamTrackLength
-      = 8; // 升级为 SLAM 特征的最短轨迹
   static constexpr double kRedundantRotationThreshold
       = 0.2618; // rad, 冗余克隆判定 (15°)
   static constexpr double kRedundantTranslationThreshold = 0.4; // m
@@ -1449,34 +1453,30 @@ public:
     return rotation_applied || direction_applied;
   }
 
-  // 返回需要前端删除的特征 id (量测门限判为外点的 SLAM 特征)。
+  // 每帧 ProcessFrame 的返回值
+  struct FilterResult
+  {
+    std::vector<FeatureId> dropped_feature_ids;
+    std::vector<Eigen::Vector3d> new_map_points; // world 系已三角化点
+  };
+
   // 前置条件: 本帧克隆已通过 AugmentCameraClone(frame_id) 增广。
-  std::vector<FeatureId>
+  // 返回 FilterResult: dropped_feature_ids 为空 (MSCKF 无 SLAM 外点概念),
+  // new_map_points 为本帧成功三角化并通过量测门限的路标点世界坐标。
+  FilterResult
   ProcessFrame(FrameId frame_id,
                const std::vector<FeatureTracker::TrackedFeature> &tracked)
   {
-    std::vector<FeatureId> dropped_feature_ids;
+    FilterResult result;
 
     std::set<FeatureId> visible_ids;
-    std::vector<std::pair<int, StereoObservation>> slam_observations;
     for (const auto &feature : tracked)
     {
       visible_ids.insert(feature.feature_id);
-      const int slam_index = FindSlamFeatureIndex(feature.feature_id);
-      if (slam_index >= 0)
-      {
-        // 像素点序列已经三角化
-        slam_observations.emplace_back(slam_index, feature.observation);
-        continue;
-      }
       FeatureTrack &track = active_tracks_[feature.feature_id];
       track.feature_id    = feature.feature_id;
       track.observations_by_frame[frame_id] = feature.observation;
     }
-
-    UpdateWithSlamObservations(frame_id, slam_observations,
-                               dropped_feature_ids);
-    RemoveLostSlamFeatures(visible_ids);
 
     std::vector<FeatureTrack> finished_tracks;
     for (auto it = active_tracks_.begin(); it != active_tracks_.end();)
@@ -1491,13 +1491,18 @@ public:
         ++it;
       }
     }
-    UpdateWithTracks(finished_tracks);
+    result.new_map_points = UpdateWithTracks(finished_tracks);
 
     if (clones_.size() > kMaxCloneCount)
     {
-      PruneClonesAndAbsorbObservations();
+      auto prune_points = PruneClonesAndAbsorbObservations();
+      result.new_map_points.insert(
+          result.new_map_points.end(),
+          std::make_move_iterator(prune_points.begin()),
+          std::make_move_iterator(prune_points.end())
+      );
     }
-    return dropped_feature_ids;
+    return result;
   }
 
   const Sophus::SO3d &world_from_imu_rotation() const
@@ -1524,30 +1529,18 @@ public:
   {
     return clones_.size();
   }
-  std::size_t slam_feature_count() const
-  {
-    return slam_features_.size();
-  }
 
 private:
-  // 误差状态向量的维数
+  // 误差状态向量的维数: IMU块 + 克隆块，路标点不进入状态
   int StateDim() const
   {
-    return kImuErrorDim + 3 * static_cast<int>(slam_features_.size())
-           + kCloneErrorDim * static_cast<int>(clones_.size());
-  }
-
-  // 路标点的索引
-  int SlamFeatureStateIndex(int feature_index) const
-  {
-    return kImuErrorDim + 3 * feature_index;
+    return kImuErrorDim + kCloneErrorDim * static_cast<int>(clones_.size());
   }
 
   // 克隆相机的索引
   int CloneStateIndex(int clone_index) const
   {
-    return kImuErrorDim + 3 * static_cast<int>(slam_features_.size())
-           + kCloneErrorDim * clone_index;
+    return kImuErrorDim + kCloneErrorDim * clone_index;
   }
 
   // 协方差对称化
@@ -1667,19 +1660,6 @@ private:
     for (std::size_t i = 0; i < clones_.size(); ++i)
     {
       if (clones_[i].frame_id == frame_id)
-      {
-        return static_cast<int>(i);
-      }
-    }
-    return -1;
-  }
-
-  // 根据特征编号，检索路标点的序号
-  int FindSlamFeatureIndex(FeatureId feature_id) const
-  {
-    for (std::size_t i = 0; i < slam_features_.size(); ++i)
-    {
-      if (slam_features_[i].feature_id == feature_id)
       {
         return static_cast<int>(i);
       }
@@ -2044,12 +2024,14 @@ private:
                    noise_variance);
   }
 
-  void UpdateWithTracks(const std::vector<FeatureTrack> &finished_tracks)
+  std::vector<Eigen::Vector3d>
+  UpdateWithTracks(const std::vector<FeatureTrack> &finished_tracks)
   {
     const double vision_noise_variance
         = pixel_noise_normalized_ * pixel_noise_normalized_;
     std::vector<Eigen::MatrixXd> jacobian_blocks;
     std::vector<Eigen::VectorXd> residual_blocks;
+    std::vector<Eigen::Vector3d> map_points;
     int total_rows = 0;
     for (const FeatureTrack &track : finished_tracks)
     {
@@ -2078,6 +2060,7 @@ private:
       total_rows += static_cast<int>(projected_jacobian.rows());
       jacobian_blocks.push_back(std::move(projected_jacobian));
       residual_blocks.push_back(std::move(projected_residual));
+      map_points.push_back(*world_point);
       if (total_rows >= kMaxUpdateRows)
       {
         break;
@@ -2086,205 +2069,7 @@ private:
     ApplyStackedEkfUpdate(std::move(jacobian_blocks),
                           std::move(residual_blocks), total_rows,
                           vision_noise_variance);
-  }
-
-  bool BuildSlamObservationJacobian(int feature_index, int clone_index,
-                                    const StereoObservation &observation,
-                                    Eigen::MatrixXd &jacobian,
-                                    Eigen::VectorXd &residual) const
-  {
-    const SlamFeature &feature = slam_features_[feature_index];
-    const CameraClone &clone   = clones_[clone_index];
-    const Eigen::Matrix3d camera_from_world
-        = clone.world_from_camera_rotation.inverse().matrix();
-    const Eigen::Vector3d point_in_camera
-        = camera_from_world
-          * (feature.position_in_world - clone.position_in_world);
-    const double x = point_in_camera.x();
-    const double y = point_in_camera.y();
-    const double z = point_in_camera.z();
-    if (z < 0.05)
-    {
-      return false;
-    }
-
-    Eigen::Matrix<double, 4, 3> projection_jacobian;
-    projection_jacobian << 1 / z, 0, -x / (z * z), 0, 1 / z, -y / (z * z),
-        1 / z, 0, -(x - baseline_) / (z * z), 0, 1 / z, -y / (z * z);
-
-    Eigen::Matrix<double, 4, 6> clone_jacobian_block;
-    clone_jacobian_block.leftCols<3>()
-        = projection_jacobian * Sophus::SO3d::hat(point_in_camera);
-    clone_jacobian_block.rightCols<3>()
-        = -projection_jacobian * camera_from_world;
-
-    Eigen::Matrix<double, 6, 1> yaw_direction;
-    yaw_direction.head<3>()
-        = clone.null_rotation.inverse().matrix() * gravity_in_world_;
-    yaw_direction.tail<3>()
-        = Sophus::SO3d::hat(feature.null_position - clone.null_position)
-          * gravity_in_world_;
-    clone_jacobian_block -= clone_jacobian_block * yaw_direction
-                            * yaw_direction.transpose()
-                            / yaw_direction.squaredNorm();
-
-    jacobian = Eigen::MatrixXd::Zero(4, StateDim());
-    jacobian.block<4, 6>(0, CloneStateIndex(clone_index))
-        = clone_jacobian_block;
-    jacobian.block<4, 3>(0, SlamFeatureStateIndex(feature_index))
-        = -clone_jacobian_block.rightCols<3>();
-    residual.resize(4);
-    residual << observation.left_normalized.x() - x / z,
-        observation.left_normalized.y() - y / z,
-        observation.right_normalized.x() - (x - baseline_) / z,
-        observation.right_normalized.y() - y / z;
-    return true;
-  }
-
-  void UpdateWithSlamObservations(
-      FrameId frame_id,
-      const std::vector<std::pair<int, StereoObservation>> &observations,
-      std::vector<FeatureId> &dropped_feature_ids
-  )
-  {
-    if (observations.empty())
-    {
-      return;
-    }
-    const int clone_index = FindCloneIndex(frame_id);
-    if (clone_index < 0)
-    {
-      return;
-    }
-
-    const double vision_noise_variance
-        = pixel_noise_normalized_ * pixel_noise_normalized_;
-    std::vector<Eigen::MatrixXd> jacobian_blocks;
-    std::vector<Eigen::VectorXd> residual_blocks;
-    std::vector<int> failed_feature_indices;
-    for (const auto &[feature_index, observation] : observations)
-    {
-      Eigen::MatrixXd jacobian;
-      Eigen::VectorXd residual;
-      if (!BuildSlamObservationJacobian(feature_index, clone_index, observation,
-                                        jacobian, residual)
-          || !PassesChiSquareGate(jacobian, residual, vision_noise_variance))
-      {
-        failed_feature_indices.push_back(feature_index);
-        continue;
-      }
-      jacobian_blocks.push_back(std::move(jacobian));
-      residual_blocks.push_back(std::move(residual));
-    }
-
-    const int total_rows = 4 * static_cast<int>(jacobian_blocks.size());
-    ApplyStackedEkfUpdate(std::move(jacobian_blocks),
-                          std::move(residual_blocks), total_rows,
-                          vision_noise_variance);
-
-    // 门限失败视为外点: 移出状态并反馈前端删除 (索引降序保证删除安全)
-    std::ranges::sort(failed_feature_indices);
-    for (const int feature_index : std::views::reverse(failed_feature_indices))
-    {
-      dropped_feature_ids.push_back(slam_features_[feature_index].feature_id);
-      RemoveSlamFeatureAt(feature_index);
-    }
-  }
-
-  void RemoveLostSlamFeatures(const std::set<FeatureId> &visible_ids)
-  {
-    for (int i = static_cast<int>(slam_features_.size()) - 1; i >= 0; --i)
-    {
-      if (!visible_ids.contains(slam_features_[i].feature_id))
-      {
-        RemoveSlamFeatureAt(i);
-      }
-    }
-  }
-
-  // 延迟初始化 (OpenVINS 风格): 对 H_点 做 QR, 前 3 行初始化特征均值/协方差/交叉协方差,
-  // 其余行做标准 MSCKF 更新; 成功后特征进入状态向量, 后续逐帧走 SLAM 更新
-  bool PromoteTrackToSlamFeature(const FeatureTrack &track)
-  {
-    if (slam_features_.size() >= kMaxSlamFeatureCount)
-    {
-      return false;
-    }
-    const auto world_point = TriangulateFeature(track);
-    if (!world_point)
-    {
-      return false;
-    }
-    Eigen::MatrixXd state_jacobian, point_jacobian;
-    Eigen::VectorXd residual;
-    if (!BuildTrackJacobians(track, *world_point, nullptr, state_jacobian,
-                             point_jacobian, residual))
-    {
-      return false;
-    }
-    const int rows = static_cast<int>(residual.size());
-    if (rows <= 3)
-    {
-      return false;
-    }
-
-    Eigen::HouseholderQR<Eigen::MatrixXd> qr(point_jacobian);
-    const Eigen::MatrixXd rotated_state_jacobian
-        = qr.householderQ().transpose() * state_jacobian;
-    const Eigen::VectorXd rotated_residual
-        = qr.householderQ().transpose() * residual;
-    Eigen::Matrix3d point_triangle;
-    point_triangle = qr.matrixQR().topRows(3).triangularView<Eigen::Upper>();
-    if (std::abs(point_triangle(0, 0)) < 1e-6
-        || std::abs(point_triangle(1, 1)) < 1e-6
-        || std::abs(point_triangle(2, 2)) < 1e-6)
-    {
-      return false;
-    }
-
-    const Eigen::MatrixXd initializer_jacobian
-        = rotated_state_jacobian.topRows(3);
-    const Eigen::Vector3d initializer_residual = rotated_residual.head(3);
-    Eigen::MatrixXd msckf_jacobian
-        = rotated_state_jacobian.bottomRows(rows - 3);
-    Eigen::VectorXd msckf_residual = rotated_residual.tail(rows - 3);
-    const double vision_noise_variance
-        = pixel_noise_normalized_ * pixel_noise_normalized_;
-    if (!PassesChiSquareGate(msckf_jacobian, msckf_residual,
-                             vision_noise_variance))
-    {
-      return false;
-    }
-
-    const Eigen::Matrix3d triangle_inverse = point_triangle.inverse();
-    const Eigen::Matrix3d feature_covariance
-        = triangle_inverse
-          * (initializer_jacobian * covariance_
-                 * initializer_jacobian.transpose()
-             + vision_noise_variance * Eigen::Matrix3d::Identity())
-          * triangle_inverse.transpose();
-    const Eigen::MatrixXd cross_covariance = -covariance_
-                                             * initializer_jacobian.transpose()
-                                             * triangle_inverse.transpose();
-
-    const Eigen::Vector3d corrected_position
-        = *world_point + triangle_inverse * initializer_residual;
-    const int insert_at
-        = kImuErrorDim + 3 * static_cast<int>(slam_features_.size());
-    InsertCovarianceBlock(insert_at, cross_covariance, feature_covariance);
-    slam_features_.push_back({track.feature_id, corrected_position,
-                              corrected_position});
-    Symmetrize();
-
-    // MSCKF 部分在扩维后的状态上执行, 新特征对应列为零 (QR 已保证正交)
-    Eigen::MatrixXd grown_jacobian
-        = Eigen::MatrixXd::Zero(msckf_jacobian.rows(), StateDim());
-    grown_jacobian.leftCols(insert_at) = msckf_jacobian.leftCols(insert_at);
-    grown_jacobian.rightCols(msckf_jacobian.cols() - insert_at)
-        = msckf_jacobian.rightCols(msckf_jacobian.cols() - insert_at);
-    ApplyEkfUpdate(std::move(grown_jacobian), std::move(msckf_residual),
-                   vision_noise_variance);
-    return true;
+    return map_points;
   }
 
   // 更新名义状态向量、误差状态向量及其协方差矩阵
@@ -2323,11 +2108,6 @@ private:
     accel_bias_ += correction.segment<3>(12);
     time_offset_ += correction(kTimeOffsetIndex);
     gravity_in_world_ += correction.segment<3>(kGravityIndex);
-    for (std::size_t i = 0; i < slam_features_.size(); ++i)
-    {
-      slam_features_[i].position_in_world
-          += correction.segment<3>(SlamFeatureStateIndex(static_cast<int>(i)));
-    }
     for (std::size_t i = 0; i < clones_.size(); ++i)
     {
       const int base = CloneStateIndex(static_cast<int>(i));
@@ -2363,43 +2143,10 @@ private:
     covariance_ = std::move(reduced);
   }
 
-  void InsertCovarianceBlock(int insert_at,
-                             const Eigen::MatrixXd &cross_covariance,
-                             const Eigen::Matrix3d &block_covariance)
-  {
-    const int old_dim     = static_cast<int>(covariance_.rows());
-    const int tail        = old_dim - insert_at;
-    Eigen::MatrixXd grown = Eigen::MatrixXd::Zero(old_dim + 3, old_dim + 3);
-    grown.topLeftCorner(insert_at, insert_at)
-        = covariance_.topLeftCorner(insert_at, insert_at);
-    grown.block(0, insert_at + 3, insert_at, tail)
-        = covariance_.block(0, insert_at, insert_at, tail);
-    grown.block(insert_at + 3, 0, tail, insert_at)
-        = covariance_.block(insert_at, 0, tail, insert_at);
-    grown.block(insert_at + 3, insert_at + 3, tail, tail)
-        = covariance_.block(insert_at, insert_at, tail, tail);
-    grown.block(0, insert_at, insert_at, 3)
-        = cross_covariance.topRows(insert_at);
-    grown.block(insert_at + 3, insert_at, tail, 3)
-        = cross_covariance.bottomRows(tail);
-    grown.block(insert_at, 0, 3, insert_at)
-        = cross_covariance.topRows(insert_at).transpose();
-    grown.block(insert_at, insert_at + 3, 3, tail)
-        = cross_covariance.bottomRows(tail).transpose();
-    grown.block<3, 3>(insert_at, insert_at) = block_covariance;
-    covariance_                             = std::move(grown);
-  }
-
   void RemoveCloneAt(int clone_index)
   {
     RemoveCovarianceBlock(CloneStateIndex(clone_index), kCloneErrorDim);
     clones_.erase(clones_.begin() + clone_index);
-  }
-
-  void RemoveSlamFeatureAt(int feature_index)
-  {
-    RemoveCovarianceBlock(SlamFeatureStateIndex(feature_index), 3);
-    slam_features_.erase(slam_features_.begin() + feature_index);
   }
 
   // 冗余克隆选择 (MSCKF-VIO): 相对参考帧运动小的近期克隆优先, 否则删最老的; 每次选 2 个
@@ -2440,9 +2187,8 @@ private:
     return remove_indices;
   }
 
-  void PruneClonesAndAbsorbObservations()
+  std::vector<Eigen::Vector3d> PruneClonesAndAbsorbObservations()
   {
-    // 待删除
     const std::vector<int> remove_indices = SelectCloneIndicesToRemove();
     std::set<FrameId> removed_frame_ids;
     for (const int index : remove_indices)
@@ -2450,48 +2196,25 @@ private:
       removed_frame_ids.insert(clones_[index].frame_id);
     }
 
-    PromoteTracksObservingRemovedClones(removed_frame_ids);
-    AbsorbObservationsOnRemovedClones(removed_frame_ids);
+    auto map_points = AbsorbObservationsOnRemovedClones(removed_frame_ids);
 
     for (const int index : std::views::reverse(remove_indices))
     {
       RemoveCloneAt(index);
     }
+    return map_points;
   }
 
-  // 第一遍: 观测到被删克隆、且足够长的活跃轨迹升级为 SLAM 特征 (吸收其全部历史观测)
-  void PromoteTracksObservingRemovedClones(
-      const std::set<FrameId> &removed_frame_ids
-  )
-  {
-    for (auto it = active_tracks_.begin(); it != active_tracks_.end();)
-    {
-      FeatureTrack &track            = it->second;
-      const bool observed_in_removed = std::ranges::any_of(
-          removed_frame_ids, [&](FrameId removed_frame_id)
-          { return track.observations_by_frame.contains(removed_frame_id); }
-      );
-      if (observed_in_removed
-          && track.observations_by_frame.size() >= kMinSlamTrackLength
-          && PromoteTrackToSlamFeature(track))
-      {
-        it = active_tracks_.erase(it); // 前端继续跟踪, 后续观测走 SLAM 更新
-      }
-      else
-      {
-        ++it;
-      }
-    }
-  }
-
-  // 第二遍: 其余轨迹只吸收被删克隆上的观测 (>=2 帧才有零空间余量), 轨迹保活
-  void
+  // 其余轨迹只吸收被删克隆上的观测 (>=2 帧才有零空间余量), 轨迹保活
+  // 返回通过量测门限的已三角化路标点世界坐标
+  std::vector<Eigen::Vector3d>
   AbsorbObservationsOnRemovedClones(const std::set<FrameId> &removed_frame_ids)
   {
     const double vision_noise_variance
         = pixel_noise_normalized_ * pixel_noise_normalized_;
     std::vector<Eigen::MatrixXd> jacobian_blocks;
     std::vector<Eigen::VectorXd> residual_blocks;
+    std::vector<Eigen::Vector3d> map_points;
     int total_rows = 0;
     for (auto it = active_tracks_.begin(); it != active_tracks_.end();)
     {
@@ -2527,6 +2250,7 @@ private:
             total_rows += static_cast<int>(projected_jacobian.rows());
             jacobian_blocks.push_back(std::move(projected_jacobian));
             residual_blocks.push_back(std::move(projected_residual));
+            map_points.push_back(*world_point);
           }
         }
       }
@@ -2547,6 +2271,7 @@ private:
     ApplyStackedEkfUpdate(std::move(jacobian_blocks),
                           std::move(residual_blocks), total_rows,
                           vision_noise_variance);
+    return map_points;
   }
 
   // OC 线性化点仅在初始化与传播时保存, EKF 更新不改动, 保证不可观子空间跨时刻一致
@@ -2580,7 +2305,6 @@ private:
   Eigen::Vector3d null_gravity_  = Eigen::Vector3d(0, 0, -kGravity);
 
   std::deque<CameraClone> clones_;
-  std::vector<SlamFeature> slam_features_;
   Eigen::MatrixXd covariance_
       = Eigen::MatrixXd::Zero(kImuErrorDim, kImuErrorDim);
   std::unordered_map<FeatureId, FeatureTrack> active_tracks_;
@@ -2692,6 +2416,56 @@ std::ofstream OpenTrajectoryFile(const fs::path &trajectory_path)
   return trajectory_file;
 }
 
+// 收集 MSCKF 三角化的路标点，运行结束后写出 ASCII PLY 点云文件
+class PointCloudMapper
+{
+public:
+  void AddPoints(const std::vector<Eigen::Vector3d> &points)
+  {
+    for (const Eigen::Vector3d &p : points)
+    {
+      points_.push_back(p);
+    }
+  }
+
+  // 按 EuRoC pointcloud0/data.ply 格式写出 ASCII PLY
+  void WritePly(const fs::path &output_path) const
+  {
+    if (output_path.has_parent_path())
+    {
+      fs::create_directories(output_path.parent_path());
+    }
+    std::ofstream file(output_path);
+    if (!file)
+    {
+      throw std::runtime_error(std::format("无法创建点云文件: '{}'.",
+                                           fs::absolute(output_path).string()));
+    }
+    file << "ply\n"
+         << "format ascii 1.0\n"
+         << std::format("element vertex {}\n", points_.size())
+         << "property float x\n"
+         << "property float y\n"
+         << "property float z\n"
+         << "end_header\n";
+    for (const Eigen::Vector3d &p : points_)
+    {
+      std::println(file, "{} {} {}", static_cast<float>(p.x()),
+                   static_cast<float>(p.y()), static_cast<float>(p.z()));
+    }
+    std::println("点云已写入 {} ({} 个点)", fs::absolute(output_path).string(),
+                 points_.size());
+  }
+
+  std::size_t point_count() const
+  {
+    return points_.size();
+  }
+
+private:
+  std::vector<Eigen::Vector3d> points_;
+};
+
 // 逐帧滤波主循环: IMU 预测 → 克隆增广 → 单目先验融合 → 陀螺辅助光流 → 双目量测
 class VioPipeline
 {
@@ -2701,13 +2475,15 @@ public:
               Msckf &filter,
               const std::vector<FastVIO::DatumFast> &monocular_estimations,
               std::span<const ImuSample> imu_samples, std::size_t imu_index,
-              std::ostream &trajectory_stream) :
+              std::ostream &trajectory_stream,
+              fs::path pointcloud_output_path) :
     rectifier_(rectifier), enhancer_(enhancer),
     stationary_detector_(stationary_detector), tracker_(tracker),
     filter_(filter), monocular_estimations_(monocular_estimations),
     imu_samples_(imu_samples), imu_index_(imu_index),
     trajectory_stream_(trajectory_stream),
-    camera_rotation_in_body_(rectifier.body_from_rectified_left().so3())
+    camera_rotation_in_body_(rectifier.body_from_rectified_left().so3()),
+    pointcloud_output_path_(std::move(pointcloud_output_path))
   {
   }
 
@@ -2717,6 +2493,7 @@ public:
     {
       ProcessStereoFrame(frame);
     }
+    mapper_.WritePly(pointcloud_output_path_);
   }
 
   long zero_velocity_update_count() const
@@ -2810,12 +2587,13 @@ private:
         tracked = tracker_.Track(enhanced_left, enhanced_right,
                                  current_camera_from_previous_camera);
       }
-      std::vector<FeatureId> dropped_feature_ids;
+      Msckf::FilterResult filter_result;
       {
         TIME_SCOPE(timer_, kTimerStereoFilterUpdate);
-        dropped_feature_ids = filter_.ProcessFrame(frame_id_, tracked);
+        filter_result = filter_.ProcessFrame(frame_id_, tracked);
       }
-      tracker_.DropFeatures(dropped_feature_ids);
+      tracker_.DropFeatures(filter_result.dropped_feature_ids);
+      mapper_.AddPoints(filter_result.new_map_points);
       tracked_count_last_frame_ = tracked.size();
     }
     previous_world_from_camera_
@@ -2824,9 +2602,8 @@ private:
 
     WriteTrajectoryRecord(clone_time);
 #if ENABLE_TIMER && ENABLE_TIME_LOGGER
-    frame_time_logger_.LogFrame(
-        frame_id_, VisualTotalMilliseconds() - visual_ms_before_frame
-    );
+    frame_time_logger_.LogFrame(frame_id_, VisualTotalMilliseconds()
+                                               - visual_ms_before_frame);
 #endif
     if (frame_id_ % kProgressLogInterval == 0)
     {
@@ -2882,12 +2659,11 @@ private:
     const Eigen::Vector3d &position = filter_.imu_position();
     std::println(
         "帧 {:4}  位置 [{:7.3f} {:7.3f} {:7.3f}]  速度 {:5.2f} m/s  t_d "
-        "{:+.2f} ms  |g| {:.3f}  特征 {:3}  SLAM {:2}  克隆 {}",
+        "{:+.2f} ms  |g| {:.3f}  特征 {:3}  克隆 {}",
         frame_id_, position.x(), position.y(), position.z(),
         filter_.imu_velocity().norm(),
         filter_.time_offset_camera_to_imu() * 1e3,
-        filter_.gravity_in_world().norm(), tracked_count,
-        filter_.slam_feature_count(), filter_.clone_count()
+        filter_.gravity_in_world().norm(), tracked_count, filter_.clone_count()
     );
   }
 
@@ -2901,6 +2677,8 @@ private:
   std::size_t imu_index_;
   std::ostream &trajectory_stream_;
   const Sophus::SO3d camera_rotation_in_body_;
+  fs::path pointcloud_output_path_;
+  PointCloudMapper mapper_;
 
   FrameId frame_id_                     = 0;
   long zero_velocity_update_count_      = 0;
@@ -2985,7 +2763,7 @@ int main(int argc, char **argv)
 
     VioPipeline pipeline(rectifier, enhancer, stationary_detector, tracker,
                          filter, monocular_estimations, imu_samples, imu_index,
-                         trajectory_file);
+                         trajectory_file, options.output_pointcloud_path);
     pipeline.Run(stereo_frames);
 #if ENABLE_TIMER
     pipeline.PrintTimerReport();
@@ -3006,7 +2784,8 @@ int main(int argc, char **argv)
     std::println(
         stderr,
         "用法: {} <数据集mav0路径> [--init imu|groundtruth] [--time-offset 秒] "
-        "[--output /path/to/filename.tum] [--mono-csv /path/to/estimation.csv]",
+        "[--output /path/to/filename.tum] [--mono-csv /path/to/estimation.csv] "
+        "[--pointcloud /path/to/map.ply]",
         argv[0]
     );
     return 1;
