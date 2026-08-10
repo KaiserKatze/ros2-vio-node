@@ -35,6 +35,12 @@ struct SensorYaml
   double accelerometer_noise_density_{0.0};
   // 加速度计零偏随机游走 (单位: m / s^3 / sqrt(Hz))
   double accelerometer_random_walk_{0.0};
+  // 相机内参 [fu, fv, cu, cv] (仅相机传感器有效)
+  Eigen::Vector4d intrinsics_{Eigen::Vector4d::Zero()};
+  // 径向切向畸变系数 [k1, k2, p1, p2] (仅相机传感器有效)
+  Eigen::Vector4d distortion_coefficients_{Eigen::Vector4d::Zero()};
+  // 图像分辨率 [宽, 高] (仅相机传感器有效)
+  Eigen::Vector2i resolution_{Eigen::Vector2i::Zero()};
 
   SensorYaml() {}
 
@@ -68,6 +74,7 @@ struct SensorYaml
 
 private:
   static constexpr std::string_view kImuSensorType{"imu"};
+  static constexpr std::string_view kCameraSensorType{"camera"};
   static constexpr std::size_t kTransformMatrixCols{4};
   static constexpr std::size_t kTransformDataElementCount{16};
 
@@ -98,7 +105,57 @@ private:
     {
       config.rate_hz_ = ReadPositiveDouble(node_sensor, "rate_hz", yaml_path);
     }
+    if (IsCameraSensor(node_sensor))
+    {
+      config.intrinsics_
+          = ReadFixedSizeVector<4>(node_sensor, "intrinsics", yaml_path);
+      config.distortion_coefficients_
+          = ReadFixedSizeVector<4>(node_sensor, "distortion_coefficients",
+                                   yaml_path);
+      const Eigen::Vector4d resolution{
+          ReadFixedSizeVector<2>(node_sensor, "resolution", yaml_path),
+      };
+      config.resolution_ = Eigen::Vector2i{
+          static_cast<int>(resolution.x()),
+          static_cast<int>(resolution.y()),
+      };
+    }
     return config;
+  }
+
+  static bool IsCameraSensor(const YAML::Node &node_sensor)
+  {
+    const YAML::Node node_type{node_sensor["sensor_type"]};
+    return node_type && node_type.as<std::string>() == kCameraSensorType;
+  }
+
+  // 读取长度为 kCount 的数值序列, 结果放进 Vector4d 的前 kCount 个分量
+  template <std::size_t kCount>
+  static Eigen::Vector4d
+  ReadFixedSizeVector(const YAML::Node &node_sensor, std::string_view key,
+                      const std::filesystem::path &yaml_path)
+  {
+    static_assert(kCount <= 4);
+    const YAML::Node node_value{node_sensor[std::string{key}]};
+    if (!node_value || node_value.size() != kCount)
+    {
+      throw std::runtime_error{
+          std::format("'{}' 的配置 {} 缺失或元素个数不是 {}.",
+                      yaml_path.string(), key, kCount)
+      };
+    }
+    Eigen::Vector4d result{Eigen::Vector4d::Zero()};
+    for (std::size_t i = 0; i < kCount; ++i)
+    {
+      const double value{node_value[i].as<double>()};
+      if (!std::isfinite(value))
+      {
+        throw std::runtime_error{std::format("'{}' 的配置 {}[{}] 不是有限数值.",
+                                             yaml_path.string(), key, i)};
+      }
+      result(static_cast<Eigen::Index>(i)) = value;
+    }
+    return result;
   }
 
   static bool IsImuSensor(const YAML::Node &node_sensor)

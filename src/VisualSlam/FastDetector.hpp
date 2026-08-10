@@ -48,6 +48,9 @@ private:
                                       fastType)
   };
 
+  // 全局单调递增的特征编号发生器 (FindCorners 为 const, 故声明为 mutable)
+  mutable std::uint32_t next_feature_id_{0};
+
 public:
   const cv::Size subpix_win_size{5, 5};
   const cv::Size subpix_zero_zone{-1, -1};
@@ -138,9 +141,13 @@ private:
   {
   private:
     double atol_;
+    double min_disparity_;
 
   public:
-    ParallaxFilter(double atol) noexcept : atol_{atol} {}
+    ParallaxFilter(double atol, double min_disparity) noexcept :
+      atol_{atol}, min_disparity_{min_disparity}
+    {
+    }
 
     template <class T>
     bool operator()(const T &tuple) const noexcept
@@ -151,9 +158,11 @@ private:
       // 右目视图角点坐标
       const PointType &pt2{std::get<3>(tuple)};
       // 1. 必须是追踪成功的点
-      // 2. 视差过滤：保证正视差 (即左目图像中的点的横坐标必须大于右目图像中的点的横坐标)
+      // 2. 视差过滤：视差必须超过下限 (仅要求正视差会放行亚像素视差,
+      //    三角化出数百米外的伪路标点)
       // 3. 极线过滤：纵坐标之差必须小于阈值
-      return found && (pt1.x > pt2.x) && (std::abs(pt1.y - pt2.y) < atol_);
+      return found && (pt1.x - pt2.x >= min_disparity_)
+             && (std::abs(pt1.y - pt2.y) < atol_);
     }
   };
 
@@ -229,9 +238,6 @@ private:
                                   mask);
     }
 
-    // 新提取的角点需要赋予 feature_id
-    ExtendFeatureIdList(feature_ids, keypoints_prev_left_ext);
-
     std::println(stderr, "\t新检出FAST角点={}个，检测方式={}",
                  keypoints_prev_left_ext.size(),
                  (corners_prev_left.empty() || corners_prev_right.empty())
@@ -284,10 +290,17 @@ private:
                          corners_prev_right_ext, //
                          features_found_pl_pr, 0);
 
+    // 新角点的 id 必须与新角点数组一一对应地生成:
+    // 若把新 id 追加进存量 feature_ids 再参与 zip, zip 会按最短长度截断,
+    // 导致存量 id 与新角点错位配对, 后续三角化与 PnP 将建立在错误的对应关系上
+    std::vector<std::uint32_t> feature_ids_ext;
+    ExtendFeatureIdList(feature_ids_ext, corners_prev_left_ext,
+                        next_feature_id_);
+
     auto zipped_view
-        = std::views::zip(features_found_pl_pr, feature_ids,
+        = std::views::zip(features_found_pl_pr, feature_ids_ext,
                           corners_prev_left_ext, corners_prev_right_ext)
-          | std::views::filter(ParallaxFilter{atol_parallax});
+          | std::views::filter(ParallaxFilter{atol_parallax, min_disparity});
 
     // 因为 view 是延迟计算的，所以必须先创建副本
     auto new_feature_ids
@@ -313,20 +326,22 @@ private:
                  corners_prev_left_ext.size(), false, new_feature_ids.size(),
                  corners_prev_left_ext.size() - new_feature_ids.size());
 
-    // 合并到主追踪序列
+    // 合并到主追踪序列: 三个数组必须同步追加, 保持索引一一对应
     corners_prev_left.reserve(corners_prev_left.size()
                               + new_corners_prev_left_ext.size());
     corners_prev_right.reserve(corners_prev_right.size()
                                + new_corners_prev_right_ext.size());
+    feature_ids.reserve(feature_ids.size() + new_feature_ids.size());
     std::println(stderr, "\t合并后，正在跟踪的路标点总数为 {}+{}={}个",
                  corners_prev_left.size(), new_corners_prev_left_ext.size(),
                  corners_prev_left.size() + new_corners_prev_left_ext.size());
     corners_prev_left.append_range(std::move(new_corners_prev_left_ext));
     corners_prev_right.append_range(std::move(new_corners_prev_right_ext));
-    feature_ids = std::move(new_feature_ids);
+    feature_ids.append_range(std::move(new_feature_ids));
 
     return HaveEnoughCorners(corners_prev_left)
-           && corners_prev_left.size() == corners_prev_right.size();
+           && corners_prev_left.size() == corners_prev_right.size()
+           && corners_prev_left.size() == feature_ids.size();
   }
 
   //===================================
@@ -474,10 +489,11 @@ private:
                          corners_next_left, features_found_nr_nl,
                          lk_flags_next_right_to_next_left);
 
-    auto zipped_view = std::views::zip(features_found_nr_nl, feature_ids,
-                                       corners_next_left, corners_next_right,
-                                       corners_prev_left, corners_prev_right)
-                       | std::views::filter(ParallaxFilter{atol_parallax});
+    auto zipped_view
+        = std::views::zip(features_found_nr_nl, feature_ids, corners_next_left,
+                          corners_next_right, corners_prev_left,
+                          corners_prev_right)
+          | std::views::filter(ParallaxFilter{atol_parallax, min_disparity});
 
     auto new_feature_ids
         = zipped_view

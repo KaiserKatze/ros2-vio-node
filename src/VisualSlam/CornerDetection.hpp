@@ -42,6 +42,10 @@ struct AbstractDetector
                 < static_cast<std::size_t>(std::numeric_limits<int>::max()));
   static constexpr double atol_parallax{1.5};
   static constexpr double atol_coincidence{1.0};
+  // 双目最小视差 (像素)。矫正后 f≈435px、基线≈0.11m, 深度 = f*b/视差,
+  // 亚像素级视差会三角化出数百米外的伪路标点 (房间实际只有约 6m),
+  // 严重毒化 PnP; 取 1.0px 把三角化深度上限约束在 48m 以内
+  static constexpr double min_disparity{1.0};
   const cv::Size winSize{15, 15};
   static constexpr int maxLevel{2};
 
@@ -49,7 +53,9 @@ struct AbstractDetector
   static bool HaveEnoughCorners(const std::vector<PointType> &corners) noexcept
   {
     std::size_t len{corners.size()};
-    std::print(stderr, "\tAbstractDetector::HaveEnoughCorners 计得角点总数={}个\n", len);
+    std::print(stderr,
+               "\tAbstractDetector::HaveEnoughCorners 计得角点总数={}个\n",
+               len);
     return len >= minCorners;
   }
 
@@ -59,19 +65,26 @@ struct AbstractDetector
   {
     // 各个角点集合的大小之和
     std::size_t len{(corners.size() + ...)};
-    std::print(stderr, "\tAbstractDetector::HaveEnoughCorners 计得角点总数={}个\n", len);
+    std::print(stderr,
+               "\tAbstractDetector::HaveEnoughCorners 计得角点总数={}个\n",
+               len);
     return len >= minCorners;
   }
 
+  // 为 new_feature_pts 中的每个新角点分配一个全局唯一且严格递增的 id,
+  // 并把 next_feature_id 推进到下一个可用值。
+  // 必须使用独立的单调计数器而非 feature_ids.back() + 1:
+  // 跟踪过程会剔除中间的特征, 若由末尾 id 推导, 被剔除的 id 会被重新分配给
+  // 不同的物理路标点, 使 ESKF 的路标数据库把两个点混为一谈
   template <typename PointType>
   static void ExtendFeatureIdList(std::vector<std::uint32_t> &feature_ids,
-                                  const std::vector<PointType> &new_feature_pts)
+                                  const std::vector<PointType> &new_feature_pts,
+                                  std::uint32_t &next_feature_id)
   {
-    std::uint32_t feature_last{feature_ids.empty() ? 0 : feature_ids.back()};
     feature_ids.resize(feature_ids.size() + new_feature_pts.size());
-    std::iota(feature_ids.end() - new_feature_pts.size(),
-              feature_ids.end(), //
-              feature_last + 1);
+    std::iota(feature_ids.end() - new_feature_pts.size(), //
+              feature_ids.end(), next_feature_id);
+    next_feature_id += static_cast<std::uint32_t>(new_feature_pts.size());
   }
 
   template <typename Points>

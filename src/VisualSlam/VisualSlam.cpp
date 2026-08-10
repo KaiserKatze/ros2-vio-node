@@ -37,6 +37,7 @@
 
 #include "FastDetector.hpp"
 #include "ImageDataLoader.hpp"
+#include "euroc_vio/DatumImu.hpp"
 #include "euroc_vio/ErrorStateKalmanFilter.hpp"
 #include "euroc_vio/EuRoC.hpp"
 #include "euroc_vio/Integrator.hpp"
@@ -314,13 +315,28 @@ public:
   using Attitude   = Sophus::SO3<value_type>;
   using ESKF       = ErrorStateKalmanFilter<value_type>;
 
-  const EuRoC::EuRoC euroc_{};
+  // PnP RANSAC 参数: 输入图像已完成矫正与去畸变, 内点重投影残差应在 1~2px 量级,
+  // OpenCV 默认的 8px 阈值会把错误的 3D-2D 对应也接纳为内点
+  static constexpr float kPnpReprojectionErrorPixels{2.0F};
+  static constexpr int kPnpRansacIterations{200};
+  static constexpr double kPnpConfidence{0.99};
+  // 内点低于此数时相对位姿不可信, 该帧不参与积分
+  static constexpr int kMinPnpInliers{12};
+  // 静止初始化所用的 IMU 样本数 (EuRoC 开头有静止段, 200Hz 下约 1 秒)
+  static constexpr std::size_t kStaticInitSampleCount{200};
+
+  // 标定参数由 mav0/cam0|cam1/sensor.yaml 加载, 必须先于依赖它的成员构造
+  const EuRoC::EuRoC euroc_;
 
 private:
   const std::string window_name_{"Stereo Visual SLAM"};
 
   ImageDataLoader loader_;
   SlamConfig config_;
+
+  // IMU 采样序列 (体坐标系) 与其消费游标: ESKF 的预测步依赖它
+  std::vector<DatumImu> imu_data_;
+  std::size_t imu_cursor_{0};
 
   CornerDetection::FastDetector detector_{};
   // 初始化 CLAHE 实例
@@ -341,7 +357,7 @@ public:
   StereoSlam(StereoSlam &&) = delete;
 
   StereoSlam(const std::filesystem::path &path_mav0, const SlamConfig &config) :
-    loader_{path_mav0}, config_{config}
+    euroc_{path_mav0}, loader_{path_mav0}, config_{config}
   {
     if (config_.do_visualization_)
     {
@@ -352,22 +368,54 @@ public:
 
     cv::cv2eigen(euroc_.P0, eskf_config.stereo_camera_model_.proj_left_);
     cv::cv2eigen(euroc_.P1, eskf_config.stereo_camera_model_.proj_right_);
+    // 没有这个外参, ESKF 会把矫正后左目系当成体坐标系, 路标点与雅可比全部错位
+    // SVD 投影确保旋转块严格正交, 满足 Sophus::SE3 的前置条件
+    const Eigen::Matrix3d rmat_B_rectC0{
+        euroc_.T_B_rectifiedC0.block<3, 3>(0, 0),
+    };
+    const Eigen::JacobiSVD<Eigen::Matrix3d> svd{
+        rmat_B_rectC0,
+        Eigen::ComputeFullU | Eigen::ComputeFullV,
+    };
+    eskf_config.stereo_camera_model_.transform_cam0_ = typename ESKF::Pose{
+        Eigen::Matrix3d{svd.matrixU() * svd.matrixV().transpose()},
+        Eigen::Vector3d{euroc_.T_B_rectifiedC0.block<3, 1>(0, 3)},
+    };
 
     auto path_imu0_yaml{path_mav0 / "imu0" / "sensor.yaml"};
     auto opt_sensor_config_imu0{SensorYaml::ReadSensorYaml(path_imu0_yaml)};
-    if (opt_sensor_config_imu0.has_value())
-    {
-      auto sensor_config_imu0_ = opt_sensor_config_imu0.value();
-      eskf_config.imu_rate_    = sensor_config_imu0_.rate_hz_;
-    }
-    else
+    if (!opt_sensor_config_imu0.has_value())
     {
       throw std::runtime_error{std::format(
           "Failed to parse IMU config yaml '{}'.", path_imu0_yaml.c_str()
       )};
     }
+    const auto sensor_config_imu0{opt_sensor_config_imu0.value()};
+    eskf_config.imu_rate_ = sensor_config_imu0.rate_hz_;
 
     eskf_ = ESKF{eskf_config};
+
+    // EuRoC 的 imu0 已在体坐标系下表达, 无需再做旋转
+    imu_data_ = DatumImu::Load((path_mav0 / "imu0" / "data.csv").string(),
+                               Sophus::SO3d{});
+    if (imu_data_.empty())
+    {
+      throw std::runtime_error{std::format(
+          "IMU data is empty: '{}'.", (path_mav0 / "imu0" / "data.csv").c_str()
+      )};
+    }
+
+    // 把 YAML 中的物理噪声参数交给 ESKF, 用于过程协方差传播
+    eskf_.SetGyroscopeNoiseDensity(sensor_config_imu0.gyroscope_noise_density_);
+    eskf_.SetGyroscopeRandomWalk(sensor_config_imu0.gyroscope_random_walk_);
+    eskf_.SetAccelerometerNoiseDensity(
+        sensor_config_imu0.accelerometer_noise_density_
+    );
+    eskf_.SetAccelerometerRandomWalk(
+        sensor_config_imu0.accelerometer_random_walk_
+    );
+
+    InitializeNominalStateFromStaticImu();
   }
 
 #pragma endregion
@@ -381,6 +429,48 @@ public:
   }
 
 private:
+  // 用开头的静止段估计初始姿态: 静止时比力的均值方向即重力反方向。
+  // 按 SetNominalState 的约定, 把姿态设为单位阵、让体坐标系下的重力向量
+  // 吸收初始朝向的全部不确定性 (线性化效果优于反过来假设重力已知)
+  void InitializeNominalStateFromStaticImu()
+  {
+    const std::size_t sample_count{
+        std::min(kStaticInitSampleCount, imu_data_.size()),
+    };
+    Vector3 accel_mean{Vector3::Zero()};
+    Vector3 gyro_mean{Vector3::Zero()};
+    for (std::size_t i = 0; i < sample_count; ++i)
+    {
+      accel_mean += imu_data_[i].linear_acceleration_;
+      gyro_mean += imu_data_[i].angular_velocity_;
+    }
+    accel_mean /= static_cast<value_type>(sample_count);
+    gyro_mean /= static_cast<value_type>(sample_count);
+
+    typename ESKF::NominalStateVariable init_state;
+    // 姿态取单位阵, 于是体坐标系与世界系重合, 重力直接取 -比力
+    init_state.pose_    = typename ESKF::Pose{};
+    init_state.gravity_ = -accel_mean;
+    eskf_.SetNominalState(init_state);
+
+    std::println(stderr,
+                 "[INIT] 静止段样本={}个 比力均值=[{:.4f} {:.4f} {:.4f}] "
+                 "(模长 {:.4f} m/s^2) 陀螺均值=[{:.5f} {:.5f} {:.5f}]",
+                 sample_count, accel_mean.x(), accel_mean.y(), accel_mean.z(),
+                 accel_mean.norm(), gyro_mean.x(), gyro_mean.y(),
+                 gyro_mean.z());
+  }
+
+  // 把截止到 timestamp 的所有 IMU 采样送进 ESKF 完成名义状态前推与协方差传播
+  void PropagateImuUntil(std::int64_t timestamp)
+  {
+    while (imu_cursor_ < imu_data_.size()
+           && imu_data_[imu_cursor_].timestamp_ <= timestamp)
+    {
+      eskf_.ImuUpdate(&imu_data_[imu_cursor_++]);
+    }
+  }
+
   // 辅助函数：将灰度图转为彩色（BGR）
   static cv::Mat ConvertGrayToBGR(const cv::Mat &img) noexcept
   {
@@ -450,7 +540,7 @@ private:
 public:
   void StartOdometer()
   {
-    WriteDataHeader(this->VisualIntegrator::pose_);
+    WriteDataHeader(eskf_.GetNominalState().pose_);
 
     bool init_frame{false};
     bool init_landmarks{false};
@@ -491,6 +581,8 @@ public:
         init_frame = true;
 
         timestamp = frame.timestamp_;
+        // 首帧之前的 IMU 只用于静止初始化, 从首帧成像时刻起才开始前推
+        PropagateImuUntil(frame.timestamp_);
         HandleFrame(frame, image_prev_left_rectified,
                     image_prev_right_rectified, image_prev_left_grayscale,
                     image_prev_right_grayscale);
@@ -498,6 +590,10 @@ public:
         ++loader_;
         continue;
       }
+
+      // 预测步: 把两帧之间的高频 IMU 采样全部积分到当前成像时刻,
+      // 名义状态与误差协方差同步传播 (过程噪声在此注入)
+      PropagateImuUntil(frame.timestamp_);
 
       HandleFrame(frame, image_next_left_rectified, image_next_right_rectified,
                   image_next_left_grayscale, image_next_right_grayscale);
@@ -577,32 +673,68 @@ public:
             )};
             eskf_.StereoUpdate(timestamp, corner_set_prev);
           }
-          auto corner_set_next{CreateStereoObservationSet<value_type>(
-              corners_next_left, corners_next_right, landmarks_nonhomo,
-              feature_ids
-          )};
-          eskf_.StereoUpdate(frame.timestamp_, corner_set_next);
+
+          // 当前帧的观测必须配当前帧三角化出的路标点: 沿用上一帧的三角化结果
+          // 会把 t-1 时刻相机系下的坐标当成 t 时刻的, 使路标数据库混入不同历元
+          cv::Mat landmarks_homo_next;
+          cv::Mat landmarks_nonhomo_next;
+          cv::triangulatePoints(euroc_.P0, euroc_.P1, corners_next_left,
+                                corners_next_right, landmarks_homo_next);
+          if (landmarks_homo_next.cols > 0)
+          {
+            cv::convertPointsFromHomogeneous(landmarks_homo_next.t(),
+                                             landmarks_nonhomo_next);
+            auto corner_set_next{CreateStereoObservationSet<value_type>(
+                corners_next_left, corners_next_right, landmarks_nonhomo_next,
+                feature_ids
+            )};
+            // 观测更新: 视觉残差修正 IMU 预测出的名义状态与零偏
+            eskf_.StereoUpdate(frame.timestamp_, corner_set_next);
+          }
 
           // 旋转向量与平移向量
           cv::Mat rVec_cv, tVec_cv;
-          // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga50620f0e26e02caa2e9adc07b5fbf24e
-          cv::solvePnPRansac(landmarks_nonhomo, corners_next_left,
-                             camera_matrix, cv::noArray(), rVec_cv, tVec_cv);
+          // 显式指定 RANSAC 参数: 图像已矫正去畸变, 默认 8px 重投影阈值过宽,
+          // 会把错误对应当作内点; 收回 inliers 以便判定本次求解是否可信
+          cv::Mat pnp_inliers;
+          const bool pnp_ok{
+              cv::solvePnPRansac(landmarks_nonhomo, corners_next_left,
+                                 camera_matrix, cv::noArray(), rVec_cv, tVec_cv,
+                                 false, kPnpRansacIterations,
+                                 kPnpReprojectionErrorPixels, kPnpConfidence,
+                                 pnp_inliers, cv::SOLVEPNP_ITERATIVE),
+          };
+          const int pnp_inlier_count{pnp_ok ? pnp_inliers.rows : 0};
 
-          // 数据类型转换
-          Vector3 rVec_eigen;
-          cv::cv2eigen(rVec_cv, rVec_eigen);
-          rVec_eigen = -rVec_eigen;
-          Attitude delta_rotation{Attitude::exp(rVec_eigen)};
-          Vector3 delta_position{Vector3::Zero()};
-          cv::cv2eigen(tVec_cv, delta_position);
-          delta_position = -(delta_rotation * delta_position);
+          // 内点过少时本帧的相对位姿不可信, 宁可跳过也不要把野值积分进轨迹
+          if (pnp_ok && pnp_inlier_count >= kMinPnpInliers)
+          {
+            // 数据类型转换
+            Vector3 rVec_eigen;
+            cv::cv2eigen(rVec_cv, rVec_eigen);
+            rVec_eigen = -rVec_eigen;
+            Attitude delta_rotation{Attitude::exp(rVec_eigen)};
+            Vector3 delta_position{Vector3::Zero()};
+            cv::cv2eigen(tVec_cv, delta_position);
+            delta_position = -(delta_rotation * delta_position);
 
-          // 更新状态
-          this->VisualIntegrator::Update(delta_rotation, delta_position);
+            // 更新状态
+            this->VisualIntegrator::Update(delta_rotation, delta_position);
+          }
+          else
+          {
+            std::println(stderr,
+                         "\tPnP 求解不可信 (成功={} 内点={}个 < {}个)，"
+                         "本帧不更新位姿",
+                         pnp_ok, pnp_inlier_count, kMinPnpInliers);
+          }
 
-          // 打印位姿
-          WriteDataContent(timestamp, this->VisualIntegrator::pose_);
+          // 打印位姿: 输出 ESKF 融合后的名义状态 (体坐标系位姿),
+          // 而非纯视觉开环积分的结果 —— 后者没有任何漂移修正,
+          // 单帧的错误对应会被永久累积
+          // 位姿已包含到当前帧的运动, 必须标注当前帧时间戳
+          // (此处的 timestamp 仍是上一帧的值, 帧末才推进)
+          WriteDataContent(frame.timestamp_, eskf_.GetNominalState().pose_);
         }
 
         // 只有在追踪成功时，才将本帧的有效特征点保存为下一帧的“上一帧点”

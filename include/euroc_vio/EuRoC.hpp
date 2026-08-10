@@ -2,8 +2,11 @@
 
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <format>
 #include <iostream>
 #include <print>
+#include <stdexcept>
 #include <utility>
 
 #include <Eigen/Dense>
@@ -23,38 +26,29 @@
 #include <opencv2/videoio.hpp>
 #include <opencv2/viz/vizcore.hpp>
 
+#include "euroc_vio/SensorYaml.hpp"
+
 namespace EuRoC
 {
 
 struct EuRoC
 {
-  static constexpr double fu0{458.654};
-  static constexpr double fv0{457.296};
-  static constexpr double cu0{367.215};
-  static constexpr double cv0{248.375};
-  static constexpr double k01{-0.28340811};
-  static constexpr double k02{0.07395907};
-  static constexpr double p01{0.00019359};
-  static constexpr double p02{1.76187114e-05};
-  static constexpr double fu1{457.587};
-  static constexpr double fv1{456.134};
-  static constexpr double cu1{379.999};
-  static constexpr double cv1{255.238};
-  static constexpr double k11{-0.28368365};
-  static constexpr double k12{0.07451284};
-  static constexpr double p11{-0.00010473};
-  static constexpr double p12{-3.55590700e-05};
-  static constexpr int image_width{752};
-  static constexpr int image_height{480};
-
   // https://libeigen.gitlab.io/eigen/docs-3.1/TopicStructHavingEigenMembers.html
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+  // 图像分辨率, 由 cam0/sensor.yaml 的 resolution 字段给出
+  int image_width{0};
+  int image_height{0};
 
   Eigen::Matrix3d mat_cam_intrinsic_rectified_;
   Eigen::Vector3d vec_cam_translation_rectified_;
 
   Eigen::Matrix4d T_C1C0{Eigen::Matrix4d::Identity()};
-  cv::Size imageSize{752, 480};
+  // 矫正后左目相机系到体坐标系(IMU)的变换 T_B,rectifiedC0。
+  // 立体矫正把原始左目系又旋转了 R0, 因此 T_B,rectC0 = T_BC0 * R0^T,
+  // ESKF 需要它才能把三角化出的相机系路标点搬到统一的体/世界坐标系
+  Eigen::Matrix4d T_B_rectifiedC0{Eigen::Matrix4d::Identity()};
+  cv::Size imageSize;
 
   // Output 3x4 projection matrix in the new (rectified) coordinate systems for
   // the first camera, i.e. it projects points given in the rectified first
@@ -75,66 +69,48 @@ struct EuRoC
   double focal_length_rectified_{NAN};
   double baseline_length_{NAN};
 
-  EuRoC()
+  // 标定参数全部来自数据集的 cam0/cam1 sensor.yaml, 不再硬编码,
+  // 从而支持 MH / V1 / V2 等不同序列各自的内参与外参
+  explicit EuRoC(const std::filesystem::path &path_mav0)
   {
+    const FastVIO::SensorYaml config_cam0{
+        ReadCameraYaml(path_mav0 / "cam0" / "sensor.yaml"),
+    };
+    const FastVIO::SensorYaml config_cam1{
+        ReadCameraYaml(path_mav0 / "cam1" / "sensor.yaml"),
+    };
+
+    image_width  = config_cam0.resolution_.x();
+    image_height = config_cam0.resolution_.y();
+    imageSize    = cv::Size{image_width, image_height};
+    if (config_cam1.resolution_ != config_cam0.resolution_)
+    {
+      throw std::runtime_error{
+          std::format("左右目分辨率不一致: cam0 {}x{}, cam1 {}x{}.",
+                      config_cam0.resolution_.x(), config_cam0.resolution_.y(),
+                      config_cam1.resolution_.x(), config_cam1.resolution_.y())
+      };
+    }
+
     // 1. 初始化矩阵（确保使用 double 类型）
 
     // https://docs.opencv.org/3.4/d3/d63/classcv_1_1Mat.html
     // https://docs.opencv.org/4.x/d0/daf/group__core__eigen.html
 
     cv::Mat cameraMatrix0;
-    cv::eigen2cv(
-        Eigen::Matrix3d{
-            {fu0, 0.0, cu0},
-            {0.0, fv0, cv0},
-            {0.0, 0.0, 1.0},
-        },
-        cameraMatrix0
-    );
+    cv::eigen2cv(MakeIntrinsicMatrix(config_cam0.intrinsics_), cameraMatrix0);
     cv::Mat distCoeffs0;
-    cv::eigen2cv(
-        Eigen::Vector4d{
-            k01,
-            k02,
-            p01,
-            p02,
-        },
-        distCoeffs0
-    );
+    cv::eigen2cv(Eigen::Vector4d{config_cam0.distortion_coefficients_},
+                 distCoeffs0);
 
     cv::Mat cameraMatrix1;
-    cv::eigen2cv(
-        Eigen::Matrix3d{
-            {fu1, 0.0, cu1},
-            {0.0, fv1, cv1},
-            {0.0, 0.0, 1.0},
-        },
-        cameraMatrix1
-    );
+    cv::eigen2cv(MakeIntrinsicMatrix(config_cam1.intrinsics_), cameraMatrix1);
     cv::Mat distCoeffs1;
-    cv::eigen2cv(
-        Eigen::Vector4d{
-            k11,
-            k12,
-            p11,
-            p12,
-        },
-        distCoeffs1
-    );
+    cv::eigen2cv(Eigen::Vector4d{config_cam1.distortion_coefficients_},
+                 distCoeffs1);
 
-    const Eigen::Matrix4d T_BC0{
-        {0.0148655429818, -0.999880929698, 0.00414029679422, -0.0216401454975},
-        {0.999557249008, 0.0149672133247, 0.025715529948, -0.064676986768},
-        {-0.0257744366974, 0.00375618835797, 0.999660727178, 0.00981073058949},
-        {0.0, 0.0, 0.0, 1.0},
-    };
-
-    const Eigen::Matrix4d T_BC1{
-        {0.0125552670891, -0.999755099723, 0.0182237714554, -0.0198435579556},
-        {0.999598781151, 0.0130119051815, 0.0251588363115, 0.0453689425024},
-        {-0.0253898008918, 0.0179005838253, 0.999517347078, 0.00786212447038},
-        {0.0, 0.0, 0.0, 1.0},
-    };
+    const Eigen::Matrix4d T_BC0{config_cam0.transform_matrix_};
+    const Eigen::Matrix4d T_BC1{config_cam1.transform_matrix_};
 
     const auto rmat_BC0{T_BC0.template block<3, 3>(0, 0)};
     const auto tvec_BC0{T_BC0.template block<3, 1>(0, 3)};
@@ -239,6 +215,11 @@ struct EuRoC
       Eigen::Matrix3d R1_eigen;
       cv::cv2eigen(R0, R0_eigen);
       cv::cv2eigen(R1, R1_eigen);
+
+      // 矫正后左目系 -> 体坐标系: 先由 R0^T 转回原始左目系, 再经 T_BC0 到体系
+      T_B_rectifiedC0.block<3, 3>(0, 0) = rmat_BC0 * R0_eigen.transpose();
+      T_B_rectifiedC0.block<3, 1>(0, 3) = tvec_BC0;
+
       Eigen::Matrix3d rmat_R0R1{R0_eigen * rmat_BC0.transpose() * rmat_BC1
                                 * R1_eigen.transpose()};
       std::print(
@@ -259,6 +240,40 @@ struct EuRoC
   EuRoC(EuRoC &&)                 = delete;
   EuRoC &operator=(EuRoC &&)      = delete;
 
+private:
+  // 读取相机 sensor.yaml; SensorYaml 只在 sensor_type 为 camera 时填充内参,
+  // 因此此处显式校验分辨率, 避免把默认零值当作有效标定继续往下算
+  static FastVIO::SensorYaml
+  ReadCameraYaml(const std::filesystem::path &path_sensor_yaml)
+  {
+    const auto config{FastVIO::SensorYaml::ReadSensorYaml(path_sensor_yaml)};
+    if (!config.has_value())
+    {
+      throw std::runtime_error{std::format("无法解析相机标定 '{}'.",
+                                           path_sensor_yaml.string())};
+    }
+    if (config->resolution_.x() <= 0 || config->resolution_.y() <= 0)
+    {
+      throw std::runtime_error{
+          std::format("'{}' 不是有效的相机标定 (缺少 resolution/intrinsics, "
+                      "请确认 sensor_type 为 camera).",
+                      path_sensor_yaml.string())
+      };
+    }
+    return config.value();
+  }
+
+  // intrinsics 按 EuRoC 约定为 [fu, fv, cu, cv]
+  static Eigen::Matrix3d MakeIntrinsicMatrix(const Eigen::Vector4d &intrinsics)
+  {
+    return Eigen::Matrix3d{
+        {intrinsics(0), 0.0, intrinsics(2)},
+        {0.0, intrinsics(1), intrinsics(3)},
+        {0.0, 0.0, 1.0},
+    };
+  }
+
+public:
   std::pair<cv::Mat, cv::Mat> remap(const cv::Mat &image0,
                                     const cv::Mat &image1) const
   {
