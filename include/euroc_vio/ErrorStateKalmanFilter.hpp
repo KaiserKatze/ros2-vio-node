@@ -125,6 +125,8 @@ public:
     value_type max_sensor_jitter_{10.0}; // milliseconds
     std::size_t history_buffer_margin_{16};
     StereoCameraModel stereo_camera_model_{};
+    // 单目模式: 只检查左目投影深度、量测更新走单目 2 维残差路径
+    bool monocular_mode_{false};
   };
 
 #pragma endregion
@@ -160,6 +162,12 @@ private:
   using CovarianceMeasurementStereo = Eigen::Matrix<value_type, 4, 4>;
   // 双目估计的卡尔曼增益矩阵
   using KalmanGainStereo = Eigen::Matrix<value_type, dimErrorState, 4>;
+  // 单目视觉量测 (仅左目 2 维残差) 的观测函数雅可比矩阵
+  using JacobiMeasurementMono = Eigen::Matrix<value_type, 2, dimErrorState>;
+  // 单目视觉量测的观测误差协方差矩阵
+  using CovarianceMeasurementMono = Eigen::Matrix<value_type, 2, 2>;
+  // 单目视觉量测的卡尔曼增益矩阵
+  using KalmanGainMono = Eigen::Matrix<value_type, dimErrorState, 2>;
 
   struct HistoryState
   {
@@ -778,6 +786,92 @@ public:
     ReplayHistory(itr);
   }
 
+  /**
+   * @brief 每当收到新的单目视觉观测时，回滚至观测时刻、执行序列化测量更新，
+   *        再重放 IMU 数据回到当前时刻。流程与双目版一致，残差仅取左目 2 维。
+   * @param timestamp 图像帧时间戳。
+   * @param obs 单目观测集合 (复用 StereoObservation, 仅使用 pt_left_ 与 landmark_)。
+   * @note 调用者必须保证 obs 按 feature_id_ 升序排列且无重复。
+   */
+  void MonoVisualUpdate(std::int64_t timestamp,
+                        std::span<StereoObservation<value_type>> obs) noexcept
+  {
+    ++vision_frame_count_;
+
+    typename HistoryBuffer::iterator itr{FindHistoryIndex(timestamp)};
+    const bool skip_rollback{itr == history_buffer_.end()
+                             && !history_buffer_.Empty()};
+    if (skip_rollback)
+    {
+      std::print(stderr, "[WARN] 单目观测时间戳早于历史缓冲区，"
+                         "跳过回滚，直接在当前状态上执行测量更新\n");
+    }
+    RollbackToHistory(itr);
+
+    UpdateLandmarks(timestamp, obs);
+
+    bool has_valid_update{false};
+    for (const StereoObservation<value_type> &ob : obs)
+    {
+      auto landmark_id{ob.feature_id_};
+      const auto landmark_it{landmark_database_.find(landmark_id)};
+      // 本帧观测到的路标可能已在 RemoveLostLandmarks 中
+      // 因投影深度非正而被删除，必须判空后再解引用
+      if (landmark_it == landmark_database_.end())
+      {
+        continue;
+      }
+      const Landmark &landmark{landmark_it->second};
+
+      // 防范自反馈 (同双目版): 只有 Active 路标参与状态更新
+      if (landmark.status_ != LandmarkStatus::Active)
+      {
+        continue;
+      }
+
+      const auto &landmark_pos{landmark.position_};
+      JacobiMeasurementMono H{GetMeasurementJacobiMono(landmark_pos)};
+      CovarianceMeasurementMono V{GetMeasurementCovarianceMono()};
+
+      // 预测测量向量
+      Vector2 pt_left_pred{ProjectLeftNonhomo(landmark_pos)};
+      // 实际测量向量
+      const Vector2 z_meas{ob.pt_left_};
+      // 计算测量残差
+      Vector2 residual{z_meas - pt_left_pred};
+      // 序列化更新误差状态
+      Vector2 effective_residual{residual - H * error_state_};
+
+      // 卡方门限检验 (自由度=2)，剔除误匹配等野值观测
+      const value_type chi2{GetMahalanobisDistanceSquared(
+          error_state_covariance_, H, V, effective_residual
+      )};
+      if (chi2 > chi2_threshold_mono_)
+      {
+        continue;
+      }
+
+      has_valid_update = true;
+
+      // 计算卡尔曼增益
+      KalmanGainMono K{GetKalmanGain(error_state_covariance_, H, V)};
+      // 累加状态误差
+      error_state_ += K * effective_residual;
+      UpdateErrorStateCovariance(error_state_covariance_, K, H, V);
+    }
+
+    // 遍历完当前帧的所有观测后
+    // 如果实际发生了更新
+    // 统一将累加的 error_state_ 注入到 nominal_state_ 并复位
+    if (has_valid_update)
+    {
+      InjectError();
+    }
+
+    // 从视觉时间戳向当前时间重新积分（Re-propagation）
+    ReplayHistory(itr);
+  }
+
 #pragma endregion
 
 #pragma region DATA_INTERFACE
@@ -1027,16 +1121,22 @@ private:
         erase = true;
       }
 
-      // 条件2：位于双目相机后方
+      // 条件2：位于相机后方 (单目模式只检查左目投影深度)
       if (!erase)
       {
         const auto &landmark_pos{landmark.position_};
         const Vector3 pt_left_homo{ProjectLeftHomo(landmark_pos)};
-        const Vector3 pt_right_homo{ProjectRightHomo(landmark_pos)};
-        if (pt_left_homo.z() <= static_cast<value_type>(0)
-            || pt_right_homo.z() <= static_cast<value_type>(0))
+        if (pt_left_homo.z() <= static_cast<value_type>(0))
         {
           erase = true;
+        }
+        if (!config_.monocular_mode_)
+        {
+          const Vector3 pt_right_homo{ProjectRightHomo(landmark_pos)};
+          if (pt_right_homo.z() <= static_cast<value_type>(0))
+          {
+            erase = true;
+          }
         }
       }
 
@@ -1539,6 +1639,64 @@ private:
     return H;
   }
 
+  /**
+   * @brief 计算单个 Landmark 的单目观测雅可比矩阵 (仅左目 2 维残差)
+   *
+   * @param landmark 世界坐标系中的 Landmark
+   * @return 单目观测雅可比矩阵（2×18）
+   */
+  [[nodiscard]]
+  JacobiMeasurementMono
+  GetMeasurementJacobiMono(const Vector3 &landmark) const noexcept
+  {
+    // [左目像素点坐标] = 观测函数(路标点的世界坐标), 推导链与双目版左目部分一致
+
+    // World -> Body
+    const Vector3 p_body{
+        nominal_state_.pose_.inverse() * landmark,
+    };
+
+    // Body -> Camera
+    const Pose T_SB{
+        config_.stereo_camera_model_.transform_cam0_.inverse(),
+    };
+    const Vector3 p_cam{
+        T_SB * p_body,
+    };
+
+    // 左目的 2×3 投影雅可比
+    const JacobiProjection J_left{
+        GetProjectionJacobian(config_.stereo_camera_model_.proj_left_, p_cam),
+    };
+
+    // 路标点的体坐标相对于误差状态的雅克比矩阵
+    using JacobiLandmarkBody_wrt_ErrorState
+        = Eigen::Matrix<value_type, 3, dimErrorState>;
+    JacobiLandmarkBody_wrt_ErrorState J_pose{
+        JacobiLandmarkBody_wrt_ErrorState::Zero()
+    };
+    const Matrix3 R_BW{nominal_state_.pose_.so3().inverse().matrix()};
+    J_pose.template block<3, 3>(0, 0) = -R_BW;
+    J_pose.template block<3, 3>(0, 6) = Attitude::hat(p_body).matrix();
+
+    JacobiMeasurementMono H{JacobiMeasurementMono::Zero()};
+    const Matrix3 R_SB{T_SB.so3().matrix()};
+    H.template block<2, dimErrorState>(0, 0) = J_left * (R_SB * J_pose);
+
+    return H;
+  }
+
+  /**
+   * @brief 构造单目测量噪声协方差矩阵 (无视差信息, 取固定像素方差)。
+   */
+  [[nodiscard]]
+  CovarianceMeasurementMono GetMeasurementCovarianceMono() const noexcept
+  {
+    CovarianceMeasurementMono R{CovarianceMeasurementMono::Zero()};
+    R.diagonal().setConstant(confidence_mono_visual_);
+    return R;
+  }
+
 #pragma endregion
 
 #pragma region PUBLIC_VARIABLE
@@ -1551,6 +1709,10 @@ public:
   // 双目观测的卡方门限 (自由度=4, 显著性水平 0.05 的分位数)
   // 用于剔除误匹配等野值观测
   value_type chi2_threshold_stereo_{9.487729};
+  // 单目观测的卡方门限 (自由度=2, 显著性水平 0.05 的分位数)
+  value_type chi2_threshold_mono_{5.991465};
+  // 单目观测像素方差 (单位: px^2, 特征跟踪精度约 1 像素)
+  value_type confidence_mono_visual_{1.0};
 
 #pragma endregion
 

@@ -70,6 +70,11 @@
 #include <vector>
 
 #include "euroc_vio/DatumFast.hpp"
+#include "euroc_vio/VisionMode.hpp"
+
+using FastVIO::DetectVisionMode;
+using FastVIO::SelectMonoCameraDirectory;
+using FastVIO::VisionMode;
 
 namespace fs = std::filesystem;
 
@@ -501,32 +506,6 @@ struct StereoFrame
   fs::path left_image_path;
   fs::path right_image_path;
 };
-
-// 视觉模式: 数据集相机数目
-enum class VisionMode
-{
-  kStereo, // cam0 + cam1
-  kMono    // 仅 cam0 或仅 cam1
-};
-
-// 检测数据集模式: cam1/data.csv 存在且非空 → 双目, 否则单目
-VisionMode DetectVisionMode(const fs::path &dataset_root)
-{
-  const fs::path cam1_csv = dataset_root / "cam1" / "data.csv";
-  return fs::exists(cam1_csv) && fs::file_size(cam1_csv) > 0
-             ? VisionMode::kStereo
-             : VisionMode::kMono;
-}
-
-// 单目模式的图像源目录: 优先 cam0, 缺失时回退 cam1
-fs::path SelectMonoCameraDirectory(const fs::path &dataset_root)
-{
-  if (fs::exists(dataset_root / "cam0" / "data.csv"))
-  {
-    return dataset_root / "cam0";
-  }
-  return dataset_root / "cam1";
-}
 
 // 加载所有 IMU 测量值
 std::vector<ImuSample> LoadImuSamples(const fs::path &dataset_root)

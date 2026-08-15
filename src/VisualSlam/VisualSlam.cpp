@@ -43,6 +43,7 @@
 #include "euroc_vio/SensorYaml.hpp"
 #include "euroc_vio/StereoObservation.hpp"
 #include "euroc_vio/TrackingConfig.hpp"
+#include "euroc_vio/VisionMode.hpp"
 #include "euroc_vio/util.hpp"
 
 // OpenCV 提取角点时只提供 cv::Point2f 类型
@@ -114,6 +115,41 @@ CreateStereoObservationSet(const std::vector<PointType> &pts_left,
                             pt_right.x,
                             pt_right.y,
                         },
+                        Eigen::Vector<value_type, 3>{
+                            GetMatValue<value_type>(landmarks_nonhomo, i, 0),
+                            GetMatValue<value_type>(landmarks_nonhomo, i, 1),
+                            GetMatValue<value_type>(landmarks_nonhomo, i, 2),
+                        });
+  }
+  return result;
+}
+
+template <typename value_type>
+static std::vector<StereoObservation<value_type>>
+CreateMonoObservationSet(const std::vector<PointType> &pts_left,
+                         const cv::Mat &landmarks_nonhomo,
+                         const std::vector<std::uint32_t> &feature_ids)
+{
+  // 与双目版 CreateStereoObservationSet 一致, 仅右目像素分量置零
+  // (单目量测更新不使用右目分量)
+  assert(pts_left.size() == feature_ids.size());
+  assert(landmarks_nonhomo.depth() == CV_32F
+         || landmarks_nonhomo.depth() == CV_64F);
+  auto len{pts_left.size()};
+  using len_t = decltype(len);
+  assert(static_cast<len_t>(landmarks_nonhomo.rows) == len);
+  assert(landmarks_nonhomo.cols * landmarks_nonhomo.channels() == 3);
+  std::vector<StereoObservation<value_type>> result;
+  result.reserve(len);
+  for (len_t i = 0; i < len; ++i)
+  {
+    auto pt_left{pts_left[i]};
+    result.emplace_back(feature_ids[i],
+                        Eigen::Vector<value_type, 2>{
+                            pt_left.x,
+                            pt_left.y,
+                        },
+                        Eigen::Vector<value_type, 2>::Zero(),
                         Eigen::Vector<value_type, 3>{
                             GetMatValue<value_type>(landmarks_nonhomo, i, 0),
                             GetMatValue<value_type>(landmarks_nonhomo, i, 1),
@@ -314,9 +350,14 @@ public:
   using Attitude   = Sophus::SO3<value_type>;
   using ESKF       = ErrorStateKalmanFilter<value_type>;
 
-  const EuRoC::EuRoC euroc_{};
+  const EuRoC::EuRoC euroc_;
 
 private:
+  // 本质矩阵 RANSAC 的最小内点数: 低于此值视为帧间运动退化 (静止/纯旋转)
+  static constexpr int kMinEssentialInliers{20};
+
+  const FastVIO::VisionMode vision_mode_;
+
   const std::string window_name_{"Stereo Visual SLAM"};
 
   ImageDataLoader loader_;
@@ -341,7 +382,8 @@ public:
   StereoSlam(StereoSlam &&) = delete;
 
   StereoSlam(const std::filesystem::path &path_mav0, const SlamConfig &config) :
-    loader_{path_mav0}, config_{config}
+    euroc_{path_mav0}, vision_mode_{FastVIO::DetectVisionMode(path_mav0)},
+    loader_{path_mav0, vision_mode_}, config_{config}
   {
     if (config_.do_visualization_)
     {
@@ -349,9 +391,18 @@ public:
     }
 
     typename ESKF::Config eskf_config;
+    eskf_config.monocular_mode_ = vision_mode_ == FastVIO::VisionMode::kMono;
 
     cv::cv2eigen(euroc_.P0, eskf_config.stereo_camera_model_.proj_left_);
-    cv::cv2eigen(euroc_.P1, eskf_config.stereo_camera_model_.proj_right_);
+    if (vision_mode_ == FastVIO::VisionMode::kStereo)
+    {
+      cv::cv2eigen(euroc_.P1, eskf_config.stereo_camera_model_.proj_right_);
+    }
+    else
+    {
+      // 单目模式 P1 为空: 置零占位, ESKF 双目量测在单目模式下不参与更新
+      eskf_config.stereo_camera_model_.proj_right_.setZero();
+    }
 
     auto path_imu0_yaml{path_mav0 / "imu0" / "sensor.yaml"};
     auto opt_sensor_config_imu0{SensorYaml::ReadSensorYaml(path_imu0_yaml)};
@@ -434,10 +485,54 @@ private:
     return result;
   }
 
+  // 单目展示: 左目的前后两帧 (原图 + 增强图) 横向拼接为一行
+  static cv::Mat stitchMonoImages(const cv::Mat &image_prev_left_rectified,
+                                  cv::Mat image_prev_left_grayscale,
+                                  const cv::Mat &image_next_left_rectified,
+                                  cv::Mat image_next_left_grayscale) noexcept
+  {
+    image_prev_left_grayscale = ConvertGrayToBGR(image_prev_left_grayscale);
+    image_next_left_grayscale = ConvertGrayToBGR(image_next_left_grayscale);
+
+    cv::Mat row1;
+    cv::hconcat(
+        std::vector<cv::Mat>{
+            image_prev_left_rectified,
+            image_prev_left_grayscale,
+        },
+        row1
+    );
+
+    cv::Mat row2;
+    cv::hconcat(
+        std::vector<cv::Mat>{
+            image_next_left_rectified,
+            image_next_left_grayscale,
+        },
+        row2
+    );
+
+    cv::Mat result;
+    cv::vconcat(std::vector<cv::Mat>{row1, row2}, result);
+
+    return result;
+  }
+
   void HandleFrame(const StereoFrame<cv::Mat> &frame, cv::Mat &left_rectified,
                    cv::Mat &right_rectified, cv::Mat &left_grayscale,
                    cv::Mat &right_grayscale) const noexcept
   {
+    if (vision_mode_ == FastVIO::VisionMode::kMono)
+    {
+      // 单目模式: 仅左图去畸变 (EuRoC 单目初始化只生成 map0x/map0y)
+      cv::remap(frame.image_left_, left_rectified, euroc_.map0x, euroc_.map0y,
+                cv::INTER_LINEAR);
+      cv::cvtColor(left_rectified, left_grayscale, cv::COLOR_BGR2GRAY);
+      right_rectified = cv::Mat{};
+      right_grayscale = cv::Mat{};
+      clahe_->apply(left_grayscale, left_grayscale);
+      return;
+    }
     std::tie(left_rectified, right_rectified)
         = euroc_.remap(frame.image_left_, frame.image_right_);
     std::tie(left_grayscale, right_grayscale)
@@ -448,6 +543,8 @@ private:
   }
 
 public:
+  // 保留完整: 帧间状态 (前后帧图像/角点/路标) 与统计对象全部为局部量,
+  // 拆分子函数需传递 10+ 个引用参数, 故主循环保持完整
   void StartOdometer()
   {
     WriteDataHeader(this->VisualIntegrator::pose_);
@@ -486,6 +583,148 @@ public:
     {
       StereoFrame<cv::Mat> frame{loader_()};
       corner_tracking_stats.StartTimer();
+      if (vision_mode_ == FastVIO::VisionMode::kMono)
+      {
+        // 单目模式: 特征跟踪 + 图像流展示, 三角化/ESKF 量测更新待后续接入
+        if (!init_frame)
+        {
+          init_frame = true;
+          timestamp  = frame.timestamp_;
+          HandleFrame(frame, image_prev_left_rectified,
+                      image_prev_right_rectified, image_prev_left_grayscale,
+                      image_prev_right_grayscale);
+          ++loader_;
+          continue;
+        }
+        HandleFrame(frame, image_next_left_rectified,
+                    image_next_right_rectified, image_next_left_grayscale,
+                    image_next_right_grayscale);
+        if (config_.do_visualization_)
+        {
+          const cv::Mat vis{stitchMonoImages(image_prev_left_rectified,
+                                             image_prev_left_grayscale,
+                                             image_next_left_rectified,
+                                             image_next_left_grayscale)};
+          cv::imshow(window_name_, vis);
+          cv::waitKey(5);
+        }
+
+        // 单目特征跟踪: 仅左目前后两帧 (无路标预测先验, use_hint 恒为 false)
+        const bool use_hint{false};
+        corner_tracking_stats.NextFrame();
+        corner_tracking_stats.PrintFrameBegin(use_hint,
+                                              corners_prev_left.size());
+        const bool found_corners{detector_.FindCorners(
+            image_prev_left_grayscale, image_next_left_grayscale,
+            corners_prev_left, corners_next_left, feature_ids, use_hint
+        )};
+        corner_tracking_stats.RecordFrameResult(
+            found_corners, corners_prev_left, corners_prev_right,
+            corners_next_left, corners_next_right
+        );
+        if (found_corners)
+        {
+          assert(corners_prev_left.size() == corners_next_left.size()
+                 && corners_prev_left.size() == feature_ids.size());
+
+          // 帧间本质矩阵: 参考系为 prev 帧相机系, 平移尺度未定 (单目固有)
+          // 当视图之间的旋转、平移未知时：
+          // 1. RANSAC 求解本质矩阵 E
+          // 2. 分解 E 得帧间旋转和平移 (cv::recoverPose, 平移为单位向量)
+          // 3. 以 P_prev = [K|0]、P_next = K[R|t] 三角化
+          // 4. 路标点经 PnP 反推帧间位姿, 驱动 VisualIntegrator 积分
+          cv::Mat essential_inlier_mask;
+          const cv::Mat essential_matrix{cv::findEssentialMat(
+              corners_prev_left, corners_next_left, camera_matrix, cv::RANSAC,
+              0.999, 1.0, essential_inlier_mask
+          )};
+          if (!essential_matrix.empty()
+              && cv::countNonZero(essential_inlier_mask)
+                     >= kMinEssentialInliers)
+          {
+            cv::Mat rotation_cv, translation_cv;
+            cv::recoverPose(essential_matrix, corners_prev_left,
+                            corners_next_left, camera_matrix, rotation_cv,
+                            translation_cv, essential_inlier_mask);
+
+            // 投影矩阵: P_prev = [K | 0], P_next = K * [R | t]
+            cv::Mat proj_prev, proj_next_rt;
+            cv::hconcat(camera_matrix, cv::Mat::zeros(3, 1, CV_64F), proj_prev);
+            cv::hconcat(rotation_cv, translation_cv, proj_next_rt);
+            const cv::Mat proj_next{camera_matrix * proj_next_rt};
+
+            // https://docs.opencv.org/4.13.0/d9/d0c/group__calib3d.html#gad3fc9a0c82b08df034234979960b778c
+            cv::triangulatePoints(proj_prev, proj_next, corners_prev_left,
+                                  corners_next_left, landmarks_homo);
+
+            if (landmarks_homo.cols > 0)
+            {
+              // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#gac42edda3a3a0f717979589fcd6ac0035
+              cv::convertPointsFromHomogeneous(landmarks_homo.t(),
+                                               landmarks_nonhomo);
+
+              // 单目量测更新: 路标在 prev 帧相机系 (与双目版坐标系约定一致)
+              auto corner_set_prev{CreateMonoObservationSet<value_type>(
+                  corners_prev_left, landmarks_nonhomo, feature_ids
+              )};
+              eskf_.MonoVisualUpdate(timestamp, corner_set_prev);
+              auto corner_set_next{CreateMonoObservationSet<value_type>(
+                  corners_next_left, landmarks_nonhomo, feature_ids
+              )};
+              eskf_.MonoVisualUpdate(frame.timestamp_, corner_set_next);
+
+              // 旋转向量与平移向量 (PnP: prev 帧系路标 → next 帧像素)
+              cv::Mat rVec_cv, tVec_cv;
+              // https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga50620f0e26e02caa2e9adc07b5fbf24e
+              cv::solvePnPRansac(landmarks_nonhomo, corners_next_left,
+                                 camera_matrix, cv::noArray(), rVec_cv,
+                                 tVec_cv);
+
+              // 数据类型转换
+              Vector3 rVec_eigen;
+              cv::cv2eigen(rVec_cv, rVec_eigen);
+              rVec_eigen = -rVec_eigen;
+              Attitude delta_rotation{Attitude::exp(rVec_eigen)};
+              Vector3 delta_position{Vector3::Zero()};
+              cv::cv2eigen(tVec_cv, delta_position);
+              delta_position = -(delta_rotation * delta_position);
+
+              // 更新状态
+              this->VisualIntegrator::Update(delta_rotation, delta_position);
+
+              // 打印位姿
+              WriteDataContent(timestamp, this->VisualIntegrator::pose_);
+            }
+          }
+
+          // 只有在追踪成功时，才将本帧的有效特征点保存为下一帧的"上一帧点"
+          corners_prev_left = std::move(corners_next_left);
+        }
+        else
+        {
+          // 追踪失败时，彻底清空状态，下一帧将重新全图检测角点
+          corners_prev_left.clear();
+          feature_ids.clear();
+        }
+
+        const auto visual_task_elapsed_ms{corner_tracking_stats.EndTimer()};
+        std::print(stderr,
+                   "[VisualTask] 时间戳={} 帧编号={}\n"
+                   "\t当前帧是否成功跟踪路标点={}\n"
+                   "\t所有路标点个数 (包括新建、活跃的)={}\n"
+                   "\t当前帧耗时={:.3f}\n",
+                   frame.timestamp_, corner_tracking_stats.GetFrameId(),
+                   (found_corners ? "成功" : "失败"), feature_ids.size(),
+                   visual_task_elapsed_ms);
+        corner_tracking_stats.RecordElapsedTime(timestamp,
+                                                visual_task_elapsed_ms);
+
+        timestamp                 = frame.timestamp_;
+        image_prev_left_rectified = std::move(image_next_left_rectified);
+        image_prev_left_grayscale = std::move(image_next_left_grayscale);
+        ++loader_;
+        continue;
+      }
       if (!init_frame)
       {
         init_frame = true;

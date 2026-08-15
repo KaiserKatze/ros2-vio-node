@@ -30,6 +30,7 @@
 #include <opencv2/viz/vizcore.hpp>
 
 #include "euroc_vio/AbstractLoader.hpp"
+#include "euroc_vio/VisionMode.hpp"
 
 namespace FastVIO
 {
@@ -131,8 +132,27 @@ private:
   }
 
   static std::vector<StereoFrame<std::filesystem::path>>
-  Load(const std::filesystem::path &path_mav0)
+  Load(const std::filesystem::path &path_mav0, VisionMode vision_mode)
   {
+    if (vision_mode == VisionMode::kMono)
+    {
+      // 单目模式: 只加载图像源相机 (cam0 优先, 缺失回退 cam1) 的序列,
+      // 右图路径留空, ReadImage 对空路径返回空 Mat
+      const std::filesystem::path camera_directory
+          = SelectMonoCameraDirectory(path_mav0);
+      auto series{ReadIndex(path_mav0, camera_directory.filename().string())};
+      std::vector<StereoFrame<std::filesystem::path>> frames;
+      frames.reserve(series.size());
+      for (auto &image : series)
+      {
+        frames.emplace_back(image.timestamp_, std::move(image.image_path_),
+                            std::filesystem::path{});
+      }
+      std::print(stderr,
+                 "[INFO] 成功加载单目视觉图片索引文件, 待读取图片张数: {}.\n",
+                 frames.size());
+      return frames;
+    }
     auto stereo_frames{MergeIndex(ReadIndex(path_mav0, "cam0"),
                                   ReadIndex(path_mav0, "cam1"))};
     std::print(stderr,
@@ -147,6 +167,11 @@ private:
    */
   static cv::Mat ReadImage(const std::filesystem::path &image_path)
   {
+    // 单目模式右图路径为空: 直接返回空 Mat, 避免 cv::imread 对空路径告警
+    if (image_path.empty())
+    {
+      return {};
+    }
     // https://docs.opencv.org/4.x/d4/da8/group__imgcodecs.html#gaffb68fce322c6e52841d7d9357b9ad2d
     return cv::imread(image_path.string(), cv::ImreadModes::IMREAD_COLOR);
   }
@@ -157,8 +182,9 @@ private:
   const_iterator itr_stereo_frames_{stereo_frames_.cbegin()};
 
 public:
-  ImageDataLoader(const std::filesystem::path &path_mav0) :
-    stereo_frames_{Load(path_mav0)}
+  ImageDataLoader(const std::filesystem::path &path_mav0,
+                  VisionMode vision_mode) :
+    stereo_frames_{Load(path_mav0, vision_mode)}
   {
   }
 
