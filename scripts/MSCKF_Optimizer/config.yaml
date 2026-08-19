@@ -1,0 +1,91 @@
+# ==============================================================================
+# MSCKF 超参数自动调优系统 (MHAT) 默认配置文件
+# 用法: python opt.py --config config.yaml
+# 详见 scripts/MSCKF_Optimizer/README.md (软件需求规约)
+# ==============================================================================
+
+# 1. 数据与评估器指令配置
+data:
+  # 数据集 mav0 根目录
+  dataset_root: "/home/ros/vio_ws/mav0"
+
+  # 真实轨迹（真值）文件的路径（供 Python 评估端直接读取）
+  ground_truth: "/home/ros/vio_ws/mav0/state_groundtruth_estimate0/data.csv"
+
+  # 真值轨迹文件的格式，目前支持 "tum" 或 "euroc"
+  traj_format: "euroc"
+
+  # 单次 msckf 评估的超时秒数（超时记为评估失败, 综合误差 +inf）
+  evaluator_timeout_seconds: 600
+
+  # 评估器运行命令（使用 YAML '>' 语法将多行拼接为单条 Bash 命令）
+  # 大括号 {parameter_name} 内的名称必须与下方 hyperparameters 中定义的 name 完全一致
+  # {output} / {pointcloud} / {trial_dir} 为系统自动填充的特殊占位符
+  # 注：每次评估在独立工作子目录中运行, 可安全并行
+  estimator_command: >
+    ros2 run euroc_vio msckf /home/ros/vio_ws/mav0
+    --init groundtruth
+    --init-gravity imu
+    --output {output}
+    --pointcloud {pointcloud}
+    --pixel-noise-sigma={pixel_noise_sigma}
+    --min-parallax={min_parallax_radians}
+    --huber-threshold={huber_loss_threshold}
+
+# 2. 待优化的超参数搜索空间定义
+# 超参数名与 msckf 命令行选项 (--name) 对应, 完整目录见 README 附录 6.1
+hyperparameters:
+  # 像素量测噪声标准差 (px)
+  - name: "pixel_noise_sigma"
+    type: "float"
+    range: [0.1, 10.0]
+    log: true
+  # 单目三角化视差角门限 (rad)
+  - name: "min_parallax_radians"
+    type: "float"
+    range: [1.0e-4, 0.1]
+    log: true
+  # 三角化重投影残差鲁棒核阈值 (归一化平面)
+  - name: "huber_loss_threshold"
+    type: "float"
+    range: [1.0e-4, 0.1]
+    log: true
+
+# 3. 优化算法流程配置
+optimization:
+  # 优化算法: "bayesian" (TPE) | "random" | "grid"
+  algorithm: "bayesian"
+  # 最大迭代评估次数（新增评估次数, 不含断点续跑已恢复的评估）
+  max_iterations: 50
+  # 贝叶斯优化初始随机探索点数量（预热期样本数）
+  n_initial_points: 10
+  # 早停机制：连续多少次迭代未见显著改善（未下降超过 1e-5）则提前终止
+  patience: 10
+  # 误差绝对阈值：当综合误差低于此阈值时，认为已达到理想效果，立即终止优化
+  stop_on_error_threshold: 0.01
+  # 并行评估的 worker 进程数（每个 worker 运行一个独立的 msckf 实例）
+  parallel_workers: 1
+  # 断点续跑：启动时从历史 CSV 恢复已评估组合, 跳过重复评估
+  resume: true
+
+# 4. 误差评估与权重配置
+error:
+  # 绝对轨迹误差 (ATE) 的权重（与 rpe_weight 自动归一化）
+  ate_weight: 0.8
+  # 相对位姿误差 (RPE) 的权重
+  rpe_weight: 0.2
+  # 计算 RPE 时的采样间隔（Delta）
+  rpe_delta: 1.0
+  # RPE 采样间隔的单位: 's' (秒), 'm' (米), 'f' (帧)
+  rpe_delta_unit: "s"
+
+# 5. 输出文件配置
+output:
+  # 每次评估的独立输出子目录所在根目录
+  work_dir: "/tmp/mhat_runs"
+  # 运行时详细日志存储路径
+  log_file: "optimization.log"
+  # 历史迭代记录 CSV 文件（带表头, 逐行即时写入）
+  history_csv: "evaluation_history.csv"
+  # 最优超参数结果 JSON 文件
+  best_result: "best_result.json"
