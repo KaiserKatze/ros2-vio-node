@@ -132,9 +132,19 @@ install(DIRECTORY launch/
 )
 install(PROGRAMS scripts/ESKF_Optimizer/opt.py
   DESTINATION lib/${PROJECT_NAME}
+  RENAME ehat.py
 )
 install(FILES scripts/ESKF_Optimizer/config.yaml
   DESTINATION lib/${PROJECT_NAME}
+  RENAME ehat.yaml
+)
+install(PROGRAMS scripts/MSCKF_Optimizer/opt.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME mhat.py
+)
+install(FILES scripts/MSCKF_Optimizer/config.yaml
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME mhat.yaml
 )
 
 # --- 单元测试 ---

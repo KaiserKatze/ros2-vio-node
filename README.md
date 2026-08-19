@@ -33,8 +33,16 @@ ros2 topic list -t
 # 查看指定话题 (真值轨迹)
 ros2 topic echo /traj/ground_truth/path nav_msgs/msg/Path
 ros2 topic echo /traj/stereo_est/path nav_msgs/msg/Path
-# 为单目惯性里程计优化 ESKF 超参数
-ros2 run euroc_vio opt.py --config config.yaml
+# 优化 ESKF 超参数
+ros2 run euroc_vio ehat.py \
+  --config $(ros2 pkg prefix euroc_vio)/lib/euroc_vio/ehat.yaml
+# 优化 MSCKF 超参数
+ros2 run euroc_vio mhat.py \
+  --config $(ros2 pkg prefix euroc_vio)/lib/euroc_vio/mhat.yaml
+# MSCKF 单次评估 (调优器每次迭代内部执行的等价命令; 13 个可调超参数见 SRS 附录 6.1):
+ros2 run euroc_vio msckf ./mav0/ --init groundtruth --init-gravity imu \
+  --output /tmp/trial.tum --pointcloud /tmp/trial.ply \
+  --pixel-noise-sigma=1.5 --min-parallax=0.01 --huber-threshold=0.01
 # 运行 MSCKF
 ros2 run euroc_vio msckf ~/EuRoC_MAV_Datasets/V2_01_easy/mav0/ --init groundtruth --mono-csv=estimated_motion_cam0.csv
 ros2 run euroc_vio msckf /tmp/imu_noise_analysis/mav0/ --init groundtruth --mono-csv=/tmp/nowhere/nothing
