@@ -6,11 +6,11 @@
 
 # 1. 数据与评估器指令配置
 data:
-  # 数据集 mav0 根目录
-  dataset_root: "/home/ros/vio_ws/mav0"
+  # 数据集 mav0 根目录 (命令行 --mav0 可覆盖)
+  mav0: "./mav0"
 
-  # 真实轨迹（真值）文件的路径（供 Python 评估端直接读取）
-  ground_truth: "/home/ros/vio_ws/mav0/state_groundtruth_estimate0/data.csv"
+  # 真实轨迹（真值）文件的路径（供 Python 评估端直接读取; --ground-truth 可覆盖）
+  ground_truth: "./mav0/state_groundtruth_estimate0/data.csv"
 
   # 真值轨迹文件的格式，目前支持 "tum" 或 "euroc"
   traj_format: "euroc"
@@ -20,10 +20,11 @@ data:
 
   # 评估器运行命令（使用 YAML '>' 语法将多行拼接为单条 Bash 命令）
   # 大括号 {parameter_name} 内的名称必须与下方 hyperparameters 中定义的 name 完全一致
+  # {mav0} / {ground_truth} 为路径占位符, 由 --mav0 / --ground-truth 或配置 data 段填充
   # {output} / {pointcloud} / {trial_dir} 为系统自动填充的特殊占位符
   # 注：每次评估在独立工作子目录中运行, 可安全并行
   estimator_command: >
-    ros2 run euroc_vio msckf /home/ros/vio_ws/mav0
+    ros2 run euroc_vio msckf {mav0}
     --init groundtruth
     --init-gravity imu
     --output {output}
@@ -80,12 +81,13 @@ error:
   rpe_delta_unit: "s"
 
 # 5. 输出文件配置
+# 注: 文件名带 mhat_ 前缀, 避免与 ESKF 调优器 (EHAT) 的同名输出文件互相覆盖
 output:
   # 每次评估的独立输出子目录所在根目录
   work_dir: "/tmp/mhat_runs"
   # 运行时详细日志存储路径
-  log_file: "optimization.log"
+  log_file: "mhat_optimization.log"
   # 历史迭代记录 CSV 文件（带表头, 逐行即时写入）
-  history_csv: "evaluation_history.csv"
+  history_csv: "mhat_evaluation_history.csv"
   # 最优超参数结果 JSON 文件
-  best_result: "best_result.json"
+  best_result: "mhat_best_result.json"

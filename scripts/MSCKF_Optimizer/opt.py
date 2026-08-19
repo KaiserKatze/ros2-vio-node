@@ -132,9 +132,12 @@ class EarlyStoppingCallback:
 class MhatTuner:
     """MSCKF 超参数自动调优主类"""
 
-    def __init__(self, config_path: str):
+    def __init__(self, config_path: str, mav0: Optional[str] = None,
+                 ground_truth: Optional[str] = None):
         self.config_path = config_path
         self.config = self._load_config(config_path)
+        self.cli_mav0 = mav0
+        self.cli_ground_truth = ground_truth
 
         # 解析配置
         self.data_cfg = self.config.get("data", {})
@@ -203,6 +206,28 @@ class MhatTuner:
         if self.evaluator_timeout <= 0:
             raise ValueError("evaluator_timeout_seconds 必须为正数。")
 
+        # 路径占位符: 命令行选项优先, 其次配置 data 段, 最后默认值。
+        # 一律转为绝对路径: 评估子进程的工作目录是独立的 trial 目录,
+        # 相对路径会在那里失效
+        if self.cli_ground_truth:
+            self.data_cfg["ground_truth"] = self.cli_ground_truth
+        self.data_cfg["ground_truth"] = os.path.abspath(
+            str(self.data_cfg.get("ground_truth", ""))
+        )
+        self.mav0 = os.path.abspath(
+            str(
+                self.cli_mav0
+                or self.data_cfg.get("mav0")
+                or self.data_cfg.get("dataset_root")
+                or "./mav0"
+            )
+        )
+        self.path_placeholders = {
+            "mav0": self.mav0,
+            "ground_truth": str(self.data_cfg.get("ground_truth", "")),
+        }
+        self.logger.info(f"数据集 mav0 根目录: {self.mav0}")
+
         # 超参数定义校验
         if not self.hyperparams:
             raise ValueError("配置文件中未定义 hyperparameters。")
@@ -238,7 +263,8 @@ class MhatTuner:
 
         # 占位符与超参数名一一对应校验 (FR-2)
         used = set(re.findall(r"\{([A-Za-z0-9_]+)\}", self.cmd_template))
-        allowed = set(self.param_names) | set(_SPECIAL_PLACEHOLDERS)
+        allowed = (set(self.param_names) | set(_SPECIAL_PLACEHOLDERS)
+                   | set(self.path_placeholders))
         unknown = used - allowed
         if unknown:
             raise ValueError(
@@ -345,6 +371,7 @@ class MhatTuner:
                 "sec": Unit.seconds,
                 "seconds": Unit.seconds,
                 "m": Unit.meters,
+                "metres": Unit.meters,
                 "meters": Unit.meters,
                 "f": Unit.frames,
                 "frames": Unit.frames,
@@ -394,6 +421,7 @@ class MhatTuner:
         cloud_path = os.path.join(trial_dir, "pointcloud.ply")
 
         placeholders = {k: self._format_value(v) for k, v in params.items()}
+        placeholders.update(self.path_placeholders)
         placeholders["output"] = out_path
         placeholders["pointcloud"] = cloud_path
         placeholders["trial_dir"] = trial_dir
@@ -430,7 +458,7 @@ class MhatTuner:
                 f"[Trial {trial_id:04d}] msckf 非零退出码: {process.returncode} "
                 f"(耗时 {elapsed:.1f} s)"
             )
-            self.logger.debug(f"STDERR 尾部: {process.stderr[-2000:]}")
+            self.logger.warning(f"STDERR 尾部: {process.stderr[-2000:]}")
             return failed
 
         if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
@@ -498,21 +526,29 @@ class MhatTuner:
                 writer.writerow(row)
 
     def _load_history_rows(self) -> List[Dict[str, Any]]:
-        """从历史 CSV 恢复已评估的 (参数, 结果) 组合 (FR-8)"""
+        """从历史 CSV 恢复已评估的 (参数, 结果) 组合 (FR-8);
+        文件缺失/损坏/属于其他调优系统时, 归档旧文件并从零开始 (不中断优化)"""
         if not os.path.exists(self.history_csv):
             self.logger.info("历史 CSV 不存在, 从零开始优化。")
             return []
+        expected = self.param_names + ["ATE", "RPE", "combined_error", "status"]
         try:
             df = pd.read_csv(self.history_csv)
+            if not all(col in df.columns for col in expected):
+                raise ValueError(
+                    f"表头不匹配, 期望列: {expected}, 实际列: {list(df.columns)}"
+                )
         except Exception as e:
-            raise ValueError(f"历史 CSV 读取失败: {e}")
-
-        expected = self.param_names + ["ATE", "RPE", "combined_error", "status"]
-        if not all(col in df.columns for col in expected):
-            raise ValueError(
-                f"历史 CSV 表头不匹配, 期望列: {expected}, 实际列: "
-                f"{list(df.columns)}"
+            archived = f"{self.history_csv}.mismatched"
+            try:
+                os.replace(self.history_csv, archived)
+            except OSError:
+                archived = self.history_csv
+            self.logger.warning(
+                f"历史 CSV 不可用于断点续跑 ({e}), 已将旧文件归档为 "
+                f"'{archived}', 从零开始记录。"
             )
+            return []
 
         rows: List[Dict[str, Any]] = []
         for _, row in df.iterrows():
@@ -741,8 +777,61 @@ class MhatTuner:
                 future.result()
         self.logger.info(f"网格搜索结束, 共评估 {len(jobs)} 组参数。")
 
+    # --------------------------------------------------------------------------
+    # 优化前预检 (及时暴露缺失的必需输入, 避免全部评估因缺文件失败)
+    # --------------------------------------------------------------------------
+
+    def _preflight_check_required_inputs(self):
+        """优化前检查 msckf 必需输入文件, 缺失时给出明确警告"""
+        required = [
+            f"{self.mav0}/imu0/data.csv",
+            f"{self.mav0}/imu0/sensor.yaml",
+            f"{self.mav0}/cam0/sensor.yaml",
+            f"{self.mav0}/cam0/data.csv",
+        ]
+        if os.path.isdir(f"{self.mav0}/cam1"):
+            required += [
+                f"{self.mav0}/cam1/sensor.yaml",
+                f"{self.mav0}/cam1/data.csv",
+            ]
+        if "--init groundtruth" in self.cmd_template:
+            required.append(
+                f"{self.mav0}/state_groundtruth_estimate0/data.csv"
+            )
+        missing = [p for p in required if not os.path.isfile(p)]
+        if missing:
+            self.logger.warning(
+                f"msckf 必需输入文件缺失 (mav0: {self.mav0}), "
+                f"每次评估都会非零退出导致全部失败: {', '.join(missing)}; "
+                f"请用 --mav0 指定正确的数据集根目录。"
+            )
+        else:
+            self.logger.info(
+                f"msckf 必需输入文件齐全 (mav0: {self.mav0}, "
+                f"共 {len(required)} 项)。"
+            )
+        # 图像列表必须有数据行, 否则 msckf 加载到 0 帧图像直接退出
+        for data_csv in (f"{self.mav0}/cam0/data.csv",
+                         f"{self.mav0}/cam1/data.csv"):
+            if not os.path.isfile(data_csv):
+                continue
+            try:
+                with open(data_csv, "r", encoding="utf-8") as f:
+                    data_lines = [line for line in f
+                                  if line.strip()
+                                  and not line.lstrip().startswith("#")]
+            except OSError:
+                continue
+            if not data_lines:
+                self.logger.warning(
+                    f"{data_csv} 中没有任何图像数据行, msckf 将加载到 0 帧图像。"
+                )
+
     def run(self):
         """启动优化主流程"""
+        # 优化前预检: 及时发出缺失必需输入文件的警告
+        self._preflight_check_required_inputs()
+
         if self.algorithm == "bayesian":
             self._run_bayesian()
         elif self.algorithm == "random":
@@ -785,10 +874,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config", type=str, required=True, help="配置文件的路径 (YAML/JSON)"
     )
+    parser.add_argument(
+        "--mav0", type=str, default=None,
+        help="数据集 mav0 根目录 (覆盖配置 data.mav0, 默认 ./mav0)",
+    )
+    parser.add_argument(
+        "--ground-truth", type=str, default=None,
+        help="真值轨迹 CSV 路径 (覆盖配置 data.ground_truth)",
+    )
     args = parser.parse_args()
 
     try:
-        tuner = MhatTuner(args.config)
+        tuner = MhatTuner(args.config, mav0=args.mav0,
+                          ground_truth=args.ground_truth)
         tuner.run()
     except Exception as e:
         logging.getLogger("MHAT").exception(f"程序执行发生致命错误: {e}")

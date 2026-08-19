@@ -4,8 +4,15 @@
 
 # 1. 数据与评估器指令配置
 data:
-  # 真实轨迹（真值）文件的绝对路径或相对路径（供 Python 评估端直接读取）
+  # 真实轨迹（真值）文件的绝对路径或相对路径（供 Python 评估端直接读取; --ground-truth 可覆盖）
   ground_truth: "./mav0/state_groundtruth_estimate0/data.csv"
+
+  # 数据集 mav0 根目录 (命令行 --mav0 可覆盖)
+  mav0: "./mav0"
+
+  # 外部单目估计 CSV (命令行 --estimated-motion-csv 可覆盖;
+  # 缺失时每次评估都会因 "Required configuration path not found" 直接失败)
+  estimated_motion_csv: "./mav0/estimated_motion.csv"
 
   # 轨迹文件的格式，目前支持 "tum" 或 "euroc"
   traj_format: "euroc"
@@ -13,17 +20,19 @@ data:
   # 评估器运行命令（使用 YAML '>' 语法将多行拼接为单条 Bash 命令）
   # 严格对应 TrajectoryFactory 构造函数中 declare_parameter 声明的全部 11 个参数
   # 注：大括号 {parameter_name} 内的名称必须与下方 hyperparameters 中定义的 name 完全一致
+  # 注：{mav0} / {estimated_motion_csv} / {ground_truth} 为路径占位符,
+  #     由命令行 --mav0 / --estimated-motion-csv / --ground-truth 或配置 data 段填充
   # 注：必须包含 {output} 占位符，系统会自动将其替换为临时的评估轨迹输出路径
   estimator_command: >
     mkdir -p /tmp/eskf_out &&
     ros2 run euroc_vio VisualInertial --ros-args
     -p use_true_init_pose:=true
-    -p path_estimation_csv:=./mav0/estimated_motion.csv
-    -p path_cam0_yaml:=./mav0/cam1/sensor.yaml
-    -p path_imu_csv:=./mav0/imu0/data.csv
-    -p path_imu_yaml:=./mav0/imu0/sensor.yaml
-    -p path_truth_csv:=./mav0/state_groundtruth_estimate0/data.csv
-    -p path_truth_yaml:=./mav0/state_groundtruth_estimate0/sensor.yaml
+    -p path_estimation_csv:={estimated_motion_csv}
+    -p path_cam0_yaml:={mav0}/cam1/sensor.yaml
+    -p path_imu_csv:={mav0}/imu0/data.csv
+    -p path_imu_yaml:={mav0}/imu0/sensor.yaml
+    -p path_truth_csv:={mav0}/state_groundtruth_estimate0/data.csv
+    -p path_truth_yaml:={mav0}/state_groundtruth_estimate0/sensor.yaml
     -p confidence_angular_displacement:={confidence_angular_displacement}
     -p confidence_normalized_translation:=1e6
     -p output_dir:=/tmp/eskf_out

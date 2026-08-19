@@ -35,7 +35,8 @@ ros2 topic echo /traj/ground_truth/path nav_msgs/msg/Path
 ros2 topic echo /traj/stereo_est/path nav_msgs/msg/Path
 # 优化 ESKF 超参数
 ros2 run euroc_vio ehat.py \
-  --config $(ros2 pkg prefix euroc_vio)/lib/euroc_vio/ehat.yaml
+  --config $(ros2 pkg prefix euroc_vio)/lib/euroc_vio/ehat.yaml \
+  --estimated-motion-csv estimated_motion_sim_cam1.csv
 # 优化 MSCKF 超参数
 ros2 run euroc_vio mhat.py \
   --config $(ros2 pkg prefix euroc_vio)/lib/euroc_vio/mhat.yaml

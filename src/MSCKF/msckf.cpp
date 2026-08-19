@@ -372,83 +372,87 @@ int ParsePositiveInt(std::string_view value, std::string_view option_name)
 bool TryParseTuningOption(CommandLineOptions &options,
                           const std::string_view argument)
 {
-  if (argument.starts_with("--max-clones="))
+  const std::size_t equals_position = argument.find('=');
+  if (equals_position == std::string_view::npos)
   {
-    options.max_clone_count
-        = ParsePositiveSize(argument.substr(13), "--max-clones");
+    return false;
+  }
+  const std::string_view option_name  = argument.substr(0, equals_position);
+  const std::string_view option_value = argument.substr(equals_position + 1);
+
+  if (option_name == "--max-clones")
+  {
+    options.max_clone_count = ParsePositiveSize(option_value, option_name);
     return true;
   }
-  if (argument.starts_with("--min-track-length="))
+  if (option_name == "--min-track-length")
   {
-    options.min_track_length
-        = ParsePositiveSize(argument.substr(19), "--min-track-length");
+    options.min_track_length = ParsePositiveSize(option_value, option_name);
     return true;
   }
-  if (argument.starts_with("--max-update-rows="))
+  if (option_name == "--max-update-rows")
   {
-    options.max_update_rows
-        = ParsePositiveInt(argument.substr(18), "--max-update-rows");
+    options.max_update_rows = ParsePositiveInt(option_value, option_name);
     return true;
   }
-  if (argument.starts_with("--time-offset-variance="))
+  if (option_name == "--time-offset-variance")
   {
     options.initial_time_offset_variance
-        = ParsePositiveDouble(argument.substr(23), "--time-offset-variance");
+        = ParsePositiveDouble(option_value, option_name);
     return true;
   }
-  if (argument.starts_with("--zupt-sigma="))
+  if (option_name == "--zupt-sigma")
   {
     options.zupt_velocity_sigma
-        = ParsePositiveDouble(argument.substr(13), "--zupt-sigma");
+        = ParsePositiveDouble(option_value, option_name);
     return true;
   }
-  if (argument.starts_with("--redundant-rot-threshold="))
+  if (option_name == "--redundant-rot-threshold")
   {
     options.redundant_rotation_threshold
-        = ParsePositiveDouble(argument.substr(26), "--redundant-rot-threshold");
+        = ParsePositiveDouble(option_value, option_name);
     return true;
   }
-  if (argument.starts_with("--redundant-trans-threshold="))
+  if (option_name == "--redundant-trans-threshold")
   {
     options.redundant_translation_threshold
-        = ParsePositiveDouble(argument.substr(27),
-                              "--redundant-trans-threshold");
+        = ParsePositiveDouble(option_value, option_name);
     return true;
   }
-  if (argument.starts_with("--mono-rot-sigma="))
+  if (option_name == "--mono-rot-sigma")
   {
     options.monocular_rotation_sigma
-        = ParsePositiveDouble(argument.substr(17), "--mono-rot-sigma");
+        = ParsePositiveDouble(option_value, option_name);
     return true;
   }
-  if (argument.starts_with("--mono-dir-sigma="))
+  if (option_name == "--mono-dir-sigma")
   {
     options.monocular_direction_sigma
-        = ParsePositiveDouble(argument.substr(17), "--mono-dir-sigma");
+        = ParsePositiveDouble(option_value, option_name);
     return true;
   }
-  if (argument.starts_with("--mono-baseline-min="))
+  if (option_name == "--mono-baseline-min")
   {
     options.min_baseline_for_direction
-        = ParsePositiveDouble(argument.substr(20), "--mono-baseline-min");
+        = ParsePositiveDouble(option_value, option_name);
     return true;
   }
-  if (argument.starts_with("--huber-threshold="))
+  if (option_name == "--huber-threshold")
   {
     options.huber_loss_threshold
-        = ParsePositiveDouble(argument.substr(17), "--huber-threshold");
+        = ParsePositiveDouble(option_value, option_name);
     return true;
   }
-  if (argument.starts_with("--min-parallax="))
+  if (option_name == "--min-parallax")
   {
     options.min_parallax_radians
-        = ParsePositiveDouble(argument.substr(15), "--min-parallax");
+        = ParsePositiveDouble(option_value, option_name);
     return true;
   }
-  if (argument.starts_with("--pixel-noise-sigma="))
+  if (option_name == "--pixel-noise-sigma")
   {
     options.pixel_noise_sigma_px
-        = ParsePositiveDouble(argument.substr(20), "--pixel-noise-sigma");
+        = ParsePositiveDouble(option_value, option_name);
     return true;
   }
   return false;

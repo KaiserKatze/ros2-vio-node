@@ -14,7 +14,8 @@ import argparse
 import tempfile
 import subprocess
 import pandas as pd
-from typing import Dict, Any, Tuple
+from pathlib import Path
+from typing import Dict, Any, Optional, Tuple
 
 # 第三方依赖库，需提前安装：pip install optuna evo pandas pyyaml
 import optuna
@@ -101,9 +102,14 @@ class EarlyStoppingCallback:
 class EHATuner:
     """ESKF 超参数自动调优主类"""
 
-    def __init__(self, config_path: str):
+    def __init__(self, config_path: str, mav0: Optional[str] = None,
+                 estimated_motion_csv: Optional[str] = None,
+                 ground_truth: Optional[str] = None):
         self.config_path = config_path
-        self.config = self._load_config()
+        self.config = self._load_config(config_path)
+        self.cli_mav0 = mav0
+        self.cli_estimated_motion_csv = estimated_motion_csv
+        self.cli_ground_truth = ground_truth
 
         # 解析配置
         self.data_cfg = self.config.get("data", {})
@@ -124,7 +130,7 @@ class EHATuner:
         )
         self.logger.info(f"真值轨迹加载完成，位姿数量: {self.gt_traj.num_poses}")
 
-    def _load_config(self) -> Dict[str, Any]:
+    def _load_config(self, config_path: str) -> Dict[str, Any]:
         """读取 YAML/JSON 格式的配置文件"""
         if not os.path.exists(self.config_path):
             raise FileNotFoundError(f"未找到配置文件: {self.config_path}")
@@ -154,6 +160,28 @@ class EHATuner:
         # 超参数校验
         if not self.hyperparams:
             raise ValueError("配置文件中未定义 hyperparameters。")
+
+        # 路径占位符: 命令行选项优先, 其次配置 data 段, 最后默认值
+        if self.cli_ground_truth:
+            self.data_cfg["ground_truth"] = self.cli_ground_truth
+        self.mav0 = str(self.cli_mav0 or self.data_cfg.get("mav0") or "./mav0")
+        if self.cli_estimated_motion_csv:
+            self.estimated_motion_csv = self.cli_estimated_motion_csv
+        elif self.cli_mav0:
+            # --mav0 显式指定时, estimated_motion.csv 默认跟随 mav0 根目录
+            self.estimated_motion_csv = f"{self.mav0}/estimated_motion.csv"
+        else:
+            self.estimated_motion_csv = str(
+                self.data_cfg.get("estimated_motion_csv")
+                or f"{self.mav0}/estimated_motion.csv"
+            )
+        self.path_placeholders = {
+            "mav0": self.mav0,
+            "estimated_motion_csv": self.estimated_motion_csv,
+            "ground_truth": self.data_cfg.get("ground_truth", ""),
+        }
+        self.logger.info(f"数据集 mav0 根目录: {self.mav0}")
+        self.logger.info(f"外部单目估计 CSV: {self.estimated_motion_csv}")
 
     def _load_trajectory(self, path: str, fmt: str):
         """根据格式加载轨迹文件 (FR-1, A1)"""
@@ -196,13 +224,23 @@ class EHATuner:
             ate_rmse = ape_metric.get_statistic(evo_metrics.StatisticsType.rmse)
 
             # 2. 计算 RPE (RMSE)
+            unit_map = {
+                "s": Unit.seconds,
+                "sec": Unit.seconds,
+                "seconds": Unit.seconds,
+                "m": Unit.meters,
+                "metres": Unit.meters,
+                "meters": Unit.meters,
+                "f": Unit.frames,
+                "frames": Unit.frames,
+            }
             delta = self.err_cfg.get("rpe_delta", 1.0)
-            unit_str = self.err_cfg.get("rpe_delta_unit", "s")
-            unit = (
-                Unit.frames  # 修改这里：将 Unit.seconds 改为 Unit.frames
-                if unit_str.lower() in ["s", "sec", "seconds"]
-                else Unit.meters
-            )
+            unit_str = self.err_cfg.get("rpe_delta_unit", "s").lower()
+            if unit_str not in unit_map:
+                raise ValueError(
+                    f"不支持的 rpe_delta_unit: {unit_str}"
+                )
+            unit = unit_map[unit_str]
 
             rpe_metric = evo_metrics.RPE(
                 pose_relation, delta=delta, delta_unit=unit, all_pairs=False
@@ -218,6 +256,51 @@ class EHATuner:
         except Exception as e:
             self.logger.error(f"误差计算失败: {str(e)}")
             return float("inf"), float("inf"), float("inf")
+
+    @staticmethod
+    def _find_files_in_working_directory(basename: str,
+                                         max_depth: int = 4) -> list:
+        """在当前工作目录下搜索指定文件 (有界深度, 跳过大型无关目录)"""
+        skipped_directories = {".git", ".venv", "build", "install", "log",
+                               "__pycache__"}
+        matches = []
+        root = Path.cwd()
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = sorted(
+                name for name in dirnames if name not in skipped_directories
+            )
+            relative = Path(dirpath).relative_to(root)
+            depth = 0 if str(relative) == "." else len(relative.parts)
+            if depth >= max_depth:
+                dirnames[:] = []
+            if basename in filenames:
+                matches.append(Path(dirpath) / basename)
+        return matches
+
+    def _preflight_check_estimated_motion_csv(self):
+        """优化前预检 estimated_motion.csv, 缺失时及时警告, 避免全部评估因缺文件失败"""
+        resolved = self.path_placeholders["estimated_motion_csv"]
+        if os.path.isfile(resolved):
+            self.logger.info(f"estimated_motion.csv 可用: {resolved}")
+            return
+        matches = self._find_files_in_working_directory("estimated_motion.csv")
+        if matches:
+            for path in matches:
+                self.logger.info(
+                    f"在当前工作目录下找到 estimated_motion.csv: {path}"
+                )
+            self.logger.warning(
+                f"上述文件与配置路径 '{resolved}' 不一致, 请用 "
+                f"--estimated-motion-csv 指定实际路径 (或 --mav0 指定数据集根目录)。"
+            )
+        else:
+            self.logger.warning(
+                f"当前工作目录 ({os.getcwd()}) 下未找到 estimated_motion.csv, "
+                f"配置路径 '{resolved}' 也不存在 —— VisualInertial 会因 "
+                "'Required configuration path not found' 直接退出, 全部评估将失败。"
+                f"请先为该数据集生成该文件, 或用 --estimated-motion-csv / --mav0 "
+                f"指定正确路径。"
+            )
 
     def objective(self, trial: optuna.trial.Trial) -> float:
         """Optuna 优化的目标函数"""
@@ -253,8 +336,10 @@ class EHATuner:
         params["output"] = out_path
 
         # 3. 拼接并执行仿真评估指令 (FR-5)
+        format_kwargs = dict(params)
+        format_kwargs.update(self.path_placeholders)
         try:
-            cmd = self.cmd_template.format(**params)
+            cmd = self.cmd_template.format(**format_kwargs)
         except KeyError as e:
             self.logger.error(f"指令模板参数映射失败，缺少参数: {e}")
             return float("inf")
@@ -303,6 +388,9 @@ class EHATuner:
 
     def run(self):
         """启动优化主流程"""
+        # 优化前预检: 及时发出缺文件等配置警告, 避免空跑全部迭代
+        self._preflight_check_estimated_motion_csv()
+
         # 设置贝叶斯优化的具体实现 (FR-3)
         # Optuna 使用 TPE 采样器，自带初始随机探索 (n_startup_trials 即 n_initial_points)
         n_startup = self.opt_cfg.get("n_initial_points", 10)
@@ -393,10 +481,25 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config", type=str, required=True, help="配置文件的路径 (YAML/JSON)"
     )
+    parser.add_argument(
+        "--mav0", type=str, default=None,
+        help="数据集 mav0 根目录 (覆盖配置 data.mav0, 默认 ./mav0)",
+    )
+    parser.add_argument(
+        "--estimated-motion-csv", type=str, default=None,
+        help="外部单目估计 CSV 路径 (覆盖配置 data.estimated_motion_csv, "
+             "默认 {mav0}/estimated_motion.csv)",
+    )
+    parser.add_argument(
+        "--ground-truth", type=str, default=None,
+        help="真值轨迹 CSV 路径 (覆盖配置 data.ground_truth)",
+    )
     args = parser.parse_args()
 
     try:
-        tuner = EHATuner(args.config)
+        tuner = EHATuner(args.config, mav0=args.mav0,
+                         estimated_motion_csv=args.estimated_motion_csv,
+                         ground_truth=args.ground_truth)
         tuner.run()
     except Exception as e:
         logging.getLogger("EHAT").exception(f"程序执行发生致命错误: {e}")
