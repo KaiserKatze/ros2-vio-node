@@ -15,7 +15,7 @@ source ~/vio_ws/install/local_setup.sh
 # 创建并激活 Python 虚拟环境
 python3 -m venv .venv
 source .venv/bin/activate
-python3 -m pip install optuna evo numpy pandas matplotlib pyyaml
+python3 -m pip install optuna evo numpy pandas matplotlib pyyaml seaborn
 
 # 生成仿真数据
 ros2 run euroc_vio VisualSim
