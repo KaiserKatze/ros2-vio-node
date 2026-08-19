@@ -19,6 +19,8 @@ python3 -m pip install optuna evo numpy pandas matplotlib pyyaml
 
 # 生成仿真数据
 ros2 run euroc_vio VisualSim
+# 为 imu0/data.csv 注入高斯白噪声与随机游走并同步 sensor.yaml
+ros2 run euroc_vio ImuNoiseModel ./mav0/
 # 运行单目惯性里程计
 ros2 launch euroc_vio mono.py
 # 运行双目惯性里程计

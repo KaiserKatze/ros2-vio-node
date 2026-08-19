@@ -79,6 +79,9 @@ endfunction()
 # ===== 目标： SLAM 仿真数据集生成器 =====
 add_ros2_executable(VisualSim src/VisualSim/VisualSim.cpp)
 
+# ===== 目标： 为已有 EuRoC 数据集的 IMU 数据注入高斯白噪声与随机游走 =====
+add_ros2_executable(ImuNoiseModel src/VisualSim/ImuNoiseModel.cpp)
+
 # ===== 目标： EuRoC 纯视觉双目里程计 =====
 add_ros2_executable(StereoSlam src/VisualSlam/VisualSlam.cpp)
 
