@@ -12,6 +12,11 @@ colcon build --packages-select euroc_vio \
 # 激活 ROS2 运行环境
 source ~/vio_ws/install/local_setup.sh
 
+# 创建并激活 Python 虚拟环境
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install optuna evo numpy pandas matplotlib pyyaml
+
 # 生成仿真数据
 ros2 run euroc_vio VisualSim
 # 运行单目惯性里程计
