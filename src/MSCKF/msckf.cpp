@@ -13,7 +13,6 @@
 //                  数据来自 ~/vio_ws/estimated_motion_cam0.csv, 按图像时间戳查找;
 //                  流程: IMU 预测 → 克隆增广 → 单目先验融合 → 陀螺辅助光流 → 单目量测更新
 // 状态向量: [IMU(19) | 相机克隆(6×N)], N ≤ max_clone_count; 路标点不进入状态向量
-// 状态向量: [IMU(19) | 相机克隆(6×N)], N ≤ max_clone_count; 路标点不进入状态向量
 // 建图: PointCloudMapper 收集每帧 MSCKF 量测中成功三角化的路标点, 运行结束后写入 PLY 文件
 //
 // 编译 (或直接使用配套 CMakeLists.txt):
@@ -512,129 +511,6 @@ bool TryParseTuningOption(CommandLineOptions &options,
   return false;
 }
 
-double ParsePositiveDouble(std::string_view value, std::string_view option_name)
-{
-  std::size_t consumed{0};
-  const double parsed{std::stod(std::string(value), &consumed)};
-  if (consumed != value.size() || !(parsed > 0.0) || !std::isfinite(parsed))
-  {
-    throw std::runtime_error{
-        std::format("{} 需要正的有限数值, 收到: '{}'.", option_name, value),
-    };
-  }
-  return parsed;
-}
-
-std::size_t ParsePositiveSize(std::string_view value,
-                              std::string_view option_name)
-{
-  std::size_t consumed{0};
-  const unsigned long long parsed{std::stoull(std::string(value), &consumed)};
-  if (consumed != value.size() || parsed == 0)
-  {
-    throw std::runtime_error{
-        std::format("{} 需要正整数, 收到: '{}'.", option_name, value),
-    };
-  }
-  return static_cast<std::size_t>(parsed);
-}
-
-int ParsePositiveInt(std::string_view value, std::string_view option_name)
-{
-  return static_cast<int>(ParsePositiveSize(value, option_name));
-}
-
-// 解析 "--name=value" 形式的 MSCKF 可调超参数选项;
-// 返回 false 表示该参数不属于可调超参数组, 由调用方继续处理
-bool TryParseTuningOption(CommandLineOptions &options,
-                          const std::string_view argument)
-{
-  const std::size_t equals_position = argument.find('=');
-  if (equals_position == std::string_view::npos)
-  {
-    return false;
-  }
-  const std::string_view option_name  = argument.substr(0, equals_position);
-  const std::string_view option_value = argument.substr(equals_position + 1);
-
-  if (option_name == "--max-clones")
-  {
-    options.max_clone_count = ParsePositiveSize(option_value, option_name);
-    return true;
-  }
-  if (option_name == "--min-track-length")
-  {
-    options.min_track_length = ParsePositiveSize(option_value, option_name);
-    return true;
-  }
-  if (option_name == "--max-update-rows")
-  {
-    options.max_update_rows = ParsePositiveInt(option_value, option_name);
-    return true;
-  }
-  if (option_name == "--time-offset-variance")
-  {
-    options.initial_time_offset_variance
-        = ParsePositiveDouble(option_value, option_name);
-    return true;
-  }
-  if (option_name == "--zupt-sigma")
-  {
-    options.zupt_velocity_sigma
-        = ParsePositiveDouble(option_value, option_name);
-    return true;
-  }
-  if (option_name == "--redundant-rot-threshold")
-  {
-    options.redundant_rotation_threshold
-        = ParsePositiveDouble(option_value, option_name);
-    return true;
-  }
-  if (option_name == "--redundant-trans-threshold")
-  {
-    options.redundant_translation_threshold
-        = ParsePositiveDouble(option_value, option_name);
-    return true;
-  }
-  if (option_name == "--mono-rot-sigma")
-  {
-    options.monocular_rotation_sigma
-        = ParsePositiveDouble(option_value, option_name);
-    return true;
-  }
-  if (option_name == "--mono-dir-sigma")
-  {
-    options.monocular_direction_sigma
-        = ParsePositiveDouble(option_value, option_name);
-    return true;
-  }
-  if (option_name == "--mono-baseline-min")
-  {
-    options.min_baseline_for_direction
-        = ParsePositiveDouble(option_value, option_name);
-    return true;
-  }
-  if (option_name == "--huber-threshold")
-  {
-    options.huber_loss_threshold
-        = ParsePositiveDouble(option_value, option_name);
-    return true;
-  }
-  if (option_name == "--min-parallax")
-  {
-    options.min_parallax_radians
-        = ParsePositiveDouble(option_value, option_name);
-    return true;
-  }
-  if (option_name == "--pixel-noise-sigma")
-  {
-    options.pixel_noise_sigma_px
-        = ParsePositiveDouble(option_value, option_name);
-    return true;
-  }
-  return false;
-}
-
 CommandLineOptions ParseCommandLine(int argc, char **argv)
 {
   CommandLineOptions options;
@@ -732,7 +608,6 @@ CommandLineOptions ParseCommandLine(int argc, char **argv)
       options.output_pointcloud_path = fs::path(argv[i]);
     }
     else if (!TryParseTuningOption(options, argument))
-    else if (!TryParseTuningOption(options, argument))
     {
       options.dataset_root = fs::path(argument);
     }
@@ -743,8 +618,6 @@ CommandLineOptions ParseCommandLine(int argc, char **argv)
 // ================ 标定参数读取 (yaml-cpp 解析 EuRoC sensor.yaml) ================
 constexpr double kGravity
     = 9.81; // 重力先验值, 实际重力向量在误差状态中在线估计
-// 重力从起始段 IMU 比力初始化时的样本窗口长度 (200 Hz 下对应 1 s)
-constexpr std::size_t kGravityInitSampleCount = 200;
 // 重力从起始段 IMU 比力初始化时的样本窗口长度 (200 Hz 下对应 1 s)
 constexpr std::size_t kGravityInitSampleCount = 200;
 
@@ -1235,8 +1108,6 @@ public:
   virtual double focal_length() const                            = 0;
   virtual double focal_length_x() const                          = 0;
   virtual double focal_length_y() const                          = 0;
-  virtual double focal_length_x() const                          = 0;
-  virtual double focal_length_y() const                          = 0;
   virtual double baseline() const            = 0; // 单目返回 0
   virtual const cv::Size &image_size() const = 0;
   // 双目: 矫正后左目系; 单目: 原始相机系
@@ -1275,8 +1146,6 @@ public:
 
     focal_length_x_        = left_projection_.at<double>(0, 0);
     focal_length_y_        = left_projection_.at<double>(1, 1);
-    focal_length_x_        = left_projection_.at<double>(0, 0);
-    focal_length_y_        = left_projection_.at<double>(1, 1);
     left_principal_point_  = {left_projection_.at<double>(0, 2),
                               left_projection_.at<double>(1, 2)};
     right_principal_point_ = {right_projection_.at<double>(0, 2),
@@ -1304,15 +1173,11 @@ public:
   {
     return {(pixel.x - left_principal_point_.x()) / focal_length_x_,
             (pixel.y - left_principal_point_.y()) / focal_length_y_};
-    return {(pixel.x - left_principal_point_.x()) / focal_length_x_,
-            (pixel.y - left_principal_point_.y()) / focal_length_y_};
   }
 
   Eigen::Vector2d
   RightPixelToNormalized(const cv::Point2f &pixel) const override
   {
-    return {(pixel.x - right_principal_point_.x()) / focal_length_x_,
-            (pixel.y - right_principal_point_.y()) / focal_length_y_};
     return {(pixel.x - right_principal_point_.x()) / focal_length_x_,
             (pixel.y - right_principal_point_.y()) / focal_length_y_};
   }
@@ -1321,24 +1186,13 @@ public:
   LeftNormalizedToPixel(const Eigen::Vector2d &normalized) const override
   {
     return {static_cast<float>(normalized.x() * focal_length_x_
-    return {static_cast<float>(normalized.x() * focal_length_x_
                                + left_principal_point_.x()),
-            static_cast<float>(normalized.y() * focal_length_y_
             static_cast<float>(normalized.y() * focal_length_y_
                                + left_principal_point_.y())};
   }
 
   double focal_length() const override
   {
-    return focal_length_x_;
-  }
-  double focal_length_x() const override
-  {
-    return focal_length_x_;
-  }
-  double focal_length_y() const override
-  {
-    return focal_length_y_;
     return focal_length_x_;
   }
   double focal_length_x() const override
@@ -1368,8 +1222,6 @@ private:
   cv::Mat left_map_x_, left_map_y_, right_map_x_, right_map_y_;
   double focal_length_x_                 = 0;
   double focal_length_y_                 = 0;
-  double focal_length_x_                 = 0;
-  double focal_length_y_                 = 0;
   double baseline_                       = 0;
   Eigen::Vector2d left_principal_point_  = Eigen::Vector2d::Zero();
   Eigen::Vector2d right_principal_point_ = Eigen::Vector2d::Zero();
@@ -1392,8 +1244,6 @@ public:
                                 CV_32FC1, map_x_, map_y_);
     focal_length_x_  = calibration.camera_matrix.at<double>(0, 0);
     focal_length_y_  = calibration.camera_matrix.at<double>(1, 1);
-    focal_length_x_  = calibration.camera_matrix.at<double>(0, 0);
-    focal_length_y_  = calibration.camera_matrix.at<double>(1, 1);
     principal_point_ = {calibration.camera_matrix.at<double>(0, 2),
                         calibration.camera_matrix.at<double>(1, 2)};
   }
@@ -1409,8 +1259,6 @@ public:
   {
     return {(pixel.x - principal_point_.x()) / focal_length_x_,
             (pixel.y - principal_point_.y()) / focal_length_y_};
-    return {(pixel.x - principal_point_.x()) / focal_length_x_,
-            (pixel.y - principal_point_.y()) / focal_length_y_};
   }
 
   Eigen::Vector2d
@@ -1423,24 +1271,13 @@ public:
   LeftNormalizedToPixel(const Eigen::Vector2d &normalized) const override
   {
     return {static_cast<float>(normalized.x() * focal_length_x_
-    return {static_cast<float>(normalized.x() * focal_length_x_
                                + principal_point_.x()),
-            static_cast<float>(normalized.y() * focal_length_y_
             static_cast<float>(normalized.y() * focal_length_y_
                                + principal_point_.y())};
   }
 
   double focal_length() const override
   {
-    return focal_length_x_;
-  }
-  double focal_length_x() const override
-  {
-    return focal_length_x_;
-  }
-  double focal_length_y() const override
-  {
-    return focal_length_y_;
     return focal_length_x_;
   }
   double focal_length_x() const override
@@ -1467,8 +1304,6 @@ public:
 private:
   cv::Size image_size_;
   cv::Mat map_x_, map_y_;
-  double focal_length_x_           = 0;
-  double focal_length_y_           = 0;
   double focal_length_x_           = 0;
   double focal_length_y_           = 0;
   Eigen::Vector2d principal_point_ = Eigen::Vector2d::Zero();
@@ -1809,14 +1644,6 @@ private:
 constexpr double kReprojectionDepthFloor = 1e-3; // 归一化平面深度下限 (m)
 constexpr double kDepthPenaltyScale = 50.0; // 越界惩罚强度 (归一化平面单位)
 
-// 重投影代价的深度下限: 与 RefineAndValidateWorldPoint 的初值预检共用同一阈值。
-// 代价函数不再对相机后方的点返回 false (那会让 Ceres 在初始点评估失败并打印
-// "Terminating: Initial residual and Jacobian evaluation failed" 后直接终止),
-// 而是钳制深度并施加越界惩罚, 保证任何评估点残差有限; 越界点的最终剔除仍由
-// RefineAndValidateWorldPoint 的深度门限 (z ∈ [0.1, 60] m) 完成。
-constexpr double kReprojectionDepthFloor = 1e-3; // 归一化平面深度下限 (m)
-constexpr double kDepthPenaltyScale = 50.0; // 越界惩罚强度 (归一化平面单位)
-
 struct StereoReprojectionCost
 {
   StereoReprojectionCost(const Sophus::SE3d &camera_from_world,
@@ -1850,24 +1677,7 @@ struct StereoReprojectionCost
     residual[1] = point_in_camera.y() / z_safe
                   - T(measurement.left_normalized.y()) + depth_penalty;
     residual[2] = (point_in_camera.x() - T(baseline)) / z_safe
-    // 深度钳制 + 越界惩罚: 点落在相机后方时残差仍有限且带 +z 梯度,
-    // 代价函数永不返回 false, Ceres 不会因评估失败而终止
-    const T z_safe = point_in_camera.z() < T(kReprojectionDepthFloor)
-                         ? T(kReprojectionDepthFloor)
-                         : point_in_camera.z();
-    const T depth_penalty
-        = point_in_camera.z() < T(kReprojectionDepthFloor)
-              ? T(kDepthPenaltyScale)
-                    * (T(kReprojectionDepthFloor) - point_in_camera.z())
-              : T(0);
-    residual[0]
-        = point_in_camera.x() / z_safe - T(measurement.left_normalized.x());
-    residual[1] = point_in_camera.y() / z_safe
-                  - T(measurement.left_normalized.y()) + depth_penalty;
-    residual[2] = (point_in_camera.x() - T(baseline)) / z_safe
                   - T(measurement.right_normalized.x());
-    residual[3]
-        = point_in_camera.y() / z_safe - T(measurement.right_normalized.y());
     residual[3]
         = point_in_camera.y() / z_safe - T(measurement.right_normalized.y());
     return true;
@@ -1909,20 +1719,6 @@ struct MonoReprojectionCost
         = point_in_camera.x() / z_safe - T(measurement.left_normalized.x());
     residual[1] = point_in_camera.y() / z_safe
                   - T(measurement.left_normalized.y()) + depth_penalty;
-    // 深度钳制 + 越界惩罚: 点落在相机后方时残差仍有限且带 +z 梯度,
-    // 代价函数永不返回 false, Ceres 不会因评估失败而终止
-    const T z_safe = point_in_camera.z() < T(kReprojectionDepthFloor)
-                         ? T(kReprojectionDepthFloor)
-                         : point_in_camera.z();
-    const T depth_penalty
-        = point_in_camera.z() < T(kReprojectionDepthFloor)
-              ? T(kDepthPenaltyScale)
-                    * (T(kReprojectionDepthFloor) - point_in_camera.z())
-              : T(0);
-    residual[0]
-        = point_in_camera.x() / z_safe - T(measurement.left_normalized.x());
-    residual[1] = point_in_camera.y() / z_safe
-                  - T(measurement.left_normalized.y()) + depth_penalty;
     return true;
   }
 
@@ -1930,40 +1726,6 @@ struct MonoReprojectionCost
   Eigen::Vector3d translation;
   Observation measurement;
 };
-
-// 多视图线性三角化 (DLT): 用全部观测的归一化坐标构造齐次投影方程, SVD 解最小
-// 二乘零空间得到三维点; 作为初值点落在观测相机后方时的修复手段, 相比仅用首末
-// 两视图的线性解 (TriangulateFeature) 对中间帧位姿误差更稳健
-std::optional<Eigen::Vector3d> TriangulateLinearDLT(
-    const std::vector<std::pair<Sophus::SE3d, Observation>> &observations
-)
-{
-  if (observations.size() < 2)
-  {
-    return std::nullopt;
-  }
-  // 观测方程: (u·P₃ − P₁)·X = 0, (v·P₃ − P₂)·X = 0, P = [R|t] 为世界→相机
-  Eigen::Matrix<double, Eigen::Dynamic, 4> design(2 * observations.size(), 4);
-  int row = 0;
-  for (const auto &[camera_from_world, observation] : observations)
-  {
-    const Eigen::Matrix<double, 3, 4> projection
-        = camera_from_world.matrix3x4();
-    const double u    = observation.left_normalized.x();
-    const double v    = observation.left_normalized.y();
-    design.row(row++) = u * projection.row(2) - projection.row(0);
-    design.row(row++) = v * projection.row(2) - projection.row(1);
-  }
-  Eigen::JacobiSVD<Eigen::Matrix<double, Eigen::Dynamic, 4>> svd(
-      design, Eigen::ComputeFullV
-  );
-  const Eigen::Vector4d homogeneous = svd.matrixV().col(3);
-  if (std::abs(homogeneous.w()) < 1e-9)
-  {
-    return std::nullopt; // 退化配置 (如观测共线), 无法可靠三角化
-  }
-  return homogeneous.head<3>() / homogeneous.w();
-}
 
 // 多视图线性三角化 (DLT): 用全部观测的归一化坐标构造齐次投影方程, SVD 解最小
 // 二乘零空间得到三维点; 作为初值点落在观测相机后方时的修复手段, 相比仅用首末
@@ -2025,28 +1787,9 @@ public:
   static constexpr int kTimeOffsetIndex = 15;
   static constexpr int kGravityIndex    = 16;
   static constexpr int kCloneErrorDim   = 6; // [姿态3 位置3]
-  static constexpr int kTimeOffsetIndex = 15;
-  static constexpr int kGravityIndex    = 16;
-  static constexpr int kCloneErrorDim   = 6; // [姿态3 位置3]
   static constexpr int kStereoResidualDim
       = 4;                                   // 双目每观测残差维数 (左 2 + 右 2)
   static constexpr int kMonoResidualDim = 2; // 单目每观测残差维数 (左 2)
-
-  // ===== 可调超参数 (公有变量, 经命令行 --name=value 覆盖, 默认值即原有行为) =====
-  std::size_t max_clone_count  = 11;  // 滑窗相机克隆数上限
-  std::size_t min_track_length = 3;   // 特征最小观测帧数
-  int max_update_rows          = 600; // 单次 EKF 更新量测行数上限
-  double initial_time_offset_variance
-      = 2.5e-5; // s^2, 相机-IMU 时间偏移初值方差 ((5 ms)^2)
-  double zupt_velocity_sigma             = 0.02;   // m/s, 零速伪量测噪声
-  double redundant_rotation_threshold    = 0.2618; // rad, 冗余克隆判定 (15°)
-  double redundant_translation_threshold = 0.4;    // m, 冗余克隆判定
-  double monocular_rotation_sigma   = 0.005; // rad, 单目旋转量测噪声 (高精度)
-  double monocular_direction_sigma  = 0.1;   // rad, 平移方向切平面噪声 (低精度)
-  double min_baseline_for_direction = 0.01;  // m, 基线过短时方向量测退化
-  double huber_loss_threshold = 0.01; // 三角化重投影残差鲁棒核阈值 (归一化平面)
-  double min_parallax_radians = 0.01; // 单目三角化视差角门限 (rad)
-  double pixel_noise_sigma_px = 1.5;  // px, 像素量测噪声标准差 (门限与增益)
 
   // ===== 可调超参数 (公有变量, 经命令行 --name=value 覆盖, 默认值即原有行为) =====
   std::size_t max_clone_count  = 11;  // 滑窗相机克隆数上限
@@ -2070,15 +1813,8 @@ public:
         double initial_time_offset, VisionMode vision_mode) :
     body_from_camera_(body_from_camera), baseline_(baseline),
     focal_length_(focal_length), imu_noise_(imu_noise),
-    focal_length_(focal_length), imu_noise_(imu_noise),
     time_offset_(initial_time_offset), vision_mode_(vision_mode)
   {
-  }
-
-  // 像素噪声标准差换算到归一化平面 (量测残差单位)
-  double PixelNoiseNormalized() const
-  {
-    return pixel_noise_sigma_px / focal_length_;
   }
 
   // 像素噪声标准差换算到归一化平面 (量测残差单位)
@@ -2116,58 +1852,8 @@ public:
     covariance_ = Eigen::MatrixXd::Zero(kImuErrorDim, kImuErrorDim);
     covariance_.diagonal() << 1e-4, 1e-4, 1e-3, 1e-8, 1e-8, 1e-8, 1e-2, 1e-2,
         1e-2, 1e-6, 1e-6, 1e-6, 1e-3, 1e-3, 1e-3, initial_time_offset_variance,
-        1e-2, 1e-6, 1e-6, 1e-6, 1e-3, 1e-3, 1e-3, initial_time_offset_variance,
         1e-2, 1e-2, 1e-2;
     SaveNullLinearizationPoint();
-  }
-
-  // 用起始段静止 IMU 比力初始化重力: 静止时比力 = -g, 即 g = -R_WB · mean(f)。
-  // 逐轴取中位数而非均值, 对起始段可能出现的异常尖峰 (如首样本跳变) 鲁棒。
-  void InitializeGravityFromImu(std::span<const ImuSample> samples)
-  {
-    if (samples.empty())
-    {
-      throw std::runtime_error("重力初始化需要至少一个 IMU 样本");
-    }
-    std::array<std::vector<double>, 3> axis_values;
-    for (const ImuSample &sample : samples)
-    {
-      axis_values[0].push_back(sample.linear_acceleration.x());
-      axis_values[1].push_back(sample.linear_acceleration.y());
-      axis_values[2].push_back(sample.linear_acceleration.z());
-    }
-    Eigen::Vector3d accel_median;
-    for (std::size_t axis{0}; axis < axis_values.size(); ++axis)
-    {
-      std::vector<double> &values = axis_values[axis];
-      std::ranges::sort(values);
-      accel_median(static_cast<Eigen::Index>(axis)) = values[values.size() / 2];
-    }
-    gravity_in_world_ = -(world_from_imu_rotation_ * accel_median);
-    // OC 一致性线性化点需与新的重力保持一致 (绕重力偏航的不可观子空间)
-    SaveNullLinearizationPoint();
-    std::println("重力初始化 (起始段 IMU 比力): g = [{:.4f} {:.4f} {:.4f}] "
-                 "m/s^2, |g| = {:.4f}",
-                 gravity_in_world_.x(), gravity_in_world_.y(),
-                 gravity_in_world_.z(), gravity_in_world_.norm());
-  }
-
-  // 以用户指定模长沿 -z 初始化重力 (方向与真值世界系约定一致)
-  void InitializeGravityWithNorm(double gravity_norm)
-  {
-    if (!(gravity_norm > 0.0) || !std::isfinite(gravity_norm))
-    {
-      throw std::runtime_error{
-          std::format("无效的重力模长: {:.4f} m/s^2", gravity_norm),
-      };
-    }
-    gravity_in_world_ = Eigen::Vector3d(0, 0, -gravity_norm);
-    // OC 一致性线性化点需与新的重力保持一致 (绕重力偏航的不可观子空间)
-    SaveNullLinearizationPoint();
-    std::println("重力初始化 (指定模长): g = [{:.4f} {:.4f} {:.4f}] m/s^2, "
-                 "|g| = {:.4f}",
-                 gravity_in_world_.x(), gravity_in_world_.y(),
-                 gravity_in_world_.z(), gravity_in_world_.norm());
   }
 
   // 用起始段静止 IMU 比力初始化重力: 静止时比力 = -g, 即 g = -R_WB · mean(f)。
@@ -2234,7 +1920,6 @@ public:
     covariance_ = Eigen::MatrixXd::Zero(kImuErrorDim, kImuErrorDim);
     covariance_.diagonal() << 1e-5, 1e-5, 1e-5, 1e-6, 1e-6, 1e-6, 1e-4, 1e-4,
         1e-4, 1e-6, 1e-6, 1e-6, 1e-5, 1e-5, 1e-5, initial_time_offset_variance,
-        1e-4, 1e-6, 1e-6, 1e-6, 1e-5, 1e-5, 1e-5, initial_time_offset_variance,
         1e-4, 1e-4, 1e-4;
     SaveNullLinearizationPoint();
   }
@@ -2284,7 +1969,6 @@ public:
     jacobian.block<3, 3>(0, 6)
         = Eigen::Matrix3d::Identity();            // 量测模型 h(x) = 速度
     Eigen::VectorXd residual    = -imu_velocity_; // 零速: z = 0
-    const double noise_variance = zupt_velocity_sigma * zupt_velocity_sigma;
     const double noise_variance = zupt_velocity_sigma * zupt_velocity_sigma;
     if (!PassesChiSquareGate(jacobian, residual, noise_variance))
     {
@@ -2413,7 +2097,6 @@ public:
     }
     result.new_map_points = UpdateWithTracks(finished_tracks);
 
-    if (clones_.size() > max_clone_count)
     if (clones_.size() > max_clone_count)
     {
       auto prune_points = PruneClonesAndAbsorbObservations();
@@ -2610,7 +2293,6 @@ private:
     }
 
     if (observations.size() < min_track_length)
-    if (observations.size() < min_track_length)
     {
       // 成功跟踪次数过少
       return std::nullopt;
@@ -2657,7 +2339,6 @@ private:
           = first_ray_direction.dot(last_ray_direction)
             / (first_ray_direction.norm() * last_ray_direction.norm());
       if (std::acos(std::clamp(parallax_cosine, -1.0, 1.0))
-          < min_parallax_radians)
           < min_parallax_radians)
       {
         return std::nullopt;
@@ -2729,34 +2410,6 @@ private:
       world_point = *repaired;
     }
 
-    // 初值有效性预检: 初值点必须位于所有观测相机前方 (与代价函数的深度下限一致)。
-    // 不合格时先用全部观测的 DLT 线性三角化修复一次; 仍不合格则直接跳过该特征,
-    // 不再调用 Ceres, 从根源上避免
-    // "Terminating: Initial residual and Jacobian evaluation failed" 告警。
-    const auto in_front_of_all_cameras
-        = [&observations](const Eigen::Vector3d &candidate)
-    {
-      for (const auto &[camera_from_world, ignored] : observations)
-      {
-        (void) ignored;
-        if ((camera_from_world * candidate).z() < kReprojectionDepthFloor)
-        {
-          return false;
-        }
-      }
-      return true;
-    };
-    if (!in_front_of_all_cameras(world_point))
-    {
-      const std::optional<Eigen::Vector3d> repaired
-          = TriangulateLinearDLT(observations);
-      if (!repaired.has_value() || !in_front_of_all_cameras(*repaired))
-      {
-        return std::nullopt;
-      }
-      world_point = *repaired;
-    }
-
     ceres::Problem::Options problem_options;
     // Ceres (含 2.2) 的 AddResidualBlock 只接受裸指针且默认接管所有权;
     // 这里显式设置 DO_NOT_TAKE_OWNERSHIP, 由 unique_ptr/栈对象管理生命周期,
@@ -2766,7 +2419,6 @@ private:
     // 对路标点进行非线性优化
     ceres::Problem problem{problem_options};
 
-    ceres::HuberLoss huber_loss{huber_loss_threshold};
     ceres::HuberLoss huber_loss{huber_loss_threshold};
     // 两个容器声明在分支外: Ceres 以 DO_NOT_TAKE_OWNERSHIP 持有裸指针,
     // 必须在 Solve 期间保持存活 (分支内声明会提前析构造成悬垂)
@@ -2825,7 +2477,6 @@ private:
     const double mean_squared_error
         = 2.0 * summary.final_cost
           / static_cast<double>(residual_dimension * observations.size());
-    if (std::sqrt(mean_squared_error) > 10.0 * PixelNoiseNormalized())
     if (std::sqrt(mean_squared_error) > 10.0 * PixelNoiseNormalized())
     {
       // 误差过大
@@ -3035,7 +2686,6 @@ private:
 
     const double noise_variance
         = monocular_rotation_sigma * monocular_rotation_sigma;
-        = monocular_rotation_sigma * monocular_rotation_sigma;
     if (!PassesChiSquareGate(jacobian, residual, noise_variance))
     {
       return false;
@@ -3067,7 +2717,6 @@ private:
           * (current_clone.position_in_world
              - previous_clone.position_in_world);
     const double baseline_norm = baseline_in_previous_camera.norm();
-    if (baseline_norm < min_baseline_for_direction)
     if (baseline_norm < min_baseline_for_direction)
     {
       return false; // 悬停: 方向退化
@@ -3103,7 +2752,6 @@ private:
     Eigen::VectorXd residual = -(tangent_projector * predicted_direction);
 
     const double noise_variance
-        = monocular_direction_sigma * monocular_direction_sigma;
         = monocular_direction_sigma * monocular_direction_sigma;
     if (!PassesChiSquareGate(jacobian, residual, noise_variance))
     {
@@ -3142,14 +2790,12 @@ private:
   {
     const double vision_noise_variance
         = PixelNoiseNormalized() * PixelNoiseNormalized();
-        = PixelNoiseNormalized() * PixelNoiseNormalized();
     std::vector<Eigen::MatrixXd> jacobian_blocks;
     std::vector<Eigen::VectorXd> residual_blocks;
     std::vector<Eigen::Vector3d> map_points;
     int total_rows = 0;
     for (const FeatureTrack &track : finished_tracks)
     {
-      if (track.observations_by_frame.size() < min_track_length)
       if (track.observations_by_frame.size() < min_track_length)
       {
         continue;
@@ -3176,7 +2822,6 @@ private:
       jacobian_blocks.push_back(std::move(projected_jacobian));
       residual_blocks.push_back(std::move(projected_residual));
       map_points.push_back(*world_point);
-      if (total_rows >= max_update_rows)
       if (total_rows >= max_update_rows)
       {
         break;
@@ -3289,8 +2934,6 @@ private:
           = (candidate.position_in_world - key_clone.position_in_world).norm();
       if (rotation_change < redundant_rotation_threshold
           && translation_change < redundant_translation_threshold)
-      if (rotation_change < redundant_rotation_threshold
-          && translation_change < redundant_translation_threshold)
       {
         // 候选克隆的相对运动未达阈值，标记为待删除
         remove_indices.push_back(moving_candidate++);
@@ -3330,7 +2973,6 @@ private:
   {
     const double vision_noise_variance
         = PixelNoiseNormalized() * PixelNoiseNormalized();
-        = PixelNoiseNormalized() * PixelNoiseNormalized();
     std::vector<Eigen::MatrixXd> jacobian_blocks;
     std::vector<Eigen::VectorXd> residual_blocks;
     std::vector<Eigen::Vector3d> map_points;
@@ -3352,7 +2994,6 @@ private:
         continue;
       }
 
-      if (involved_frames.size() >= 2 && total_rows < max_update_rows)
       if (involved_frames.size() >= 2 && total_rows < max_update_rows)
       {
         const auto world_point = TriangulateFeature(track);
@@ -3404,8 +3045,6 @@ private:
   }
 
   Sophus::SE3d body_from_camera_;
-  double baseline_     = 0; // 双目基线, 单目模式为 0
-  double focal_length_ = 0;
   double baseline_     = 0; // 双目基线, 单目模式为 0
   double focal_length_ = 0;
   ImuNoiseParameters imu_noise_;
@@ -3874,21 +3513,6 @@ int main(int argc, char **argv)
       break;
     }
     std::println("重力初始化方式: {}", gravity_init_description);
-    std::string gravity_init_description;
-    switch (options.gravity_initialization_mode)
-    {
-    case GravityInitializationMode::kFromImu:
-      gravity_init_description = "起始段 IMU 比力 (含大小与方向)";
-      break;
-    case GravityInitializationMode::kUserNorm:
-      gravity_init_description
-          = std::format("指定模长 {:.4f} m/s^2 (沿 -z)", options.gravity_norm);
-      break;
-    case GravityInitializationMode::kFixed:
-      gravity_init_description = "固定 9.81 m/s^2 (沿 -z)";
-      break;
-    }
-    std::println("重力初始化方式: {}", gravity_init_description);
     // 运行时检测数据集相机数目, 决定视觉模式
     const VisionMode vision_mode = DetectVisionMode(dataset_root);
     std::println("视觉模式: {}", vision_mode == VisionMode::kStereo
@@ -3925,16 +3549,11 @@ int main(int argc, char **argv)
       std::println("矫正后焦距 fx={:.2f} fy={:.2f} px, 基线 {:.4f} m",
                    geometry->focal_length_x(), geometry->focal_length_y(),
                    geometry->baseline());
-      std::println("矫正后焦距 fx={:.2f} fy={:.2f} px, 基线 {:.4f} m",
-                   geometry->focal_length_x(), geometry->focal_length_y(),
-                   geometry->baseline());
     }
     else
     {
       PrintCalibrationSummary(calibration, right_calibration, imu_noise);
       geometry = std::make_unique<MonoUndistorter>(calibration);
-      std::println("去畸变后焦距 fx={:.2f} fy={:.2f} px",
-                   geometry->focal_length_x(), geometry->focal_length_y());
       std::println("去畸变后焦距 fx={:.2f} fy={:.2f} px",
                    geometry->focal_length_x(), geometry->focal_length_y());
     }
@@ -3962,22 +3581,6 @@ int main(int argc, char **argv)
     filter.huber_loss_threshold       = options.huber_loss_threshold;
     filter.min_parallax_radians       = options.min_parallax_radians;
     filter.pixel_noise_sigma_px       = options.pixel_noise_sigma_px;
-    // 应用命令行可调超参数 (未指定时保持默认值); 必须在姿态初始化之前,
-    // 因为初始协方差对角会用到时间偏移方差等参数
-    filter.max_clone_count              = options.max_clone_count;
-    filter.min_track_length             = options.min_track_length;
-    filter.max_update_rows              = options.max_update_rows;
-    filter.initial_time_offset_variance = options.initial_time_offset_variance;
-    filter.zupt_velocity_sigma          = options.zupt_velocity_sigma;
-    filter.redundant_rotation_threshold = options.redundant_rotation_threshold;
-    filter.redundant_translation_threshold
-        = options.redundant_translation_threshold;
-    filter.monocular_rotation_sigma   = options.monocular_rotation_sigma;
-    filter.monocular_direction_sigma  = options.monocular_direction_sigma;
-    filter.min_baseline_for_direction = options.min_baseline_for_direction;
-    filter.huber_loss_threshold       = options.huber_loss_threshold;
-    filter.min_parallax_radians       = options.min_parallax_radians;
-    filter.pixel_noise_sigma_px       = options.pixel_noise_sigma_px;
     std::println("相机-IMU 时间偏移初值 {:+.2f} ms (滤波器在线估计)",
                  options.initial_time_offset * 1e3);
 
@@ -3988,23 +3591,6 @@ int main(int argc, char **argv)
                                               imu_samples, filter)
               : InitializeFromStaticImuPose(imu_samples,
                                             stereo_frames.front().time, filter);
-
-    // 重力初始化: 默认固定 9.81 沿 -z; --init-gravity imu 时用起始段静止
-    // IMU 比力估计; --init-gravity <数值> 时以指定模长沿 -z 初始化
-    if (options.gravity_initialization_mode
-        == GravityInitializationMode::kFromImu)
-    {
-      const std::size_t gravity_window_size
-          = std::min(kGravityInitSampleCount, imu_samples.size());
-      filter.InitializeGravityFromImu(
-          std::span<const ImuSample>{imu_samples.data(), gravity_window_size}
-      );
-    }
-    else if (options.gravity_initialization_mode
-             == GravityInitializationMode::kUserNorm)
-    {
-      filter.InitializeGravityWithNorm(options.gravity_norm);
-    }
 
     // 重力初始化: 默认固定 9.81 沿 -z; --init-gravity imu 时用起始段静止
     // IMU 比力估计; --init-gravity <数值> 时以指定模长沿 -z 初始化
@@ -4060,12 +3646,6 @@ int main(int argc, char **argv)
         "[--init-gravity imu|fixed|数值] [--feature-type fast|orb|sift] "
         "[--time-offset 秒] "
         "[--output /path/to/filename.tum] [--mono-csv /path/to/estimation.csv] "
-        "[--pointcloud /path/to/map.ply]\n"
-        "可调超参数 (--name=value): --pixel-noise-sigma --max-clones "
-        "--min-track-length --max-update-rows --time-offset-variance "
-        "--zupt-sigma --redundant-rot-threshold --redundant-trans-threshold "
-        "--mono-rot-sigma --mono-dir-sigma --mono-baseline-min "
-        "--huber-threshold --min-parallax",
         "[--pointcloud /path/to/map.ply]\n"
         "可调超参数 (--name=value): --pixel-noise-sigma --max-clones "
         "--min-track-length --max-update-rows --time-offset-variance "
