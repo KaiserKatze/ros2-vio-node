@@ -53,7 +53,7 @@ struct VisualSim
 {
   // 重力加速度
   const value_type gravity_world_norm_{9.81}; // m s^-2
-  // 传入长宽高的划分段数
+  // 长方体房间，尺寸由命令行指定
   Room<value_type> room_{};
   // 初始化专属绘制器
   MeshPlot<value_type> mesh_plot_{
@@ -108,9 +108,13 @@ struct VisualSim
 
   explicit VisualSim(
       const Config &config = Config{},
-      value_type camera_interval = static_cast<value_type>(0.05)
+      value_type camera_interval = static_cast<value_type>(0.05),
+      value_type room_depth = static_cast<value_type>(10.0),
+      value_type room_width = static_cast<value_type>(10.0),
+      value_type room_height = static_cast<value_type>(3.0)
   ) :
-    mesh_plot_{room_}, step_{camera_interval}
+    room_{20, 20, 6, room_depth, room_width, room_height}, mesh_plot_{room_},
+    step_{camera_interval}
   {
     // 只修改双目相机的基线长度
     rig_.camera_right_.sensor_from_body_.translation()
@@ -723,6 +727,9 @@ int main(int argc, char *argv[])
   try
   {
     std::optional<double> camera_interval;
+    std::optional<double> room_depth;
+    std::optional<double> room_width;
+    std::optional<double> room_height;
     for (int i = 1; i < argc; ++i)
     {
       const std::string_view option{argv[i]};
@@ -730,24 +737,57 @@ int main(int argc, char *argv[])
       {
         std::print(
             "Usage: {} [--camera-interval SECONDS | --camera-fps HZ]\n"
+            "          [--room-depth METERS] [--room-width METERS]\n"
+            "          [--room-height METERS]\n"
             "  --camera-interval SECONDS  Camera capture interval in seconds\n"
             "  --camera-fps HZ            Camera frame rate in Hz\n"
+            "  --room-depth METERS        Room depth (X), default: 10 m\n"
+            "  --room-width METERS        Room width (Y), default: 10 m\n"
+            "  --room-height METERS       Room height (Z), default: 3 m\n"
             "  -h, --help                 Show this help\n"
-            "Default: 0.05 seconds (20 Hz). Specify at most one option.\n"
+            "Camera default: 0.05 seconds (20 Hz).\n"
+            "Specify at most one camera option; each option only once.\n"
             "Values must be finite and positive.\n"
+            "The room remains a rectangular cuboid.\n"
             "IMU and ground truth run at 10 times the camera frame rate.\n",
             argv[0]
         );
         return EXIT_SUCCESS;
       }
-      if (option != "--camera-interval" && option != "--camera-fps")
+      const bool is_camera_option{
+          option == "--camera-interval" || option == "--camera-fps"
+      };
+      std::optional<double> *target{};
+      if (is_camera_option)
+      {
+        target = &camera_interval;
+      }
+      else if (option == "--room-depth")
+      {
+        target = &room_depth;
+      }
+      else if (option == "--room-width")
+      {
+        target = &room_width;
+      }
+      else if (option == "--room-height")
+      {
+        target = &room_height;
+      }
+      else
       {
         throw std::invalid_argument{std::format("Unknown option: {}", option)};
       }
-      if (camera_interval.has_value())
+      if (target->has_value())
       {
+        if (is_camera_option)
+        {
+          throw std::invalid_argument{
+              "Specify only one of --camera-interval and --camera-fps, once."
+          };
+        }
         throw std::invalid_argument{
-            "Specify only one of --camera-interval and --camera-fps, once."
+            std::format("{} may only be specified once", option)
         };
       }
       if (++i == argc)
@@ -768,17 +808,20 @@ int main(int argc, char *argv[])
             std::format("{} requires a finite, positive number", option)
         };
       }
-      camera_interval = option == "--camera-fps" ? 1.0 / value : value;
-      if (!std::isfinite(*camera_interval)
-          || *camera_interval / 10.0 <= 0.0
-          || !std::isfinite(10.0 / *camera_interval))
+      *target = option == "--camera-fps" ? 1.0 / value : value;
+      if (is_camera_option
+          && (!std::isfinite(*camera_interval)
+              || *camera_interval / 10.0 <= 0.0
+              || !std::isfinite(10.0 / *camera_interval)))
       {
         throw std::invalid_argument{
             std::format("{} value is outside the supported range", option)
         };
       }
     }
-    FastVIO::VisualSim::VisualSim<double>{{}, camera_interval.value_or(0.05)}
+    FastVIO::VisualSim::VisualSim<double>{
+        {}, camera_interval.value_or(0.05), room_depth.value_or(10.0),
+        room_width.value_or(10.0), room_height.value_or(3.0)}
         .Start();
   }
   catch (const std::exception &ex)
