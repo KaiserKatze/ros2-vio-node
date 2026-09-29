@@ -7,6 +7,7 @@ log/
 *.csv
 *.py
 *.md
+!test/test_mono_cache.py
 
 #####################################
 # C++
