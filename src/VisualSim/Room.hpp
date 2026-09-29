@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <iostream>
 #include <print>
@@ -21,14 +22,14 @@ template <typename value_type> struct Room
     return std::tie(p1(0), p1(1), p1(2)) < std::tie(p2(0), p2(1), p2(2));
   }
 
-  const value_type width_{10.0}; // 开间
-  const value_type depth_{10.0}; // 进深
-  const value_type height_{3.0}; // 层高
+  const value_type width_; // 开间 (米)
+  const value_type depth_; // 进深 (米)
+  const value_type height_; // 层高 (米)
   const Point3 center_{
-      //房间的几何中心
+      // 房间的几何中心
       depth_ * static_cast<value_type>(0.5),
-      width_ *static_cast<value_type>(0.5),
-      height_ *static_cast<value_type>(0.5),
+      width_ * static_cast<value_type>(0.5),
+      height_ * static_cast<value_type>(0.5),
   };
 
   const int cnt_sep_depth_;
@@ -44,14 +45,24 @@ template <typename value_type> struct Room
   Eigen::Matrix<value_type, 3, Eigen::Dynamic> object_matrix_;
 
   /**
-   * @brief 按照网格生成路标点
-   * @note 网格间距，默认 0.5 米
+   * @brief 在长方体房间的六个面上按照网格生成路标点
+   * @note 尺寸单位为米；网格间距由尺寸和划分段数决定，默认 0.5 米
    */
-  Room(int cnt_sep_depth = 20, int cnt_sep_width = 20, int cnt_sep_height = 6) :
+  Room(int cnt_sep_depth = 20, int cnt_sep_width = 20, int cnt_sep_height = 6,
+       value_type depth = static_cast<value_type>(10.0),
+       value_type width = static_cast<value_type>(10.0),
+       value_type height = static_cast<value_type>(3.0)) :
+    width_{width}, depth_{depth}, height_{height},
     cnt_sep_depth_{cnt_sep_depth}, cnt_sep_width_{cnt_sep_width},
     cnt_sep_height_{cnt_sep_height}, step_d_{depth_ / cnt_sep_depth_},
     step_w_{width_ / cnt_sep_width_}, step_h_{height_ / cnt_sep_height_}
   {
+    if (!std::isfinite(depth_) || !std::isfinite(width_)
+        || !std::isfinite(height_) || depth_ <= 0 || width_ <= 0
+        || height_ <= 0)
+    {
+      throw std::invalid_argument{"房间进深、开间、层高必须为有限正数!"};
+    }
     if (cnt_sep_depth <= 0 || cnt_sep_width <= 0 || cnt_sep_height <= 0)
     {
       throw std::invalid_argument{"切分段数应该是正数!"};
