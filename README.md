@@ -17,8 +17,13 @@ python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install optuna evo numpy pandas matplotlib pyyaml seaborn
 
-# 生成仿真数据
+# 生成仿真数据（默认相机间隔 0.05 秒，即 20 Hz）
 ros2 run euroc_vio VisualSim
+# 指定相机拍照间隔（秒）或帧率（Hz），两种参数只能选择一种
+ros2 run euroc_vio VisualSim --camera-interval 0.1
+ros2 run euroc_vio VisualSim --camera-fps 10
+# 查看命令行帮助
+ros2 run euroc_vio VisualSim --help
 # 为 imu0/data.csv 注入高斯白噪声与随机游走并同步 sensor.yaml
 ros2 run euroc_vio ImuNoiseModel ./mav0/
 # 运行单目惯性里程计
@@ -51,3 +56,7 @@ ros2 run euroc_vio msckf ./mav0/ --init groundtruth --mono-csv=./mav0/estimated_
 ros2 run euroc_vio msckf ./mav0/ --init groundtruth --mono-csv=/tmp/nowhere/nothing
 ros2 run --prefix 'gdb -ex run --args' euroc_vio msckf ./mav0/ --init groundtruth --mono-csv=/tmp/nowhere/nothing
 ```
+
+相机间隔和帧率必须为有限正数；不允许同时指定或重复指定。
+IMU 和真值采样率保持为相机帧率的 10 倍，例如相机 10 Hz 时为 100 Hz。
+生成数据的时间戳及 `sensor.yaml` 中的采样率会随参数同步调整。

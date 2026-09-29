@@ -67,8 +67,8 @@ struct VisualSim
   OrientationMode orientation_mode_{OrientationMode::LookAtCenter};
   PathManager<value_type> path_manager_{room_};
   value_type time_static_{2.0};
-  // 相机的时间步长 (单位: 秒) (采用 0.05 秒作为时间步长可以让仿真相机的采样率保持为 20 赫兹)
-  const value_type step_{static_cast<value_type>(0.05)};
+  // 相机的时间步长 (单位: 秒)，由命令行指定，默认 0.05 秒 (20 Hz)
+  const value_type step_;
   // 仿真 IMU 与仿真相机的采样率之比
   const int rate_ratio_{10};
   // 真值和 IMU 的时间步长 (单位: 秒)
@@ -106,7 +106,11 @@ struct VisualSim
     const typename ImuNoiseModel<value_type>::Config noise_config{};
   };
 
-  VisualSim(const Config &config = Config{}) : mesh_plot_{room_}
+  explicit VisualSim(
+      const Config &config = Config{},
+      value_type camera_interval = static_cast<value_type>(0.05)
+  ) :
+    mesh_plot_{room_}, step_{camera_interval}
   {
     // 只修改双目相机的基线长度
     rig_.camera_right_.sensor_from_body_.translation()
@@ -479,17 +483,18 @@ struct VisualSim
     {
       std::print(stderr, "[INFO] 时间 = ({:.3f}).\n", time);
 
+      auto opt_frame{path_manager_.GetImage(rig_, time)};
+      if (!opt_frame.has_value())
+      {
+        break;
+      }
+
 #if (OUTPUT_AS_EUROC)
       const auto timestamp_ns{static_cast<std::int64_t>(time * 1e9)};
       std::print(fout_cam0_data_csv, "{0:020d},{0:020d}.png\n", timestamp_ns);
       std::print(fout_cam1_data_csv, "{0:020d},{0:020d}.png\n", timestamp_ns);
 #endif
 
-      auto opt_frame{path_manager_.GetImage(rig_, time)};
-      if (!opt_frame.has_value())
-      {
-        break;
-      }
       const Frame frame{opt_frame.value()};
 
       // 打印路标点
@@ -557,9 +562,6 @@ struct VisualSim
       {
         // IMU 的当前时间戳
         const value_type imu_time{time + i * imu_step_};
-        const auto imu_timestamp_ns{
-            static_cast<std::int64_t>(imu_time * 1e9),
-        };
         // 角速度矢量 $\omega^{iv}_i$
         Point3 imu_angular_velocity_world{Point3::Zero()};
         // 线速度矢量 $\dot{r}^{iv}_i$
@@ -572,6 +574,9 @@ struct VisualSim
         {
           break;
         }
+        const auto imu_timestamp_ns{
+            static_cast<std::int64_t>(imu_time * 1e9),
+        };
         std::tie(imu_linear_velocity_world, imu_linear_acceleration_world,
                  imu_angular_velocity_world) = opt_kinematics.value();
 
@@ -713,15 +718,73 @@ struct VisualSim
 
 } // namespace FastVIO::VisualSim
 
-int main()
+int main(int argc, char *argv[])
 {
   try
   {
-    FastVIO::VisualSim::VisualSim<double>{}.Start();
+    std::optional<double> camera_interval;
+    for (int i = 1; i < argc; ++i)
+    {
+      const std::string_view option{argv[i]};
+      if (option == "--help" || option == "-h")
+      {
+        std::print(
+            "Usage: {} [--camera-interval SECONDS | --camera-fps HZ]\n"
+            "  --camera-interval SECONDS  Camera capture interval in seconds\n"
+            "  --camera-fps HZ            Camera frame rate in Hz\n"
+            "  -h, --help                 Show this help\n"
+            "Default: 0.05 seconds (20 Hz). Specify at most one option.\n"
+            "Values must be finite and positive.\n"
+            "IMU and ground truth run at 10 times the camera frame rate.\n",
+            argv[0]
+        );
+        return EXIT_SUCCESS;
+      }
+      if (option != "--camera-interval" && option != "--camera-fps")
+      {
+        throw std::invalid_argument{std::format("Unknown option: {}", option)};
+      }
+      if (camera_interval.has_value())
+      {
+        throw std::invalid_argument{
+            "Specify only one of --camera-interval and --camera-fps, once."
+        };
+      }
+      if (++i == argc)
+      {
+        throw std::invalid_argument{
+            std::format("Missing value for {}", option)
+        };
+      }
+      const std::string_view text{argv[i]};
+      double value{};
+      const auto [end, error]{
+          std::from_chars(text.data(), text.data() + text.size(), value)
+      };
+      if (error != std::errc{} || end != text.data() + text.size()
+          || !std::isfinite(value) || value <= 0.0)
+      {
+        throw std::invalid_argument{
+            std::format("{} requires a finite, positive number", option)
+        };
+      }
+      camera_interval = option == "--camera-fps" ? 1.0 / value : value;
+      if (!std::isfinite(*camera_interval)
+          || *camera_interval / 10.0 <= 0.0
+          || !std::isfinite(10.0 / *camera_interval))
+      {
+        throw std::invalid_argument{
+            std::format("{} value is outside the supported range", option)
+        };
+      }
+    }
+    FastVIO::VisualSim::VisualSim<double>{{}, camera_interval.value_or(0.05)}
+        .Start();
   }
   catch (const std::exception &ex)
   {
-    std::println(stderr, "{}", ex.what());
+    std::println(stderr, "{}\nUse --help for usage.", ex.what());
+    return EXIT_FAILURE;
   }
-  return 0;
+  return EXIT_SUCCESS;
 }
